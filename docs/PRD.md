@@ -531,32 +531,60 @@ Also still true: **madmom** is a trap (BSD badge, CC BY-NC-SA *models* with an e
 
 **Stage 4 — Discogs enrichment, not matching.** Don't search Discogs. MusicBrainz stores Discogs URLs as *relationships*, so MBID → Discogs release ID is a free deterministic join. Use it only for label and catalogue number — the fields that make an electronic-music tool credible. Discogs' own image quota (1,000/day) is unusable at scale; the relationship join isn't affected.
 
-**Stage 5 — artwork.** **iTunes Search API first**, Cover Art Archive second. See §8.1 — this is inverted from the obvious ordering for a good reason.
+**Stage 2b — Apple ISRC bridge.** If Stage 1 missed, fuzzy-match against Apple Music API, take its ISRC, and resolve deterministically via MusicBrainz `/ws/2/isrc/{isrc}`. See §8.1.
+
+**Stage 5 — artwork.** **Apple Music API first**, Cover Art Archive second. See §8.1 — inverted from the obvious ordering for a good reason.
 
 **Stage 6 — Spotify deep link only.** One Search call to obtain the track URI for a "listen on Spotify" button. Store **nothing but the URI**. No metadata, no artwork, no audio features.
 
-### 8.1 Apple — worth using, but only the free one, and only for artwork
+### 8.1 Apple — use the Apple Music API (we already hold the Developer Program membership)
 
-Tested live during design (2026-07-26), not recalled:
+**Decision: Apple Music API primary, iTunes Search API as an unauthenticated fallback.**
 
-**iTunes Search API** (`itunes.apple.com/search`) — free, no key, no account, no click-through terms. Alive and served through Akamai with a 24 h edge cache. Documented limit is *"approximately 20 calls per minute"*; 30 rapid uncached queries all returned 200, so it's soft. Throttle to ~1 req/1.5 s and cache by `(artist, title)` forever.
+The $99/yr Apple Developer Program membership is **already held**, so `api.music.apple.com` costs zero marginal spend. There is no separate Apple Music API fee. Critically, a **developer token alone** covers every `/v1/catalog/*` endpoint — **no Apple Music subscription and no Music User Token are required**. Those are only needed for `/v1/me/*` (a user's own library and playback), which we never call.
 
-**Its one genuine win is artwork.** Take `artworkUrl100`, strip `/100x100bb.jpg`, append your own size — verified working: `600x600bb.jpg` (107 KB), `1200x1200bb.jpg` (402 KB), **`3000x3000bb.jpg` (2.4 MB, 200 OK)**. Cover Art Archive is wildly inconsistent by comparison — many release-groups have no art at all, and what exists is user-uploaded at whatever resolution the uploader happened to have. For art that ends up on a big screen or written back into Rekordbox tags, Apple is materially better *whenever the track is on the store*.
+> Verbatim, [Generating Developer Tokens](https://developer.apple.com/documentation/applemusicapi/generating-developer-tokens): *"To make requests to the Apple Music API, you need to authorize yourself as a trusted developer and member of the Apple Developer Program."* And [User Authentication for MusicKit](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit): *"Apple Music API requires the inclusion of a Music User Token for any requests for data specific to an Apple Music subscriber, such as to fetch content from the user's library."*
 
-> The URL rewrite is **undocumented CDN behaviour**, not a contractual surface. It's worked for a decade; Apple owes us nothing. Cache what we fetch.
+**Token mechanics.** MusicKit identifier + private key (`.p8`) from the developer portal, plus the 10-character Team ID and Key ID. JWT signed **ES256 only** — Apple rejects unsecured tokens or any other algorithm with a `401`. `exp` must not exceed `15777000` seconds (6 months), so it's re-minted twice a year by a scheduled job. Rate limits are unpublished; back off exponentially on `429`. Catalog endpoints are server-side cached and rarely throttled — it's `/v1/me/*` that bites, and we don't touch it.
 
-**Everything else about it is worse than expected:**
+**What we get over the free iTunes Search API:**
 
-- **No ISRC.** Confirmed absent on both `/search` and `/lookup`. No label. No catalogue number. No remixer relationships. `releaseDate` is the *store* date of that collection, not the original release — a 1992 Aphex track on a 2012 reissue reports 2012.
-- **Genre is a coin flip.** Real results: Charlotte de Witte → `Techno`, DJ Koze → `House`, but Burial, Aphex Twin, Four Tet, Peggy Gou, Objekt, Overmono, Two Shell all → `Electronic`, and Larry Heard → `Dance`. Roughly **30% useful**. It's label-supplied delivery metadata, not classification. Do not build a genre facet on it.
-- **Coverage is not better than MusicBrainz.** Tested against the same underground set — Anunaku, Sedef Adasi, Interplanetary Criminal, Hodge: **both miss the identical tracks.** The hypothesis that Apple wins on coverage is false. Apple wins on mainstream/charting and very recent major-label; MusicBrainz wins on reissues, bootlegs and obscure compilations. Neither covers dubplates or true white labels, because those have no commercial identity to index.
-- **Silent wrong matches.** It never says "no confident match" — it returns its best guess. A Bristol dubstep query came back with Neo-Soul metadata. **Gate every result on normalised artist AND title similarity plus a `trackTimeMillis` vs decoded duration check within ±3 s**, and drop anything below threshold to unmatched. Without that gate this pipeline actively degrades the library.
+1. **ISRC — the important one.** `/v1/catalog/{sf}/songs?filter[isrc]=…` and ISRC on the Songs resource. iTunes Search returns no ISRC at all (verified absent on both `/search` and `/lookup`). ISRC turns a fuzzy Apple match into a **hard, deterministic join** into MusicBrainz via `/ws/2/isrc/{isrc}`. That matters most for the tracks AcoustID misses — see the bridge path below.
+2. **A contractual artwork API.** An `artwork` object with a `{w}x{h}` URL template and explicit `width`/`height` maxima, instead of string-hacking `artworkUrl100`. Same 3000px ceiling, but a documented surface rather than undocumented CDN behaviour that Apple owes us nothing about.
+3. **`bgColor` and `textColor1..4`** — Apple's extracted palette per artwork. Free auto-theming for track cards, and a cheaper, better version of butternutcrack's blurred-cover backdrop.
+4. `composerName`, `editorialNotes`, `previews`, proper storefront handling.
 
-**Skip the $99 Apple Music API.** The one real upgrade is ISRC (`filter[isrc]` lookup, deterministic joins). Everything else people expect from it doesn't materialise: `genreNames` is an array but returns the *same* leaf genre with ancestors appended (`["Techno","Music","Dance"]`), not finer resolution; and artwork is already at 3000px for free. Good news if we ever do buy in: a **developer token alone** covers every `/v1/catalog/*` endpoint — no Apple Music subscription, no Music User Token, no MusicKit JS. (MusicKit JS is a browser auth-and-playback shim; it has nothing to offer a server-side worker.)
+**The ISRC bridge — where this earns its place in the cascade.** Apple's ISRC is only available *after* a match, so it is not a matching input. But it converts a soft match into a hard one:
 
-**Compliance:** album art is "Promo Content" under Apple's terms, which require it sit *"proximate to a 'Download on iTunes' … badge … that acts as a link directly to pages within iTunes."* The no-caching clause in that same paragraph is scoped to *audio previews*, not art. Render the art with the returned `trackViewUrl` behind an official badge — twenty minutes of work, and it moves a technically-non-compliant private display inside the spirit of the clause that actually binds.
+```
+AcoustID → MBID                            (primary; most reliable)
+  ↓ miss
+Apple fuzzy match → Apple ISRC → MB /isrc/ → MBID   (deterministic recovery)
+  ↓ miss
+MB fielded fuzzy search
+```
 
-**Artwork precedence:** uploader-supplied → iTunes 3000px → Cover Art Archive → embedded ID3 → generated placeholder.
+That second rung recovers part of the coverage gap that fuzzy string matching alone would leave unmatched. It does **not** help with white labels — nothing does.
+
+**What it does *not* fix — both tested, both still true:**
+
+- **Genre does not improve.** `genreNames` is an array, but it returns the *same* leaf genre with ancestors appended — `["Techno","Music","Dance"]` where iTunes returns `primaryGenreName: "Techno"`. Extra parents, not extra precision. Live iTunes results: de Witte → `Techno`, DJ Koze → `House`, but Burial, Aphex Twin, Four Tet, Peggy Gou, Objekt, Overmono and Two Shell **all → `Electronic`**, and Larry Heard → `Dance`. ~30% useful; it is label-supplied delivery metadata, not classification. **Genre still comes from Discogs styles (§9.1).**
+- **Coverage does not improve** — it's the same catalogue behind both APIs. Tested against Anunaku, Sedef Adasi, Interplanetary Criminal and Hodge: Apple and MusicBrainz **miss the identical tracks.** Apple wins on mainstream and recent major-label; MB wins on reissues, bootlegs and obscure compilations.
+- **No label or catalogue number worth having.** `recordLabel` exists only on Albums and is usually a distributor ("Believe", "The Orchard"), not the imprint. Imprint identity — Hessle Audio, Livity Sound — is how DJs actually navigate crates, so **label still comes from MusicBrainz/Discogs.**
+- **Store dates, not original release dates.** A 1992 Aphex track on a 2012 reissue reports 2012. Original release date still comes from MB release-groups.
+- **Silent wrong matches.** Apple never says "no confident match" — it returns its best guess. A Bristol dubstep query came back with Neo-Soul metadata. **Gate every result on normalised artist AND title similarity plus a duration check within ±3 s** against the decoded duration, and drop anything below threshold to unmatched. Without that gate this pipeline actively degrades the library.
+
+**iTunes Search API stays as a fallback** — free, no key, no token to expire, Akamai-cached for 24 h. Documented at *"approximately 20 calls per minute"* though 30 rapid uncached queries all returned 200, so it's soft. Use it if token minting ever fails, and for the artwork URL-rewrite trick (`artworkUrl100` → `3000x3000bb.jpg`, verified 200 OK at 2.4 MB) as a belt-and-braces path.
+
+**Compliance.** Album art is "Promo Content" under Apple's terms and must sit *"proximate to a 'Download on iTunes' … badge … that acts as a link directly to pages within iTunes."* The no-caching clause in that same paragraph is scoped to *audio previews*, not artwork. MusicKit's terms attach the equivalent "Listen on Apple Music" badge requirement. Render art with the returned `url` behind an official badge — twenty minutes, and it puts a private display inside the spirit of the clause that actually binds.
+
+> **Two things to verify first-hand, which the design research could not.** Both need the developer account we already have:
+> 1. **Confirm the `genreNames` finding with one live authenticated call.** The claim that it returns the same leaf plus ancestors is *inferred from the shared taxonomy, not proven* — no authenticated call was possible during research. Five minutes to settle, and it's the only thing that could change the genre decision.
+> 2. **Read the metadata-retention clause in the Apple Developer Program License Agreement (MusicKit attachment).** Research found **no** caching prohibition but also could not read the authoritative text — the PDLA sits behind developer-account auth and Apple's doc pages are JS-rendered. Do **not** assume either way. Since we're persisting Apple metadata in Postgres, this is a real gap to close before build.
+
+**Artwork precedence:** uploader-supplied → Apple Music API artwork (3000px) → iTunes rewrite → Cover Art Archive → embedded ID3 → generated placeholder.
+
+**MusicKit JS is irrelevant** — a browser-side auth and DRM-playback shim that fetches from the same REST endpoints. Nothing to offer a server-side worker.
 
 Thresholds: auto-apply ≥0.85; show as a user-confirmable suggestion 0.60–0.85; below 0.60 keep the uploader's own tags and mark unmatched. **Always retain the raw original tag strings** — cheap now, impossible to retrofit, and it lets the whole corpus be re-matched when coverage improves.
 
@@ -928,7 +956,7 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 4. **Dedup.** Fingerprints table + GIN, candidate query, offset-swept BER, bands, `assign_track` with the advisory lock, merge/undo, review queue with the divergence strip.
 5. **Pool UI.** Track list, filters, player, download.
 6. **Crates.**
-7. **Catalogue matching.** AcoustID → MusicBrainz → iTunes artwork → CAA, uploader artwork upload, confirm-match UI with the ±3 s duration gate.
+7. **Catalogue matching.** AcoustID → MusicBrainz → Apple ISRC bridge → Apple/CAA artwork, uploader artwork upload, confirm-match UI with the ±3 s duration gate. **First task: the two Apple verifications in §8.1.**
 7b. **Genre.** Discogs dump ingest, MB→Discogs join, synonym table, normalisation of existing dirty tags, two-level facet.
 8. **Calibration pass** at ~2k tracks: reset `T_high`/`T_low` from your own library, tune the `query_items` mask by measurement.
 9. **v2:** credits enforcement, crate sharing, MusicBrainz mirror if no-match rate >25%.
