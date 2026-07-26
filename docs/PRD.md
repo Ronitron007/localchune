@@ -393,7 +393,43 @@ One container, one decode, one pass. Runs per file on Cloud Run.
 
 **Do not add `audiowaveform`** (BBC). It's a whole extra decode pass and a GPL dependency to replace a five-line NumPy reshape.
 
-Measured cost, 6-min 44.1 kHz stereo on an M1 Pro: **3.86 s CPU / 469 MB RSS** for the lean core; ~7.0 s / ~810 MB with three key profiles, EBU R128 and the spectral loop. Budget ~2× on x86 server cores.
+### 7.1 Measured compute budget
+
+All measured locally on Apple M1 (8 cores), 6:00 44.1 kHz stereo, `ffmpeg` 8.0.1, `fpcalc` 1.5.x, `beat_this` @ HEAD, torch 2.13.0. Not estimates.
+
+| Step | CPU | Peak RSS | Notes |
+|---|---|---|---|
+| `ffprobe` + tag read | ~0.05 s | — | |
+| **`fpcalc` raw fingerprint** | **0.39 s** | small | emits **2,886 ints for 6:00** — exactly the 8/s the schema assumes |
+| Decode → f32 mono 44.1k | 0.46 s (FLAC) / 0.77 s (MP3) | — | shared; feed everything from one buffer |
+| **Beat This! @ 1 thread** | **13.2 s** | **977 MB** | **65% of the entire budget** |
+| Essentia key × 3 profiles | ~0.6 s | ~470 MB | 0.14 s per profile |
+| `ebur128` loudness + true peak | 2.16 s | — | |
+| `astats` (bit depth, clipping) | 1.24 s | — | |
+| Forensics: 8 × 10 s windows | 0.31 s | — | `-ss` **before** `-i` — seek-then-decode is nearly free |
+| Forensics: FFT + cutoff | ~0.5 s | ~200 MB | |
+| `flaccheck` | ~1 s | small | |
+| Waveform peaks | <0.01 s | — | inline reshape |
+| Opus 128k preview | 3.33 s | — | **lossless sources only**; 3.9 MB out |
+| Spectrogram PNG | 0.74 s | — | **only on a suspect verdict**, not every track |
+
+**Totals: ~20 s CPU for a lossless track (with preview), ~16 s for an MP3.** On an x86 Cloud Run vCPU budget **~1.75×** → **30–40 s/track**.
+
+**Three findings that change the design:**
+
+1. **Threading makes it *more expensive*, not less.** Beat This! at 1 thread is 13.2 s CPU / 13.2 s wall. At 8 threads it's 5.7 s wall but **19.5 s CPU**. Cloud Run bills vCPU-seconds, so parallelism costs 48% more for the same work. **Pin `torch.set_num_threads(1)`, run 1 vCPU with concurrency 1, and accept the longer wall clock.** This is a background job; nobody is watching.
+2. **Export Beat This! to ONNX and run `onnxruntime` (MIT).** A PyTorch image is ~2.5 GB against ~300 MB for onnxruntime — which matters for Cloud Run cold start — and ONNX CPU inference is typically 1.5–3× faster than eager PyTorch. This is the single highest-leverage optimisation available and it should be **benchmarked as the first task of the analysis worker**, because 65% of the compute budget rides on it.
+3. **Derive BPM by least-squares fit over the beat index, never from the median inter-beat interval.** Measured: on a 128.000 BPM track median-IBI gives **130.43**; on 174.000 it gives **176.47**. The least-squares fit gives **128.000** and **174.000** exactly. Beat This! quantises beat times to its ~20 ms frame grid (IBI std ≈ 9 ms), and the median inherits that quantisation while a linear fit averages it out. A 2% BPM error is beatmatching-fatal.
+
+```python
+k = np.arange(len(beats))
+slope, _ = np.linalg.lstsq(np.vstack([k, np.ones_like(k)]).T, beats, rcond=None)[0]
+bpm = 60.0 / slope
+```
+
+Memory: run each stage as a **sequential subprocess** (which §7.3 requires anyway for Essentia) so peak RSS is `max(stage)` ≈ 1 GB, not the sum. **A 1 vCPU / 2 GiB instance is sufficient.**
+
+> **Encouraging but not proof:** Beat This! returned **176.47** on the 174 BPM test track — it did **not** half-time it, where Essentia's three estimators all returned 87.00 on the research agent's DnB test. But the test track here is a clean synthetic kick pattern, which is far easier than real drum & bass with a half-time bassline. Treat this as a positive signal, not as evidence the octave problem is solved. The ×2/÷2 control below still ships.
 
 ### The BPM octave problem is a UX decision, not a bug to fix
 
@@ -757,20 +793,46 @@ Three-layer convergence:
 
 Quota is **display-only in v1**. Ten trusted people don't need enforcement, and a hard cap creates a support burden immediately.
 
-### Cost at 2 TB
+### Cost — the whole project
+
+> An earlier draft costed a hypothetical 2 TB. That was carried over uncritically from a research scenario and it is **wrong for this project by ~40×**. 2,000 tracks is nowhere near 2 TB — you'd need ~32,000 WAVs to get there. Corrected below from measured file sizes.
+
+**Measured sizes**, 6:00 44.1/16 stereo: WAV **61 MB**, FLAC ~**38 MB** (real music; my synthetic test compressed to 18 MB), MP3 320 **14 MB**, M4A 256 ~12 MB, Opus 128k preview **3.9 MB**.
+
+Realistic pool mix for 2,000 tracks — 55% MP3, 25% FLAC, 12% WAV/AIFF, 8% M4A → **~26 MB average**:
+
+| | GB |
+|---|---|
+| Audio (2,000 tracks × 26 MB) | 51 |
+| Opus previews (740 lossless × 3.9 MB) | 2.9 |
+| Artwork (2,000 × ~400 KB @ 1200px) | 0.8 |
+| Waveform peaks (2,000 × 41 KB) → **R2, not Postgres** | 0.08 |
+| **Total** | **~55 GB** |
+
+Even an all-lossless worst case is 2,000 × 62 MB = **124 GB**.
+
+**Monthly:**
 
 | Line | Cost |
 |---|---|
-| R2 storage (2000 GB − 10 free × $0.015) | $29.85/mo |
-| R2 operations (Class A + B, all inside free tier) | $0 |
-| R2 egress | $0, always |
-| Workers Paid (needed for Queues) | $5/mo |
-| Cloud Run compute + egress | $0 (3% of always-free tier) |
-| Artifact Registry | ~$0.10 |
+| R2 storage — (55 − 10 free) GB × $0.015 | **$0.68** |
+| R2 Class A + B operations | $0 (free tier by ~3 orders of magnitude) |
+| R2 egress | **$0, always** |
+| Cloud Run compute — 7,000 vCPU-s/mo vs 180,000 free | **$0** (3.9%) |
+| GCP egress (previews → R2), ongoing | ~$0 (under the 1 GiB/mo free) |
+| Artifact Registry (image over 0.5 GB free) | ~$0.10 |
 | Supabase | $0 (free tier) |
-| **Total** | **≈ $35/mo** |
+| Apple Developer Program | $0 marginal — already held |
+| **Cloudflare Workers Paid** — required for Queues | **$5.00** |
+| **Total** | **≈ $6/month** |
 
-Operations pricing is irrelevant at this scale — you'd need ~7M Class A ops/month before ops matched storage. Architect for correctness and reconcile as often as you like. The same 2 TB on S3 with ~500 GB/mo of listening is ~$46 storage **plus ~$45 egress**, growing with every play. That's the whole reason R2 is the right store.
+Growth: +200 tracks/mo ≈ +5.2 GB ≈ **+$0.08/mo, each month**. Year-1 end ≈ 117 GB ≈ $1.61/mo storage, so **~$7/month**.
+
+**Backfill (one-off):** 2,000 tracks × ~35 s = **70,000 vCPU-s vs 180,000 free (39%)** and 140,000 GiB-s vs 360,000 free (39%). Fits in one month with room for a second full re-analysis after an `algo_version` bump. Previews back to R2 cost 2.9 GB − 1 GiB free × $0.12 = **$0.23, once**. Even entirely outside the free tier a full backfill is ~$2 at list.
+
+**The headline: Workers Paid at $5 is the single largest line item — the queue costs more than all the storage and all the compute combined.** If that offends, it is skippable: `files.state` in Postgres is already the system of record with a stuck-job cron, so the Supabase Edge Function could POST Cloud Run directly and let the cron re-drive failures. That drops the bill to **~$2/month** at the cost of R2 event notifications and at-least-once delivery. Not recommended at this price, but it's a real option.
+
+Operations pricing is irrelevant here — you'd need ~7M Class A ops/month before ops matched storage. Architect for correctness and reconcile as often as you like. For comparison, the same content on S3 with modest listening would add a **per-play egress line that grows forever**; R2's zero egress is the entire reason it's the right store.
 
 ---
 
