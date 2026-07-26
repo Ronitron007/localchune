@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - **Astro must be SSR**, not `output: 'static'`. butternutcrack is static and fetches Supabase at build time; a pool with continuous uploads cannot work that way.
-- **Every table has RLS enabled. No table gets an `INSERT`/`UPDATE`/`DELETE` policy.** All mutations go through `security definer` functions with `set search_path = ''`, `revoke execute from public`, explicit `grant execute`.
+- **Every table has RLS enabled. No table gets an `INSERT`/`UPDATE`/`DELETE` policy.** All mutations go through `security definer` functions with `set search_path = ''`, `revoke execute from public`, explicit `grant execute`. This includes admin paths: the service-role key bypasses RLS, so routing admin writes through a definer function keeps the authorisation check in the database rather than only in the Worker, where a routing mistake would expose it.
+- **No RLS policy on table X may `SELECT FROM` table X.** Postgres raises `42P17 infinite recursion detected in policy`. Use a `security definer` helper (`is_owner()`), which bypasses RLS on its own reads.
 - Every RLS policy is `TO authenticated` and wraps `auth.uid()` / `auth.jwt()` in a scalar subquery — `(select auth.uid())`. Both are large measured performance wins.
 - `timestamptz` everywhere. Never `timestamp`.
 - Allowlist emails are stored lowercased, with Gmail dot/plus normalisation applied on insert.
@@ -284,14 +285,38 @@ grant select on public.members to supabase_auth_admin;
 create policy "auth admin reads members"
   on public.members for select to supabase_auth_admin using (true);
 
+-- CRITICAL: an RLS policy ON members that SELECTs FROM members recurses
+-- infinitely. Postgres raises 42P17 "infinite recursion detected in policy".
+-- The escape is a SECURITY DEFINER function, which bypasses RLS on its own
+-- reads. This is the single most common Supabase RLS footgun.
+create or replace function public.is_owner()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.members
+                  where user_id = auth.uid() and role = 'owner');
+$$;
+revoke execute on function public.is_owner() from public, anon;
+grant  execute on function public.is_owner() to authenticated;
+
+-- Exactly one row, always. The middleware calls this instead of selecting
+-- from members, because with the owner policy below a plain select returns
+-- EVERY member for an owner, and .maybeSingle() then errors on >1 row.
+create or replace function public.current_member()
+returns table (user_id uuid, email text, role text, access_expires_at timestamptz)
+language sql stable security definer set search_path = '' as $$
+  select m.user_id, m.email, m.role, m.access_expires_at
+    from public.members m
+   where m.user_id = auth.uid();
+$$;
+revoke execute on function public.current_member() from public, anon;
+grant  execute on function public.current_member() to authenticated;
+
 create policy "members read own row"
   on public.members for select to authenticated
   using ( user_id = (select auth.uid()) );
 
 create policy "owner reads all members"
   on public.members for select to authenticated
-  using ( exists (select 1 from public.members m
-                   where m.user_id = (select auth.uid()) and m.role = 'owner') );
+  using ( (select public.is_owner()) );
 
 -- Append-only grant ledger. Idempotency is the UNIQUE constraint, not careful code.
 create table public.credit_grants (
@@ -694,12 +719,12 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   if (token) {
     const env = ctx.locals.runtime?.env ?? import.meta.env
     const sb = userClient(env as Record<string, string>, token)
-    const { data } = await sb
-      .from('members')
-      .select('user_id,email,role,access_expires_at')
-      .maybeSingle()
-    if (data) {
-      ctx.locals.member = data
+    // current_member() rather than .from('members') — the owner RLS policy
+    // returns EVERY member row for an owner, and .maybeSingle() errors on >1.
+    // The function returns exactly one row for any caller.
+    const { data } = await sb.rpc('current_member')
+    if (data && data.length === 1) {
+      ctx.locals.member = data[0]
       ctx.locals.accessToken = token
     }
   }
@@ -847,16 +872,42 @@ language sql security definer set search_path = '' as $$
          m.user_id is not null
     from public.allowlist a
     left join public.members m on m.email = a.email
-   where exists (select 1 from public.members o
-                  where o.user_id = auth.uid() and o.role = 'owner')
+   where public.is_owner()
    order by a.invited_at desc;
 $$;
 
 revoke execute on function public.admin_members() from public, anon;
 grant  execute on function public.admin_members() to authenticated;
+
+-- Mutations as definer functions, per the global constraint. The owner check
+-- lives HERE, in the database, not only in the Worker route — so a routing
+-- mistake cannot expose it.
+create or replace function public.admin_invite(p_email text, p_note text default null)
+returns text language plpgsql security definer set search_path = '' as $$
+declare v_email text := public.normalize_email(p_email);
+begin
+  if not public.is_owner() then raise exception 'forbidden' using errcode = '42501'; end if;
+  if v_email is null then raise exception 'invalid email' using errcode = '22023'; end if;
+  insert into public.allowlist (email, note)
+  values (v_email, p_note)
+  on conflict (email) do update set revoked_at = null, note = coalesce(excluded.note, allowlist.note);
+  return v_email;
+end $$;
+
+create or replace function public.admin_revoke(p_email text)
+returns text language plpgsql security definer set search_path = '' as $$
+declare v_email text := public.normalize_email(p_email);
+begin
+  if not public.is_owner() then raise exception 'forbidden' using errcode = '42501'; end if;
+  update public.allowlist set revoked_at = now() where email = v_email;
+  return v_email;
+end $$;
+
+revoke execute on function public.admin_invite(text,text), public.admin_revoke(text) from public, anon;
+grant  execute on function public.admin_invite(text,text), public.admin_revoke(text) to authenticated;
 ```
 
-The `exists (… role = 'owner')` guard inside the function body is what makes `security definer` safe here — a non-owner calling it gets zero rows, not everyone's data.
+The `public.is_owner()` guard inside each function body is what makes `security definer` safe — a non-owner calling `admin_members()` gets zero rows, and a non-owner calling `admin_invite` gets a `42501`.
 
 - [ ] **Step 2: Write the API route**
 
@@ -864,47 +915,49 @@ The `exists (… role = 'owner')` guard inside the function body is what makes `
 // src/pages/api/admin/allowlist.ts
 import type { APIRoute } from 'astro'
 import { normalizeEmail } from '../../../lib/email'
-import { serviceClient } from '../../../lib/supabase.server'
+import { userClient } from '../../../lib/supabase.server'
 
+/** 404, not 403 — do not confirm the route exists to a non-owner. */
 const guard = (locals: App.Locals) => locals.member?.role === 'owner'
+
+function client(locals: App.Locals) {
+  const env = (locals.runtime?.env ?? import.meta.env) as Record<string, string>
+  return userClient(env, locals.accessToken!)
+}
+
+async function readEmail(request: Request): Promise<string | null> {
+  const body = (await request.json().catch(() => ({}))) as { email?: string }
+  try {
+    return normalizeEmail(body.email ?? '')
+  } catch {
+    return null
+  }
+}
 
 export const POST: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
-  const body = (await request.json()) as { email?: string; note?: string }
-  let email: string
-  try {
-    email = normalizeEmail(body.email ?? '')
-  } catch {
-    return Response.json({ error: 'invalid email' }, { status: 400 })
-  }
-  const env = (locals.runtime?.env ?? import.meta.env) as Record<string, string>
-  const { error } = await serviceClient(env)
-    .from('allowlist')
-    .upsert({ email, note: body.note ?? null, revoked_at: null }, { onConflict: 'email' })
+  const email = await readEmail(request)
+  if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
+  // The caller's own token, NOT the service key: admin_invite re-checks
+  // is_owner() in the database, so authorisation is enforced in one place.
+  const { data, error } = await client(locals).rpc('admin_invite', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
-  return Response.json({ email }, { status: 201 })
+  return Response.json({ email: data }, { status: 201 })
 }
 
 export const DELETE: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
-  const body = (await request.json()) as { email?: string }
-  let email: string
-  try {
-    email = normalizeEmail(body.email ?? '')
-  } catch {
-    return Response.json({ error: 'invalid email' }, { status: 400 })
-  }
-  const env = (locals.runtime?.env ?? import.meta.env) as Record<string, string>
-  const { error } = await serviceClient(env)
-    .from('allowlist')
-    .update({ revoked_at: new Date().toISOString() })
-    .eq('email', email)
+  const email = await readEmail(request)
+  if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
+  const { error } = await client(locals).rpc('admin_revoke', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ revoked: true })
 }
 ```
 
 Revoking sets `revoked_at`; it does not delete. The member keeps their data and their uploads keep their attribution (PRD §11).
+
+Note there is **no `serviceClient` use here**. The service key bypasses RLS entirely, so using it for admin writes would put the only authorisation check in the Worker route — one routing mistake from an open door. Routing through `admin_invite` / `admin_revoke` keeps the check in the database where it cannot be bypassed.
 
 - [ ] **Step 3: Write the Solid island**
 
@@ -979,7 +1032,59 @@ const { data: rows } = await sb.rpc('admin_members')
 ---
 ```
 
-- [ ] **Step 5: Verify manually**
+- [ ] **Step 5: Write the authorisation and recursion tests**
+
+These two failure modes — RLS recursion and a non-owner reaching admin functions — are the ones that would ship silently.
+
+Create `supabase/tests/admin_authz.sql`:
+
+```sql
+begin;
+select plan(6);
+
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000aa','owner@gmail.com'),
+  ('00000000-0000-0000-0000-0000000000bb','member@gmail.com');
+insert into public.allowlist (email) values ('owner@gmail.com'), ('member@gmail.com');
+insert into public.members (user_id, email, role) values
+  ('00000000-0000-0000-0000-0000000000aa','owner@gmail.com','owner'),
+  ('00000000-0000-0000-0000-0000000000bb','member@gmail.com','member');
+
+-- As the OWNER
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000aa"}';
+
+select ok( public.is_owner(), 'owner is recognised' );
+
+-- The regression test for 42P17: with two members present, an owner selecting
+-- from members must return both rows and MUST NOT recurse.
+select is( (select count(*)::int from public.members), 2,
+           'owner reads all members without infinite recursion' );
+
+select is( (select count(*)::int from public.current_member()), 1,
+           'current_member returns exactly one row even for an owner' );
+
+select is( public.admin_invite('New.Person+tag@gmail.com'), 'newperson@gmail.com',
+           'admin_invite normalises and returns the email' );
+
+-- As a plain MEMBER
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000bb"}';
+
+select ok( not public.is_owner(), 'plain member is not an owner' );
+
+select throws_ok( $$ select public.admin_invite('sneaky@gmail.com') $$, '42501',
+                  'a non-owner calling admin_invite is refused in the database' );
+
+select * from finish();
+rollback;
+```
+
+- [ ] **Step 6: Run it**
+
+Run: `npx supabase test db`
+Expected: 6 pass. **If the second assertion fails with `42P17 infinite recursion detected in policy for relation "members"`, the `is_owner()` definer function is missing or the policy is still self-referential.**
+
+- [ ] **Step 7: Verify manually**
 
 1. `npm run dev`, sign in as the owner, open `/admin`
 2. Invite a second Google address you control → row appears as `pending`
@@ -988,10 +1093,10 @@ const { data: rows } = await sb.rpc('admin_members')
 5. Sign out and back in as the revoked address → rejected
 6. **Sign in as a non-owner member and request `/admin` → 404, not 403**
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/pages/admin src/pages/api src/components supabase/migrations
+git add src/pages/admin src/pages/api src/components supabase/migrations supabase/tests
 git commit -m "feat: owner-only admin page — invite and revoke"
 ```
 
