@@ -249,6 +249,18 @@ git commit -m "feat: email normalisation — gmail dot/plus folding"
 **Interfaces:**
 - Produces: tables `allowlist`, `members`, `credit_grants`; function `public.grant_days(uuid, int, text, text) returns timestamptz`. Task 4's trigger calls `grant_days`. Task 6's admin API inserts into `allowlist`.
 
+- [ ] **Step 0: Enable pgTAP**
+
+Tasks 3, 4 and 6 all write pgTAP assertions (`plan()`, `is()`, `ok()`, `throws_ok()`). Nothing enables the extension by default, and `supabase test db` fails with `function plan(integer) does not exist` without it.
+
+Create `supabase/migrations/20260727115900_00_pgtap.sql`:
+
+```sql
+create extension if not exists pgtap with schema extensions;
+```
+
+Keep it in its own migration ordered before the schema, so a `db reset` always has the test harness available before any test runs.
+
 - [ ] **Step 1: Write the migration**
 
 ```sql
