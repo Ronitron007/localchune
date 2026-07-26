@@ -384,8 +384,8 @@ One container, one decode, one pass. Runs per file on Cloud Run.
 |---|---|---|
 | Decoded duration | Essentia `AudioLoader` | authoritative; drives the 15-min gate |
 | Chromaprint fingerprint | `fpcalc` (LGPL 2.1) | doubles as the AcoustID lookup key — see §8 |
-| Key | Essentia `KeyExtractor(profileType='edma')`, plus `edmm` and `bgate` stored alongside | edmm scores 70.1 weighted / 63.7 correct on GiantSteps vs QM's 50.4 / 39.6 |
-| BPM + beat grid | Essentia `RhythmExtractor2013(method='multifeature')` | store `bpm`, full `ticks` array, `confidence`, `beat_ibi_cv` |
+| Key | Essentia `KeyExtractor(profileType='edmm')`, plus `edma` and `bgate` stored alongside | edmm ranks first on GiantSteps (~70–72 weighted / ~63.7 correct) vs QM's 50.4 / 39.6. These are **DSP parameters, not neural models** — no CC-NC exposure. |
+| BPM + **downbeats** | **Beat This!** (CPJKU, ISMIR 2024) | **MIT on both code *and* weights.** Better than Essentia's `RhythmExtractor2013`, and it gives **downbeats** — bar-1 alignment, which is what a DJ tool actually needs and what Essentia's free DSP path largely lacks. Derive BPM from the median inter-beat interval. |
 | Loudness | `LoudnessEBUR128` + `ReplayGain` | LUFS-I, LRA |
 | Waveform peaks | inline reshape of the decoded array | 1000 min/max buckets, <0.01 s, ~41 KB JSON |
 | Embedded tags + art | `music-metadata` (MIT) or `mutagen` | keep raw tags forever — enables corpus-wide re-matching later |
@@ -479,16 +479,30 @@ Tune asymmetrically: a false accept costs one wrongly-awarded credit; a false re
 
 Also: the `DR` penalty in the published scoring formula encodes an audiophile preference this pool may not share — a loud DR5 remaster may be exactly the club-ready copy a DJ wants. **Make DR informational-only; keep only the hard-clipping penalty.**
 
-### AGPL
+### 7.3 Licensing — decided: open-source under AGPL-3.0
 
-Essentia is AGPL-3.0, and §13 is the one copyleft clause that triggers without distribution. The research framed this as a commercial-service problem; **localchune is not commercial**, so the resolution is easy:
+Essentia is AGPL-3.0. §13 is the one copyleft clause that triggers **without** distribution:
 
-- Run **stock, unmodified** Essentia as a separate binary the worker `exec`s. Never link or import it into application code, never vendor patches.
-- If §13 is ever invoked by one of the ten members, it's satisfied by pointing at Essentia's already-public upstream source.
+> "if you modify the Program, your modified version must prominently offer all users interacting with it remotely through a computer network … an opportunity to receive the Corresponding Source of your version by providing access to the Corresponding Source from a network server at no charge"
 
-Non-negotiable regardless: **Essentia's TensorFlow model zoo is CC BY-NC-SA 4.0** — no TempoCNN, no danceability classifiers, no mood models. The DSP algorithms above are unaffected. Same trap catches **madmom** (BSD badge, CC BY-NC-SA *models*, with an explicit "contact Gerhard Widmer" gate) and **tempo-cnn** (AGPL on code *and* weights, maddeningly, since it has the best published octave accuracy).
+**Publishing the repo collapses this to a single footer link.** That is a far better trade than handicapping key detection to dodge a licence we'd satisfy anyway — the permissive substitutes cost 8–20 points of key accuracy, and key is the most user-visible number in a DJ pool.
 
-GPL tools — libKeyFinder, qm-dsp, mp3guessenc, mutagen — create **zero** obligations here: GPL has no network clause and SaaS is not distribution. This flips if a desktop client ever ships; at that point swap to `music-metadata` (MIT) and TagLib (LGPL/MPL).
+Six rules, all cheap:
+
+1. **License localchune's own source files MIT or Apache-2.0** in the headers. README states: *"This project's own source is MIT. The distributed combination is AGPL-3.0 because it includes Essentia."* Your code stays permissive and reusable; only the combination is copyleft. If Essentia is ever swapped out, relicensing is a README edit rather than chasing every contributor for consent.
+2. **Invoke Essentia as a subprocess** — `streaming_extractor_music`, argv in, JSON out. **Never `import essentia`.** Under AGPL it makes no difference today, but the FSF treats dynamic linking as creating a combined work while `fork`/`exec` with simple communication is separate programs. Costs nothing now, preserves the exit later. Guard it in code review: the mere-aggregation position erodes the moment someone adds a C++ shim or round-trips Pool objects.
+3. **Ship zero `.pb` files.** MTG's own pages contradict each other — [models.html](https://essentia.upf.edu/models.html) says CC BY-NC-**SA** 4.0, [licensing_information.html](https://essentia.upf.edu/licensing_information.html) says CC BY-NC-**ND** 4.0. SA vs ND is material: under ND you may not redistribute *any* derivative of the weights, including an ONNX conversion. Never resolving this is free, because **everything we need is DSP** — `KeyExtractor` (including the `edma`/`edmm` EDM profiles), `LoudnessEBUR128`, `ReplayGain` and the spectral descriptors load no model. `streaming_extractor_music` itself uses only DSP.
+4. **Build Essentia without FFTW** (KissFFT or Accelerate). FFTW is GPL and UPF cannot sublicense it — irrelevant while we're AGPL, but it rides along otherwise.
+5. **§13 compliance:** a "Source" link in the footer pointing at the public repo, **pinned to the deployed commit SHA**, plus `/api/build-info` exposing that SHA so the link is verifiable. An offer to email source on request does *not* satisfy §13 — it must be fetchable from a network server.
+6. **Before the first public push:** `gitleaks detect` over the working tree **and** full history; `.env` gitignored; rotate any credential ever committed (rewriting history does not un-leak a pushed key); confirm no audio, no DB dump, and no library manifest is in the tree — that's the likelier embarrassment than a stray API key.
+
+**What open-sourcing does not solve:** the CC-NC model zoo stays non-commercial forever, and "non-commercial" is fuzzier than it looks — a donation tier or Patreon-gated invite can be argued into commercial advantage. Rule 3 makes this moot rather than relying on our current status.
+
+**Fallback if commercial optionality is ever wanted** — a complete no-AGPL, no-CC-NC bill of materials: Beat This! (MIT) + keyfinder-cli/libKeyFinder (GPL-3.0, subprocess) + libebur128 (**MIT**) + music-metadata (MIT) or TinyTag (MIT) + LGPL-only ffmpeg (`--disable-gpl --disable-nonfree`) + DIY numpy peaks. Better beats, ~8 points worse key. Shippable. Note: **avoid `mutagen`** (GPL-2.0) in that world, and note distro ffmpeg builds are usually `--enable-gpl`, which makes the *binary* GPL even though the `ebur128` filter source is LGPL.
+
+**Do not email UPF for a commercial quote.** Non-commercial, ten users, publishing anyway — no need, and it's a university tech-transfer office with an unpublished price and weeks of latency.
+
+Also still true: **madmom** is a trap (BSD badge, CC BY-NC-SA *models* with an explicit "contact Gerhard Widmer" gate for commercial use), and **tempo-cnn** is AGPL on code *and* weights despite having the best published octave accuracy.
 
 ---
 
@@ -517,9 +531,32 @@ GPL tools — libKeyFinder, qm-dsp, mp3guessenc, mutagen — create **zero** obl
 
 **Stage 4 — Discogs enrichment, not matching.** Don't search Discogs. MusicBrainz stores Discogs URLs as *relationships*, so MBID → Discogs release ID is a free deterministic join. Use it only for label and catalogue number — the fields that make an electronic-music tool credible. Discogs' own image quota (1,000/day) is unusable at scale; the relationship join isn't affected.
 
-**Stage 5 — artwork.** Cover Art Archive by MBID: `/release/{mbid}/front-500` → `/release-group/{mbid}/front-500` → uploader-supplied → generated placeholder.
+**Stage 5 — artwork.** **iTunes Search API first**, Cover Art Archive second. See §8.1 — this is inverted from the obvious ordering for a good reason.
 
 **Stage 6 — Spotify deep link only.** One Search call to obtain the track URI for a "listen on Spotify" button. Store **nothing but the URI**. No metadata, no artwork, no audio features.
+
+### 8.1 Apple — worth using, but only the free one, and only for artwork
+
+Tested live during design (2026-07-26), not recalled:
+
+**iTunes Search API** (`itunes.apple.com/search`) — free, no key, no account, no click-through terms. Alive and served through Akamai with a 24 h edge cache. Documented limit is *"approximately 20 calls per minute"*; 30 rapid uncached queries all returned 200, so it's soft. Throttle to ~1 req/1.5 s and cache by `(artist, title)` forever.
+
+**Its one genuine win is artwork.** Take `artworkUrl100`, strip `/100x100bb.jpg`, append your own size — verified working: `600x600bb.jpg` (107 KB), `1200x1200bb.jpg` (402 KB), **`3000x3000bb.jpg` (2.4 MB, 200 OK)**. Cover Art Archive is wildly inconsistent by comparison — many release-groups have no art at all, and what exists is user-uploaded at whatever resolution the uploader happened to have. For art that ends up on a big screen or written back into Rekordbox tags, Apple is materially better *whenever the track is on the store*.
+
+> The URL rewrite is **undocumented CDN behaviour**, not a contractual surface. It's worked for a decade; Apple owes us nothing. Cache what we fetch.
+
+**Everything else about it is worse than expected:**
+
+- **No ISRC.** Confirmed absent on both `/search` and `/lookup`. No label. No catalogue number. No remixer relationships. `releaseDate` is the *store* date of that collection, not the original release — a 1992 Aphex track on a 2012 reissue reports 2012.
+- **Genre is a coin flip.** Real results: Charlotte de Witte → `Techno`, DJ Koze → `House`, but Burial, Aphex Twin, Four Tet, Peggy Gou, Objekt, Overmono, Two Shell all → `Electronic`, and Larry Heard → `Dance`. Roughly **30% useful**. It's label-supplied delivery metadata, not classification. Do not build a genre facet on it.
+- **Coverage is not better than MusicBrainz.** Tested against the same underground set — Anunaku, Sedef Adasi, Interplanetary Criminal, Hodge: **both miss the identical tracks.** The hypothesis that Apple wins on coverage is false. Apple wins on mainstream/charting and very recent major-label; MusicBrainz wins on reissues, bootlegs and obscure compilations. Neither covers dubplates or true white labels, because those have no commercial identity to index.
+- **Silent wrong matches.** It never says "no confident match" — it returns its best guess. A Bristol dubstep query came back with Neo-Soul metadata. **Gate every result on normalised artist AND title similarity plus a `trackTimeMillis` vs decoded duration check within ±3 s**, and drop anything below threshold to unmatched. Without that gate this pipeline actively degrades the library.
+
+**Skip the $99 Apple Music API.** The one real upgrade is ISRC (`filter[isrc]` lookup, deterministic joins). Everything else people expect from it doesn't materialise: `genreNames` is an array but returns the *same* leaf genre with ancestors appended (`["Techno","Music","Dance"]`), not finer resolution; and artwork is already at 3000px for free. Good news if we ever do buy in: a **developer token alone** covers every `/v1/catalog/*` endpoint — no Apple Music subscription, no Music User Token, no MusicKit JS. (MusicKit JS is a browser auth-and-playback shim; it has nothing to offer a server-side worker.)
+
+**Compliance:** album art is "Promo Content" under Apple's terms, which require it sit *"proximate to a 'Download on iTunes' … badge … that acts as a link directly to pages within iTunes."* The no-caching clause in that same paragraph is scoped to *audio previews*, not art. Render the art with the returned `trackViewUrl` behind an official badge — twenty minutes of work, and it moves a technically-non-compliant private display inside the spirit of the clause that actually binds.
+
+**Artwork precedence:** uploader-supplied → iTunes 3000px → Cover Art Archive → embedded ID3 → generated placeholder.
 
 Thresholds: auto-apply ≥0.85; show as a user-confirmable suggestion 0.60–0.85; below 0.60 keep the uploader's own tags and mark unmatched. **Always retain the raw original tag strings** — cheap now, impossible to retrofit, and it lets the whole corpus be re-matched when coverage improves.
 
@@ -588,6 +625,86 @@ Two things to lift verbatim from `cue-tracks`:
 
 - **`useSimilarityFilter.ts`** — full 1A–12A/1B–12B → 0–23 map, circular key distance with a +0.5 mode-change penalty, perfect-fifth (10A↔10B) = 0, and two blend-scoring formulas. Self-contained, dependency-free, and currently **untracked and never imported** — pure salvage.
 - **The Camelot sort trick** (`FileList.tsx:120-125`): parse `key.match(/\d+/)` and `key.slice(-1)`, sort on `num * 10 + (mode === 'B' ? 1 : 0)`. Camelot keys sort wrong lexicographically (10A before 2A) in every naive implementation; this is the three-line fix.
+
+### 9.1 Genre — Discogs *styles*, from the CC0 dumps
+
+Genre needed its own answer because none of the obvious sources work. Measured during design:
+
+| Source | Vocabulary | Coverage | Licence | Verdict |
+|---|---|---|---|---|
+| **Discogs monthly dumps** | 15 genres + **757 styles** | best in class for 12"/white-label electronic | **CC0** | **primary** |
+| Discogs REST API | same | same | ToU: no caching beyond need, 6 h staleness rule | gap-filler only |
+| MusicBrainz genres | 2,176 curated | **9.4% of recordings**, 54% of release-groups | CC0 | weak third tier |
+| iTunes `primaryGenreName` | Apple taxonomy | ~30% useful | promo terms | weak prior only |
+| Beatport | best there is | — | **no public dev programme** | unavailable |
+| Last.fm tags | folksonomy | decent | non-commercial, noisy | skip |
+| Spotify | artist-level only | — | ToS bars retention | skip |
+| AcousticBrainz | — | — | **shut down 2022** | do not use |
+
+Three findings that decide it:
+
+1. **MusicBrainz does not solve genre.** Measured over a 1,000-recording sample across ten well-known electronic artists: **9.4% of recordings have any genre at all.** Release-group level is 54%, artist level is 9/10. And that's a *generous upper bound* — famous artists. Use **release-group** genres as a third-tier fallback (per-release, so a techno artist's ambient B-side sits elsewhere); **never surface artist-level genre as a track's genre** — Jamie Jones carries 16 artist genres, which is noise.
+2. **Discogs publishes monthly XML dumps under CC0.** This is the unlock. The REST API's Terms of Use forbid caching *"longer than is necessary"* and displaying anything more than six hours stale — fundamentally incompatible with a persisted facet. The dumps have no such constraint: parse once, keep forever, re-sync monthly. And the join is free — MusicBrainz carries a Discogs URL relationship (`inc=url-rels`) on release, release-group, artist and label, so it's recording → release-group → Discogs master ID → `styles[]` from the local dump, with **zero Discogs API calls**.
+3. **`style`, not `genre`, is the useful field.** Discogs' genre list is 15 entries and everything here is `Electronic`. Its 757 styles include `Tech House`, `Deep House`, `Minimal`, `Dub Techno`, `UK Garage`, `Speed Garage`, `Bassline`, `Ghetto House`, `Juke`, `Footwork`, `Broken Beat`, `Balearic`, `Nu-Disco`, `Electroclash`, `Schranz`. Use the **master** level (canonical rollup); fall back to the release's own styles when there's no master — very common for white labels and digital-only.
+
+> Gaps you'll hit in Discogs' vocabulary: **no Afro House, no Melodic House, no Organic House, no Bass House, no Jersey Club.** It does have Amapiano. Plan local extension terms in the schema from day one, flagged so you always know which can't round-trip.
+
+**Schema:**
+
+```sql
+create table style (
+  canonical      text primary key,
+  family         text not null,       -- house | techno | trance | breaks | bass | jungle | downtempo | disco
+  discogs_native boolean not null
+);
+
+create table style_synonym (
+  key        text primary key,        -- casefolded, de-punctuated match key
+  canonical  text not null references style(canonical),
+  confidence real not null default 1.0
+);
+
+create table track_style (
+  track_id   uuid not null references tracks(id) on delete cascade,
+  style      text not null references style(canonical),
+  source     text not null check (source in
+    ('manual','discogs_master','discogs_release','user_tag','musicbrainz_rg','audio_model','musicbrainz_artist')),
+  confidence real,
+  primary key (track_id, style, source)
+);
+```
+
+**Provenance is mandatory.** Without `source` you can never tell a Discogs-grade label from a model guess, and you can never safely re-run normalisation. Precedence: `manual > discogs_master > discogs_release > cleaned user_tag > musicbrainz_rg > audio_model > musicbrainz_artist`. Take the highest non-empty tier; don't union across tiers except to render as "suggested".
+
+**Normalisation pipeline** (deterministic, idempotent, re-runnable when the synonym table changes):
+
+1. **Reject sentinels first** — drop `^\s*(genre:?|unknown|other|n/?a|none|-{1,}|\d+)\s*$` case-insensitively. This kills the 55 `"Genre: "` rows. Strip a leading `Genre:` prefix before anything else.
+2. **Split** on `[/,;|]`, plus ` - ` and ` & ` when both sides resolve to known styles.
+3. **Trim**, collapse whitespace, strip quotes/brackets/asterisks.
+4. **Casefold → match key**: lowercase, NFKD, strip diacritics, remove `-`, `_`, `.` and all whitespace. So `Tech House`, `tech-house`, `TECHHOUSE`, `Tech  house` all key to `techhouse`.
+5. **Look up** in `style_synonym`. Seeded with the identity mapping of every canonical style plus hand-written aliases (`dnb`/`d&b` → `Drum n Bass`; `minimaltechhouse` → *both* `Minimal` and `Tech House`; bare `progressive` → `Progressive House`).
+6. **Unmatched tokens go to a quarantine table**, never silently dropped and never auto-invented as canonical. The top-50 unmatched strings are the weekly synonym backlog.
+7. **Emit** deduped, sorted `text[]` with a GIN index, plus a derived single-valued `family` so the UI can do coarse chips → nested styles.
+
+Worked: `"Minimal/Techno/Tech House"` and `"Techno/Minimal/Tech House"` both → `{Minimal, Tech House, Techno}`. Order-insensitive, which is the whole point.
+
+**Starter vocabulary — 54 styles** (Discogs spellings; `*` = local extension):
+
+- **House (14):** House, Deep House, Tech House, Progressive House, Electro House, Minimal, Microhouse, Acid House, Garage House, Italo House, Tribal House, Hip-House, Ghetto House, Amapiano
+- **House extensions (4):** Afro House\*, Melodic House\*, Organic House\*, Bass House\*
+- **Techno (7):** Techno, Minimal Techno, Hard Techno, Dub Techno, Deep Techno, Detroit Techno\*, Melodic Techno\*
+- **Trance (5):** Trance, Progressive Trance, Psy-Trance, Goa Trance, Hard Trance
+- **Electro / Disco (7):** Electro, Electroclash, Disco, Nu-Disco, Italo-Disco, Eurodance, New Beat
+- **Breaks / Bass (9):** Breakbeat, Breaks, Progressive Breaks, Big Beat, Broken Beat, UK Garage, Speed Garage, Bassline, UK Funky
+- **Jungle / Hardcore (5):** Drum n Bass, Jungle, Breakcore, Hardcore, Gabber
+- **Club (3):** Juke, Footwork, Baltimore Club
+- **Downtempo (8):** Ambient, Dark Ambient, Downtempo, Trip Hop, Balearic, Leftfield, IDM, Dub
+- **Bass/US (4):** Dubstep, Grime, Trap, Future Bass
+- **Adjacent (3):** Industrial, EBM, Synthwave
+
+**Audio classification is tier four and coarse only.** Essentia's `genre_discogs400` / Discogs-EffNet is CC BY-NC-SA — fine for a non-commercial pool, but it violates §7.3 rule 3 (ship zero `.pb` files), so treat it as opt-in and out of the default image. Regardless of licence, it will **not** reliably separate Tech House from Minimal from Deep House — those differ by groove weight, swing and label context, and Discogs' own human annotators disagree. Use it to assign a **family** only, tagged `source='audio'` with a confidence, and let the UI de-emphasise it.
+
+**The highest-value data in the system is manual correction.** Make the "unclassified" bucket a first-class UI element with a one-click assign, flowing straight to `source='manual'`, which outranks everything.
 
 ---
 
@@ -811,7 +928,8 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 4. **Dedup.** Fingerprints table + GIN, candidate query, offset-swept BER, bands, `assign_track` with the advisory lock, merge/undo, review queue with the divergence strip.
 5. **Pool UI.** Track list, filters, player, download.
 6. **Crates.**
-7. **Catalogue matching.** AcoustID → MusicBrainz → CAA, uploader artwork upload, confirm-match UI.
+7. **Catalogue matching.** AcoustID → MusicBrainz → iTunes artwork → CAA, uploader artwork upload, confirm-match UI with the ±3 s duration gate.
+7b. **Genre.** Discogs dump ingest, MB→Discogs join, synonym table, normalisation of existing dirty tags, two-level facet.
 8. **Calibration pass** at ~2k tracks: reset `T_high`/`T_low` from your own library, tune the `query_items` mask by measurement.
 9. **v2:** credits enforcement, crate sharing, MusicBrainz mirror if no-match rate >25%.
 
@@ -823,7 +941,7 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 |---|---|
 | Wrong auto-merges destroy someone's crates | Merges reversible by design; crates read through `canonical_track_id()` and are never rewritten. Add a "recent merges" feed so wrong ones get noticed. |
 | Review queue is demoralisingly large at first | Expect high hundreds on the first few thousand files. Build the bulk "apply to similar" action earlier than feels necessary. |
-| Vinyl rips at different speeds never dedup | Accepted for v1. Panako 2.0 if it becomes a real problem. |
+| Vinyl rips at different speeds never dedup | **Accepted for v1.** Trigger to revisit: near-miss pairs clustering in the 0.40–0.70 band with 1–3% duration deltas — that signature *is* speed drift. At that point add Panako 2.0 as a second matcher for the residue only. |
 | BPM octave errors | Genre prior + one-click ×2/÷2 persisted to `bpm_display`. Not fixable in the analyser. |
 | Fake-upgrade false positives insult contributors | Abstain generously (5–15% to review is correct), always show the spectrogram, always allow appeal, strikes not bans. |
 | MusicBrainz coverage gap on white-labels | Uploader-supplied artwork and tags as a first-class path, not a fallback. |
@@ -838,7 +956,7 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 Ranked by how much the answer changes the build.
 
 1. Backfill — dump all ~2k tracks day one, or trickle? Sets max-instances and whether Supabase needs a rate limit in front.
-2. Genre: normalise to a controlled vocabulary, or free tags? Decides whether the genre facet is usable at all.
+2. Ingest the full Discogs monthly dump locally (§9.1) — it's the right answer but it's a real chunk of Postgres. In v1, or start with the API as a gap-filler and add the dump when the facet proves itself?
 3. Crate sharing in v2 — read-only publish, or collaborative?
 4. Cap on max `access_expires_at`? Without one a bulk uploader banks years in an afternoon.
 5. Expired member: fully dark, or can still see (not download) their own tracks?
