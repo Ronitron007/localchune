@@ -1,0 +1,10 @@
+.superpowers/
+
+node_modules/
+dist/
+.astro/
+.wrangler/
+.env
+.env.*
+!.env.example
+*.local
