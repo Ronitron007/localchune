@@ -385,7 +385,7 @@ One container, one decode, one pass. Each file runs once, in a Cloudflare Contai
 | Decoded duration | Essentia `AudioLoader` | authoritative; drives the 15-min gate |
 | Chromaprint fingerprint | `fpcalc` (LGPL 2.1) | doubles as the AcoustID lookup key — see §8 |
 | Key | Essentia `KeyExtractor(profileType='edmm')`, plus `edma` and `bgate` stored alongside | edmm ranks first on GiantSteps (~70–72 weighted / ~63.7 correct) vs QM's 50.4 / 39.6. These are **DSP parameters, not neural models** — no CC-NC exposure. |
-| BPM + **downbeats** | **Beat This!** (CPJKU, ISMIR 2024) | **MIT on both code *and* weights.** Better than Essentia's `RhythmExtractor2013`, and it gives **downbeats** — bar-1 alignment, which is what a DJ tool actually needs and what Essentia's free DSP path largely lacks. Derive BPM from the median inter-beat interval. |
+| BPM + **downbeats** | **Beat This!** (CPJKU, ISMIR 2024) | **MIT on both code *and* weights.** Better than Essentia's `RhythmExtractor2013`, and it gives **downbeats** — bar-1 alignment, which is what a DJ tool actually needs and what Essentia's free DSP path largely lacks. **Derive BPM by a least-squares fit over the beat index — never the median inter-beat interval.** See §7.1: measured, the median reports 130.43 on a 128.000 BPM track and 176.47 on a 174.000 one, because the model snaps beats to a ~20 ms grid. The fit gives both exactly. |
 | Loudness | `LoudnessEBUR128` + `ReplayGain` | LUFS-I, LRA |
 | Waveform peaks | inline reshape of the decoded array | 1000 min/max buckets, <0.01 s, ~41 KB JSON |
 | Embedded tags + art | `music-metadata` (MIT) or `mutagen` | keep raw tags forever — enables corpus-wide re-matching later |
