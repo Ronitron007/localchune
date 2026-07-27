@@ -370,6 +370,27 @@ end $$;
 
 revoke execute on function public.grant_days(uuid,int,text,text) from public, anon, authenticated;
 grant  execute on function public.grant_days(uuid,int,text,text) to service_role;
+
+-- ============================================================
+-- BASE TABLE GRANTS — without these, every RLS policy above is
+-- dead code.
+-- ============================================================
+-- RLS filters rows only AFTER Postgres' table-level ACL check passes.
+-- Supabase's current default (`auto_expose_new_tables` unset, matching the
+-- cloud default) gives anon/authenticated/service_role only Dxtm on new
+-- tables — no SELECT/INSERT/UPDATE/DELETE. So a policy without a matching
+-- GRANT never runs: the query fails with "permission denied for table".
+--
+-- And service_role's BYPASSRLS does NOT rescue this. BYPASSRLS skips row
+-- filtering; it does not skip the ACL. A service-role write to a table with
+-- no INSERT grant fails outright.
+grant select on public.members, public.credit_grants to authenticated;
+grant select, insert, update, delete
+   on public.allowlist, public.members, public.credit_grants to service_role;
+
+-- allowlist is deliberately NOT granted to authenticated: it has zero
+-- policies for that role, so it stays invisible to clients. Owners reach it
+-- only through the security definer functions in Task 6.
 ```
 
 - [ ] **Step 2: Apply it locally**
@@ -414,6 +435,57 @@ rollback;
 
 Run: `npx supabase test db`
 Expected: 4 tests pass. **The second and third assertions are the point** — they prove a double-fire cannot double-grant.
+
+- [ ] **Step 4b: Prove the RLS policies are actually reachable**
+
+Every assertion above calls `grant_days()`, which is `security definer` and therefore immune to the base-ACL problem. That means the suite above would still pass with every table grant missing and all three read policies dead. Test the role-based paths explicitly.
+
+Create `supabase/tests/rls_reachable.sql`:
+
+```sql
+begin;
+select plan(6);
+
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
+  ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
+insert into public.members (user_id, email) values
+  ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
+  ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000c1"}';
+
+-- If the base GRANT is missing these raise 42501 "permission denied for
+-- table", NOT an empty result. lives_ok distinguishes the two.
+select lives_ok( $$ select 1 from public.members limit 1 $$,
+                 'authenticated can reach members at all (base grant present)' );
+select is( (select count(*)::int from public.members), 1,
+           'members RLS returns exactly the caller''s own row' );
+select lives_ok( $$ select 1 from public.credit_grants limit 1 $$,
+                 'authenticated can reach credit_grants' );
+
+-- allowlist stays invisible. Note this is NOT "returns zero rows" — it has no
+-- base grant to authenticated at all, so the query is refused at the ACL
+-- before RLS runs. throws_ok is the accurate assertion; a count(*) = 0 check
+-- would never even evaluate.
+select throws_ok( $$ select 1 from public.allowlist $$, '42501',
+                  'allowlist is refused to authenticated at the ACL' );
+
+reset role;
+set local role service_role;
+select lives_ok( $$ insert into public.allowlist (email) values ('svc@gmail.com') $$,
+                 'service_role can write allowlist (BYPASSRLS does not grant ACL)' );
+select lives_ok( $$ update public.members set role = 'member'
+                     where user_id = '00000000-0000-0000-0000-0000000000c1' $$,
+                 'service_role can update members' );
+
+select * from finish();
+rollback;
+```
+
+Run: `npx supabase test db`
+Expected: 10 assertions pass across both files. **If any `lives_ok` fails with `42501 permission denied for table`, the base grants are missing** — that is the exact failure this step exists to catch, and it is invisible to a suite that only calls definer functions.
 
 - [ ] **Step 5: Commit**
 
