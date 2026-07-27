@@ -1,5 +1,5 @@
 begin;
-select plan(10);
+select plan(17);
 
 insert into public.allowlist (email) values ('yes@gmail.com');
 
@@ -72,6 +72,30 @@ select is(
   (select count(*)::int from public.credit_grants
     where user_id = '00000000-0000-0000-0000-0000000000a1'),
   1, 'the rejected duplicate insert did not create a second grant (idempotent through grant_days)');
+
+-- [Important-1] allowlist.email must already be normalised. Without this
+-- CHECK, inserting the dotted form creates a dead invite: the incoming
+-- address folds to rohan@gmail.com before lookup and never matches the
+-- stored dotted row, and a plain rohan@gmail.com doesn't match it either.
+select throws_ok(
+  $$ insert into public.allowlist (email) values ('r.o.h.a.n@gmail.com') $$,
+  '23514', null,
+  'un-normalised allowlist email violates the CHECK constraint');
+
+select lives_ok(
+  $$ insert into public.allowlist (email) values ('rohan@gmail.com') $$,
+  'normalised allowlist email is accepted');
+
+-- [Minor-3] normalize_email(): null/''/wrong @-count, and an empty local or
+-- domain part for ANY domain (not just Gmail), must all return null.
+select is( public.normalize_email(''), null, 'empty string normalises to null' );
+select is( public.normalize_email('@foo.com'), null, 'empty local part normalises to null (non-Gmail)' );
+select is( public.normalize_email('foo@'), null, 'empty domain part normalises to null (non-Gmail)' );
+select is( public.normalize_email(null), null, 'null input normalises to null' );
+
+-- Regression guard: Gmail dot/plus folding must be unchanged by the rewrite.
+select is( public.normalize_email('r.o.h.a.n+dj@googlemail.com'), 'rohan@gmail.com',
+  'gmail dot/plus folding still works after the null-handling rewrite' );
 
 select * from finish();
 rollback;
