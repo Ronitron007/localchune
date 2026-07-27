@@ -3,15 +3,27 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { defineMiddleware } from 'astro:middleware'
-import { serverClient } from './lib/supabase.server'
+import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
 
 const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/auth/signout'])
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   ctx.locals.member = null
-  ctx.locals.accessToken = null
 
-  const sb = serverClient(ctx.cookies, ctx.request)
+  // Captured by serverClient's setAll whenever this request's auth cookies
+  // actually get written (e.g. a near-expiry refresh below). Applied to
+  // whichever Response this handler ends up returning, on every return
+  // path — see withAuthCookieHeaders.
+  let authHeaders: AuthCookieHeaders | undefined
+  const sb = serverClient(ctx.cookies, ctx.request, (headers) => {
+    authHeaders = headers
+  })
+  // Shared with the rest of the request so Task 6's admin page/API route
+  // reuse this exact client instead of building a second one. A second
+  // client's getAll would read the original Cookie request header, missing
+  // any refresh this middleware just performed — see src/env.d.ts.
+  ctx.locals.supabase = sb
+
   // getSession() is what triggers @supabase/ssr's lazy session load and,
   // when the access token is expired or near expiry, an on-demand refresh
   // that gets written back to cookies via setAll above — this is the whole
@@ -31,16 +43,15 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
       console.error('middleware: current_member RPC failed:', error.message)
     } else if (data && data.length === 1) {
       ctx.locals.member = data[0]
-      ctx.locals.accessToken = session.access_token
     }
   }
 
   const path = new URL(ctx.request.url).pathname
   if (!ctx.locals.member && !PUBLIC_PATHS.has(path)) {
-    return ctx.redirect('/login')
+    return withAuthCookieHeaders(ctx.redirect('/login'), authHeaders)
   }
   if (path.startsWith('/admin') && ctx.locals.member?.role !== 'owner') {
-    return new Response('Not found', { status: 404 })
+    return withAuthCookieHeaders(new Response('Not found', { status: 404 }), authHeaders)
   }
-  return next()
+  return withAuthCookieHeaders(await next(), authHeaders)
 })

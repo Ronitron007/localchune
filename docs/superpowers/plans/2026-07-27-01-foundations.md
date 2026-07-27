@@ -936,7 +936,7 @@ git commit -m "feat: google oauth session, middleware guard, derived credits"
 - Create: `supabase/migrations/20260727120200_03_admin_rpc.sql`
 
 **Interfaces:**
-- Consumes: `normalizeEmail` (Task 2), `serverClient(cookies, request)` (Task 5), `Member` (Task 5).
+- Consumes: `normalizeEmail` (Task 2), `Astro.locals.supabase` (Task 5 — the cookie-bound client middleware already built for this request; do not call `serverClient(cookies, request)` again here, see the note below), `Member` (Task 5).
 - Produces: `POST /api/admin/allowlist {email, note?}` → `201 {email}`; `DELETE /api/admin/allowlist {email}` → `200 {revoked: true}`.
 
 - [ ] **Step 1: Write the admin overview RPC**
@@ -1008,7 +1008,6 @@ The `public.is_owner()` guard inside each function body is what makes `security 
 // src/pages/api/admin/allowlist.ts
 import type { APIRoute } from 'astro'
 import { normalizeEmail } from '../../../lib/email'
-import { serverClient } from '../../../lib/supabase.server'
 
 /** 404, not 403 — do not confirm the route exists to a non-owner. */
 const guard = (locals: App.Locals) => locals.member?.role === 'owner'
@@ -1022,30 +1021,34 @@ async function readEmail(request: Request): Promise<string | null> {
   }
 }
 
-export const POST: APIRoute = async ({ request, locals, cookies }) => {
+export const POST: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  // The caller's own cookie session, NOT a service key: admin_invite re-checks
+  // locals.supabase — the cookie-bound client middleware already built for
+  // this request — NOT a second serverClient(cookies, request) and NOT a
+  // service key. A second client's getAll reads the original Cookie request
+  // header, so if middleware just rotated the token via a refresh, the
+  // second client sees a stale refresh token and can hit "Already Used",
+  // making this RPC run unauthenticated and silently return 0 rows. Reusing
+  // locals.supabase avoids that race. admin_invite also re-checks
   // is_owner() in the database, so authorisation is enforced in one place.
-  const sb = serverClient(cookies, request)
-  const { data, error } = await sb.rpc('admin_invite', { p_email: email })
+  const { data, error } = await locals.supabase.rpc('admin_invite', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ email: data }, { status: 201 })
 }
 
-export const DELETE: APIRoute = async ({ request, locals, cookies }) => {
+export const DELETE: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  const sb = serverClient(cookies, request)
-  const { error } = await sb.rpc('admin_revoke', { p_email: email })
+  const { error } = await locals.supabase.rpc('admin_revoke', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ revoked: true })
 }
 ```
 
-> **API note.** `serverClient(cookies, request)` comes from `@supabase/ssr` and reads the session from cookies. There is **no `serviceClient`** — it was deleted in Task 5 because `import.meta.env` cannot deliver a non-`PUBLIC_` secret to the bundle, and because admin authorisation belongs in the database, not in a Worker route. Do not reintroduce it. `Astro.locals.runtime.env` also does not exist — it was removed in Astro v6.
+> **API note.** `locals.supabase` is the cookie-bound client middleware already built for this request — reuse it instead of calling `serverClient(cookies, request)` again (see src/middleware.ts, src/env.d.ts). There is **no `serviceClient`** — it was deleted in Task 5 because `import.meta.env` cannot deliver a non-`PUBLIC_` secret to the bundle, and because admin authorisation belongs in the database, not in a Worker route. Do not reintroduce it. `Astro.locals.runtime.env` also does not exist — it was removed in Astro v6.
 
 Revoking sets `revoked_at`; it does not delete. The member keeps their data and their uploads keep their attribution (PRD §11).
 
@@ -1097,10 +1100,11 @@ export default function AllowlistForm() {
 ---
 // src/pages/admin/index.astro
 import AllowlistForm from '../../components/AllowlistForm'
-import { serverClient } from '../../lib/supabase.server'
 
-const sb = serverClient(Astro.cookies, Astro.request)
-const { data: rows, error } = await sb.rpc('admin_members')
+// Astro.locals.supabase — reuse the cookie-bound client middleware already
+// built for this request, not a second serverClient(cookies, request); see
+// the API note in the allowlist API route above for why that matters.
+const { data: rows, error } = await Astro.locals.supabase.rpc('admin_members')
 if (error) console.error('admin_members failed:', error.message)
 ---
 <html><body>

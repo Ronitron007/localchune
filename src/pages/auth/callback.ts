@@ -3,7 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-import { serverClient } from '../../lib/supabase.server'
+import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from '../../lib/supabase.server'
 
 export const GET: APIRoute = async ({ url, cookies, redirect, request }) => {
   const err = url.searchParams.get('error_description')
@@ -12,17 +12,23 @@ export const GET: APIRoute = async ({ url, cookies, redirect, request }) => {
   const code = url.searchParams.get('code')
   if (!code) return redirect('/login')
 
+  let authHeaders: AuthCookieHeaders | undefined
   // The code_verifier signInWithOAuth wrote into a cookie via browserClient()
   // (src/lib/supabase.ts) is read back here through the Cookie request
   // header — see src/lib/supabase.server.ts for why. Without @supabase/ssr,
   // this exchange was impossible: the verifier lived only in the browser's
   // localStorage, which a server-side client never sees.
-  const sb = serverClient(cookies, request)
+  const sb = serverClient(cookies, request, (headers) => {
+    authHeaders = headers
+  })
   const { data, error } = await sb.auth.exchangeCodeForSession(code)
   if (error || !data.session) {
-    return redirect(`/login?error_description=${encodeURIComponent(error?.message ?? 'sign-in failed')}`)
+    return withAuthCookieHeaders(
+      redirect(`/login?error_description=${encodeURIComponent(error?.message ?? 'sign-in failed')}`),
+      authHeaders,
+    )
   }
   // @supabase/ssr writes the session cookies itself via setAll (see
   // serverClient) — no manual cookies.set() needed here.
-  return redirect('/')
+  return withAuthCookieHeaders(redirect('/'), authHeaders)
 }

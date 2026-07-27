@@ -9,7 +9,45 @@ import type { AstroCookies } from 'astro'
 // secure:true breaks cookies on http://localhost in some browsers. Must
 // match the cookieOptions in src/lib/supabase.ts — both clients read and
 // write the same cookie names.
-const cookieOptions: CookieOptionsWithName = { secure: import.meta.env.PROD }
+//
+// httpOnly:true — deliberately NOT set in src/lib/supabase.ts's
+// cookieOptions, only here. Any XSS can read a non-HttpOnly cookie via
+// document.cookie and exfiltrate both the access and refresh tokens, so the
+// session cookie must be HttpOnly. This is safe in this app specifically
+// because browserClient() (src/lib/supabase.ts) exists solely to call
+// signInWithOAuth — the browser never queries Supabase directly, so it
+// never needs to read the session cookie. It writes only the separate
+// short-lived "-code-verifier" cookie, a different cookie unaffected by
+// this flag.
+//
+// TRADEOFF for future work: if a browser-side browserClient() query is ever
+// added (e.g. sb.auth.getSession() or a .from() call run in the browser),
+// it will silently see no session — document.cookie cannot read an
+// HttpOnly cookie, so @supabase/ssr's browser storage will look empty.
+// Prefer moving that query server-side. Only reconsider this flag if that
+// is genuinely not possible.
+const cookieOptions: CookieOptionsWithName = { secure: import.meta.env.PROD, httpOnly: true }
+
+/**
+ * Headers @supabase/ssr passes to `setAll` whenever it actually writes auth
+ * cookies (sign-in, sign-out, token refresh). Per the library's own docs,
+ * these prevent a CDN/reverse proxy from caching a response that carries a
+ * session token — otherwise "one user's session token can be served to a
+ * different user." AstroCookies has no response-header API, so serverClient
+ * hands them back through this callback instead of applying them itself;
+ * the caller applies them to whatever Response it returns.
+ */
+export type AuthCookieHeaders = Record<string, string>
+
+/** Copies AuthCookieHeaders onto a Response. No-op if headers is undefined. */
+export function withAuthCookieHeaders(response: Response, headers: AuthCookieHeaders | undefined): Response {
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      response.headers.set(key, value)
+    }
+  }
+  return response
+}
 
 /**
  * Server-side client backed by the request's cookies. @supabase/ssr keeps
@@ -24,16 +62,26 @@ const cookieOptions: CookieOptionsWithName = { secure: import.meta.env.PROD }
  * to write the response, matching how the rest of the app already does it.
  *
  * Build a fresh client per request. Never cache/share one across requests.
+ *
+ * `onAuthCookiesWritten`, if given, is called with @supabase/ssr's
+ * Cache-Control/Expires/Pragma headers every time `setAll` actually writes
+ * cookies (i.e. not on requests where nothing changed) — see
+ * `withAuthCookieHeaders` above.
  */
-export function serverClient(cookies: AstroCookies, request: Request): SupabaseClient {
+export function serverClient(
+  cookies: AstroCookies,
+  request: Request,
+  onAuthCookiesWritten?: (headers: AuthCookieHeaders) => void,
+): SupabaseClient {
   return createServerClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY, {
     cookieOptions,
     cookies: {
       getAll: () => parseCookieHeader(request.headers.get('cookie') ?? ''),
-      setAll: (cookiesToSet) => {
+      setAll: (cookiesToSet, headers) => {
         for (const { name, value, options } of cookiesToSet) {
           cookies.set(name, value, options)
         }
+        if (Object.keys(headers).length > 0) onAuthCookiesWritten?.(headers)
       },
     },
   })
