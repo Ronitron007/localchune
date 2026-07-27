@@ -17,10 +17,7 @@ export function creditsRemaining(expiresAt: string, now: Date = new Date()): num
   return ms <= 0 ? 0 : Math.ceil(ms / DAY_MS)
 }
 
-// v2 enforcement hook. Credit/expiry enforcement is out of scope for M1 (see
-// PRD) — deliberately NOT wired into src/middleware.ts yet. An expired
-// member still reaches the app today, showing "0 credits". Kept + tested so
-// v2 can gate on it without redesigning this function.
+/** True once access_expires_at is in the past. Wired into src/middleware.ts. */
 export function isActive(m: Member, now: Date = new Date()): boolean {
   return new Date(m.access_expires_at).getTime() > now.getTime()
 }

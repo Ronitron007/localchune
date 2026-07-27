@@ -156,10 +156,16 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-# Astro dev serves on 4321, not the CLI template's 3000. Update site_url to the
-# deployed origin at Task 7 — it is the fallback redirect target and appears in
-# emails.
-site_url = "http://localhost:4321"
+# GoTrue validates redirectTo against additional_redirect_urls below and
+# falls back to site_url on no match. Astro dev serves on 4321, not the CLI
+# template's 3000. site_url is read from the environment so production can
+# be set without ever pointing local dev at it (and vice versa) — a
+# hardcoded "http://localhost:4321" here would make every production
+# sign-in land on localhost, since GoTrue falls back to site_url when
+# redirectTo doesn't match the allow-list below.
+# Export SUPABASE_AUTH_SITE_URL before any `supabase config push`, e.g.:
+#   export SUPABASE_AUTH_SITE_URL=https://your-production-domain.example
+site_url = "env(SUPABASE_AUTH_SITE_URL)"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
@@ -168,6 +174,8 @@ site_url = "http://localhost:4321"
 additional_redirect_urls = [
   "http://localhost:4321/auth/callback",
   "http://127.0.0.1:4321/auth/callback",
+  # PRODUCTION PLACEHOLDER — replace before deploy, then uncomment:
+  # "https://your-production-domain.example/auth/callback",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -226,7 +234,12 @@ web3 = 30
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.
-enable_signup = true
+# Google is the only sign-in method for localchune (see the Google stanza
+# below). This is a reachable, anonymous, auto-confirming signup path
+# (enable_confirmations = false) guarded only by hook_before_user_created's
+# provider = 'google' check — disabled outright rather than relying on that
+# one string comparison as the sole gate.
+enable_signup = false
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true

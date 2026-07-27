@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(18);
 
 insert into public.allowlist (email) values ('yes@gmail.com');
 
@@ -96,6 +96,13 @@ select is( public.normalize_email(null), null, 'null input normalises to null' )
 -- Regression guard: Gmail dot/plus folding must be unchanged by the rewrite.
 select is( public.normalize_email('r.o.h.a.n+dj@googlemail.com'), 'rohan@gmail.com',
   'gmail dot/plus folding still works after the null-handling rewrite' );
+
+-- [Finding 5] JS String.prototype.trim() strips all Unicode whitespace, but
+-- Postgres trim(text) strips only U+0020. normalize_email now uses
+-- btrim(p_raw, E' \t\n\r\f\v') so a leading tab folds the same way
+-- src/lib/email.ts's normalizeEmail() already does.
+select is( public.normalize_email(E'\tdj@gmail.com'), 'dj@gmail.com',
+  'a leading tab is stripped, matching JS trim() semantics' );
 
 select * from finish();
 rollback;

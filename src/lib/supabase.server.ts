@@ -87,13 +87,21 @@ export function serverClient(
   })
 }
 
-// serviceClient() was removed. import.meta.env.SUPABASE_SERVICE_KEY is
-// undefined in both dev and prod builds — Vite's envPrefix only exposes
-// PUBLIC_-prefixed vars to the bundle — so any call would have thrown
+// serviceClient() was removed. import.meta.env.SUPABASE_SERVICE_KEY would be
+// undefined in the bundled code even if referenced — Vite's envPrefix only
+// exposes PUBLIC_-prefixed vars there — so any call would have thrown
 // "supabaseKey is required." It also had zero callers: Task 6's admin path
 // uses the caller's own token against security-definer RPCs (admin_invite /
 // admin_revoke) which re-check is_owner() in the database, so the service
-// key is not needed by the app at all. SUPABASE_SERVICE_KEY stays in .env
-// for CLI tooling. If a future task genuinely needs it in the Worker, the
-// correct mechanism on this adapter is `import { env } from
-// "cloudflare:workers"` plus `wrangler secret put`, not `import.meta.env`.
+// key is not needed by the app at all.
+//
+// That "undefined in the bundle" guarantee does NOT extend to dist/ as a
+// whole: `astro build` also copies every var in .env verbatim into
+// dist/server/.dev.vars (a raw file on disk, outside Vite's bundling), so a
+// secret placed in .env — bundle-reachable or not — still ends up
+// world-readable in the build output. SUPABASE_SERVICE_KEY and
+// SUPABASE_DB_PASSWORD live in the repo-root .secrets.env instead, which
+// astro build never opens, and are sourced by hand for CLI tooling only. If
+// a future task genuinely needs the service key in the Worker, the correct
+// mechanism on this adapter is `import { env } from "cloudflare:workers"`
+// plus `wrangler secret put`, not .env / import.meta.env.

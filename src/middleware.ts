@@ -4,6 +4,7 @@
 
 import { defineMiddleware } from 'astro:middleware'
 import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
+import { isActive } from './lib/session'
 
 const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/auth/signout'])
 
@@ -46,11 +47,19 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     }
   }
 
+  // A revoked member (admin_revoke sets access_expires_at = now()) is
+  // treated as signed out, not merely "0 credits". This check reads
+  // access_expires_at fresh from current_member() above on every request —
+  // no JWT claim caching involved — so revocation takes effect immediately.
+  if (ctx.locals.member && !isActive(ctx.locals.member)) {
+    ctx.locals.member = null
+  }
+
   const path = new URL(ctx.request.url).pathname
   if (!ctx.locals.member && !PUBLIC_PATHS.has(path)) {
     return withAuthCookieHeaders(ctx.redirect('/login'), authHeaders)
   }
-  if (path.startsWith('/admin') && ctx.locals.member?.role !== 'owner') {
+  if ((path.startsWith('/admin') || path.startsWith('/api/admin')) && ctx.locals.member?.role !== 'owner') {
     return withAuthCookieHeaders(new Response('Not found', { status: 404 }), authHeaders)
   }
   return withAuthCookieHeaders(await next(), authHeaders)

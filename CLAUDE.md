@@ -10,14 +10,18 @@ reset to defaults on push. We are forced to push it because the
 platform's entire security boundary.
 
 Consequence: **every auth provider must be declared in config.toml.** Google is,
-with `env()` substitution for its credentials. Before any `config push`, export:
+with `env()` substitution for its credentials. `site_url` is also `env()`-substituted
+(`SUPABASE_AUTH_SITE_URL`) — unset, the push writes an empty site_url and every
+production sign-in redirect falls back to it instead of the real domain. Before
+any `config push`, export:
 
 ```
 SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID
 SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET
+SUPABASE_AUTH_SITE_URL
 ```
 
-If they are unset, the push writes empty credentials and locks everyone out.
+If the Google vars are unset, the push writes empty credentials and locks everyone out.
 Verify after every push:
 
 ```
