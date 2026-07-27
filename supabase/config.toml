@@ -334,6 +334,42 @@ skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
 
+# ============================================================================
+# Google — the ONLY sign-in method for localchune.
+#
+# READ THIS BEFORE RUNNING `supabase config push`:
+# config.toml is AUTHORITATIVE for a linked project. Anything not declared
+# here gets reset to its default on push. We are forced to push this file
+# because the before_user_created auth hook (line ~279) is registered in it,
+# and that hook is the platform's entire security boundary.
+#
+# So Google MUST be declared here. If this stanza is missing, a config push
+# silently disables Google sign-in and locks every member out — which is
+# exactly what happened once already.
+#
+# The client id and secret are read from the ENVIRONMENT at push time. They
+# are NOT needed by the app: the browser calls signInWithOAuth({provider:
+# 'google'}) and Supabase performs the code exchange server-side, so the app
+# never sees the secret. Only the CLI needs them, and only when pushing.
+#
+# Set them in your shell (or a gitignored .env you source) before pushing:
+#   export SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...
+#   export SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
+#
+# Google Cloud Console -> Credentials -> your OAuth client -> Authorised
+# redirect URIs must contain:
+#   https://espiyvmjpmjobovmtslx.supabase.co/auth/v1/callback
+# ============================================================================
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+# Required for local sign-in with Google.
+skip_nonce_check = true
+email_optional = false
+
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
