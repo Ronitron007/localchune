@@ -8,7 +8,7 @@ The PRD covers eight subsystems. Each gets its own plan, and each produces worki
 |---|---|---|---|---|---|
 | 1 | **Foundations** — allowlist auth, core schema, RLS, admin page | **Shipped** — deployed to [`localchune.butternutcrack.com`](https://localchune.butternutcrack.com) | [`01-foundations.md`](2026-07-27-01-foundations.md) | — | You can log in, a non-allowlisted Google account cannot |
 | 2 | **Upload** — presigned PUT/multipart, duration pre-flight, batch UI, server re-verify | Planned — plan complete (Tasks 1–8), not yet implemented | [`02-upload.md`](2026-07-27-02-upload.md) | 1 | 200 files land in R2 with `files` rows and correct byte counts |
-| 3 | **Analysis worker** — the container, Cloud Run, Queues, all DSP | Not started | [`03-analysis-worker.md`](2026-07-27-03-analysis-worker.md) | 2 | Every uploaded file gets key, BPM, loudness, peaks, fingerprint, forensics |
+| 3 | **Analysis worker** — the container on Cloudflare Containers, Queues, all DSP | Not started | [`03-analysis-worker.md`](2026-07-27-03-analysis-worker.md) | 2 | Every uploaded file gets key, BPM, loudness, peaks, fingerprint, forensics |
 | 4 | **Dedup** — fingerprint index, BER matching, merge/undo, review queue | Not started | *not yet written* | 3 | Duplicate uploads resolve to one `track_id`, reversibly |
 | 5 | **Pool UI** — track list, filters, player, download | Not started | *not yet written* | 3 | The pool is usable |
 | 6 | **Crates** | Not started | *not yet written* | 5 | — |
