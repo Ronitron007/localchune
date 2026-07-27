@@ -1,0 +1,22 @@
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+
+export type Member = {
+  user_id: string
+  email: string
+  role: 'member' | 'owner'
+  access_expires_at: string
+}
+
+const DAY_MS = 86_400_000
+
+/** Credits are a display projection of access_expires_at. Never stored. */
+export function creditsRemaining(expiresAt: string, now: Date = new Date()): number {
+  const ms = new Date(expiresAt).getTime() - now.getTime()
+  return ms <= 0 ? 0 : Math.ceil(ms / DAY_MS)
+}
+
+export function isActive(m: Member, now: Date = new Date()): boolean {
+  return new Date(m.access_expires_at).getTime() > now.getTime()
+}
