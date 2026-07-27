@@ -4,6 +4,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import AllowlistForm from '../../components/AllowlistForm'
+import RevokeButton from '../../components/RevokeButton'
 
 // Astro.locals.supabase — reuse the cookie-bound client middleware already
 // built for this request, not a second serverClient(cookies, request); see
@@ -21,7 +22,7 @@ if (error) console.error('admin_members failed:', error.message)
   <h1>Members</h1>
   <AllowlistForm client:load />
   <table>
-    <thead><tr><th>Email</th><th>Role</th><th>Credits</th><th>Signed up</th><th>Status</th></tr></thead>
+    <thead><tr><th>Email</th><th>Role</th><th>Credits</th><th>Signed up</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
       {(rows ?? []).map((r: any) => (
         <tr>
@@ -29,6 +30,15 @@ if (error) console.error('admin_members failed:', error.message)
           <td>{r.signed_up ? r.credits : '—'}</td>
           <td>{r.signed_up ? 'yes' : 'pending'}</td>
           <td>{r.revoked_at ? 'revoked' : 'active'}</td>
+          <td>
+            {r.role === 'owner' ? (
+              '—'
+            ) : r.revoked_at ? (
+              'revoked'
+            ) : (
+              <RevokeButton email={r.email} client:load />
+            )}
+          </td>
         </tr>
       ))}
     </tbody>

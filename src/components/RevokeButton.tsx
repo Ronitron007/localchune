@@ -1,0 +1,33 @@
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+
+import { createSignal } from 'solid-js'
+
+export default function RevokeButton(props: { email: string }) {
+  const [status, setStatus] = createSignal('')
+
+  const revoke = async () => {
+    if (!confirm(`Revoke access for ${props.email}?`)) return
+    setStatus('revoking…')
+    const res = await fetch('/api/admin/allowlist', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: props.email }),
+    })
+    if (res.ok) {
+      setStatus('revoked')
+      location.reload()
+    } else {
+      const j = (await res.json().catch(() => ({}))) as { error?: string }
+      setStatus(j.error ?? `failed (${res.status})`)
+    }
+  }
+
+  return (
+    <span>
+      <button type="button" onClick={revoke}>Revoke</button>
+      <span aria-live="polite">{status()}</span>
+    </span>
+  )
+}
