@@ -11,5 +11,17 @@
   "observability": { "enabled": true },
   "routes": [
     { "pattern": "localchune.butternutcrack.com", "custom_domain": true }
+  ],
+  "vars": { "R2_BUCKET": "localchune-audio" },
+  // The binding is declared for M3+ (server-side reads of derived artifacts)
+  // and for `wrangler r2 object` tooling parity. The ingest path in this
+  // milestone deliberately does NOT use it: presigned URLs necessarily point
+  // at the real bucket, so in `astro dev` a local binding would resolve to
+  // miniflare's own empty R2 and the finalize HEAD would report "object
+  // missing" for an upload that plainly succeeded. `"remote": true` keeps
+  // the binding pointed at the real bucket in dev so the two can never
+  // disagree.
+  "r2_buckets": [
+    { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
   ]
 }
