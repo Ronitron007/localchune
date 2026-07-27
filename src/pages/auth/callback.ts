@@ -3,32 +3,26 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-import { createClient } from '@supabase/supabase-js'
+import { serverClient } from '../../lib/supabase.server'
 
-export const GET: APIRoute = async ({ url, cookies, redirect }) => {
+export const GET: APIRoute = async ({ url, cookies, redirect, request }) => {
   const err = url.searchParams.get('error_description')
   if (err) return redirect(`/login?error_description=${encodeURIComponent(err)}`)
 
   const code = url.searchParams.get('code')
   if (!code) return redirect('/login')
 
-  // See src/middleware.ts for why this is import.meta.env rather than
-  // locals.runtime.env — that API was removed by the installed Astro v6+
-  // @astrojs/cloudflare, and this app has no wrangler env bindings.
-  const env = import.meta.env as unknown as Record<string, string>
-  const sb = createClient(env.PUBLIC_SUPABASE_URL, env.PUBLIC_SUPABASE_ANON_KEY, {
-    auth: { flowType: 'pkce', persistSession: false },
-  })
+  // The code_verifier signInWithOAuth wrote into a cookie via browserClient()
+  // (src/lib/supabase.ts) is read back here through the Cookie request
+  // header — see src/lib/supabase.server.ts for why. Without @supabase/ssr,
+  // this exchange was impossible: the verifier lived only in the browser's
+  // localStorage, which a server-side client never sees.
+  const sb = serverClient(cookies, request)
   const { data, error } = await sb.auth.exchangeCodeForSession(code)
   if (error || !data.session) {
     return redirect(`/login?error_description=${encodeURIComponent(error?.message ?? 'sign-in failed')}`)
   }
-  cookies.set('sb-access-token', data.session.access_token, {
-    path: '/', httpOnly: true, secure: true, sameSite: 'lax',
-    maxAge: data.session.expires_in,
-  })
-  cookies.set('sb-refresh-token', data.session.refresh_token, {
-    path: '/', httpOnly: true, secure: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30,
-  })
+  // @supabase/ssr writes the session cookies itself via setAll (see
+  // serverClient) — no manual cookies.set() needed here.
   return redirect('/')
 }

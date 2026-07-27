@@ -3,8 +3,12 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-export const POST: APIRoute = async ({ cookies, redirect }) => {
-  cookies.delete('sb-access-token', { path: '/' })
-  cookies.delete('sb-refresh-token', { path: '/' })
+import { serverClient } from '../../lib/supabase.server'
+
+export const POST: APIRoute = async ({ cookies, redirect, request }) => {
+  // signOut() clears whatever cookies this client owns via its setAll
+  // adapter, rather than us guessing hardcoded cookie names to delete.
+  const sb = serverClient(cookies, request)
+  await sb.auth.signOut()
   return redirect('/login')
 }

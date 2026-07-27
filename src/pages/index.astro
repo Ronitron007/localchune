@@ -5,7 +5,13 @@
 import { creditsRemaining } from '../lib/session'
 const m = Astro.locals.member!
 ---
-<html><body>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>localchune</title>
+</head>
+<body>
   <h1>localchune</h1>
   <p>{m.email} — {creditsRemaining(m.access_expires_at)} credits</p>
   {m.role === 'owner' && <a href="/admin">Admin</a>}
