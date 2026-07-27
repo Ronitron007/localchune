@@ -999,15 +999,10 @@ The `public.is_owner()` guard inside each function body is what makes `security 
 // src/pages/api/admin/allowlist.ts
 import type { APIRoute } from 'astro'
 import { normalizeEmail } from '../../../lib/email'
-import { userClient } from '../../../lib/supabase.server'
+import { serverClient } from '../../../lib/supabase.server'
 
 /** 404, not 403 — do not confirm the route exists to a non-owner. */
 const guard = (locals: App.Locals) => locals.member?.role === 'owner'
-
-function client(locals: App.Locals) {
-  const env = (locals.runtime?.env ?? import.meta.env) as Record<string, string>
-  return userClient(env, locals.accessToken!)
-}
 
 async function readEmail(request: Request): Promise<string | null> {
   const body = (await request.json().catch(() => ({}))) as { email?: string }
@@ -1018,26 +1013,30 @@ async function readEmail(request: Request): Promise<string | null> {
   }
 }
 
-export const POST: APIRoute = async ({ request, locals }) => {
+export const POST: APIRoute = async ({ request, locals, cookies }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  // The caller's own token, NOT the service key: admin_invite re-checks
+  // The caller's own cookie session, NOT a service key: admin_invite re-checks
   // is_owner() in the database, so authorisation is enforced in one place.
-  const { data, error } = await client(locals).rpc('admin_invite', { p_email: email })
+  const sb = serverClient(cookies, request)
+  const { data, error } = await sb.rpc('admin_invite', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ email: data }, { status: 201 })
 }
 
-export const DELETE: APIRoute = async ({ request, locals }) => {
+export const DELETE: APIRoute = async ({ request, locals, cookies }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  const { error } = await client(locals).rpc('admin_revoke', { p_email: email })
+  const sb = serverClient(cookies, request)
+  const { error } = await sb.rpc('admin_revoke', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ revoked: true })
 }
 ```
+
+> **API note.** `serverClient(cookies, request)` comes from `@supabase/ssr` and reads the session from cookies. There is **no `serviceClient`** — it was deleted in Task 5 because `import.meta.env` cannot deliver a non-`PUBLIC_` secret to the bundle, and because admin authorisation belongs in the database, not in a Worker route. Do not reintroduce it. `Astro.locals.runtime.env` also does not exist — it was removed in Astro v6.
 
 Revoking sets `revoked_at`; it does not delete. The member keeps their data and their uploads keep their attribution (PRD §11).
 
@@ -1089,11 +1088,11 @@ export default function AllowlistForm() {
 ---
 // src/pages/admin/index.astro
 import AllowlistForm from '../../components/AllowlistForm'
-import { userClient } from '../../lib/supabase.server'
+import { serverClient } from '../../lib/supabase.server'
 
-const env = (Astro.locals.runtime?.env ?? import.meta.env) as Record<string, string>
-const sb = userClient(env, Astro.locals.accessToken!)
-const { data: rows } = await sb.rpc('admin_members')
+const sb = serverClient(Astro.cookies, Astro.request)
+const { data: rows, error } = await sb.rpc('admin_members')
+if (error) console.error('admin_members failed:', error.message)
 ---
 <html><body>
   <h1>Members</h1>
