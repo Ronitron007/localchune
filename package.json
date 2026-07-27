@@ -11,7 +11,8 @@
     "preview": "astro preview",
     "astro": "astro",
     "test": "vitest run",
-    "check": "astro check"
+    "check": "astro check",
+    "deploy": "astro build && wrangler deploy"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.1.4",
