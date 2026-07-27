@@ -1,8 +1,15 @@
 begin;
 select plan(4);
 
+insert into public.allowlist (email) values ('a@b.com');
 insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000001','a@b.com');
-insert into public.members (user_id, email) values ('00000000-0000-0000-0000-000000000001','a@b.com');
+-- Task 4's on_auth_user_created trigger already provisioned this member and
+-- granted an 'invite' credit as a side effect of the insert above. Reset
+-- both so this file keeps testing grant_days() in isolation, exactly as
+-- before that trigger existed.
+delete from public.credit_grants where user_id = '00000000-0000-0000-0000-000000000001';
+update public.members set access_expires_at = now()
+ where user_id = '00000000-0000-0000-0000-000000000001';
 
 select ok(
   public.grant_days('00000000-0000-0000-0000-000000000001', 30, 'invite', 'invite')

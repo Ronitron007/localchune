@@ -1,12 +1,13 @@
 begin;
 select plan(6);
 
+insert into public.allowlist (email) values ('m1@gmail.com'), ('m2@gmail.com');
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
   ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
-insert into public.members (user_id, email) values
-  ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
-  ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
+-- Task 4's on_auth_user_created trigger provisions both members rows as a
+-- side effect of the inserts above; a manual insert here would now conflict
+-- on the user_id primary key.
 
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000c1"}';
