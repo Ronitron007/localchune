@@ -1786,7 +1786,11 @@ The queue is not the system of record and must never become one — its retentio
 export async function scheduled(_ev: ScheduledController, env: Env) {
   const stuck = await sql(env, `
     select id, r2_key from files
-     where state = 'analysing' and created_at < now() - interval '1 hour'
+     -- state_changed_at, NOT created_at. created_at is when the row was minted,
+     -- BEFORE the bytes moved — so a 40-minute multipart upload would be
+     -- re-enqueued the instant it entered 'analysing'. M2 added
+     -- state_changed_at and its index for exactly this query.
+     where state = 'analysing' and state_changed_at < now() - interval '1 hour'
      limit 100`)
   for (const f of stuck) {
     await env.ANALYZE_QUEUE.send({ file_id: f.id, r2_key: f.r2_key, analysis_version: 'v1' })
