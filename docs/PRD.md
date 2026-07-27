@@ -1,6 +1,6 @@
 # localchune — PRD
 
-*Private, invite-only track pool for a DJ circle (~8–10 people). Cloudflare R2 for objects, Supabase for auth + Postgres, Astro on Cloudflare for the app, Google Cloud Run for audio analysis.*
+*Private, invite-only track pool for a DJ circle (~8–10 people). Cloudflare R2 for objects, Supabase for auth + Postgres, Astro on Cloudflare for the app, Cloudflare Containers for audio analysis.*
 
 Status: draft for review. Date: 2026-07-27.
 
@@ -376,7 +376,7 @@ Stated plainly, because these are not fixable by tuning:
 
 ## 7. Analysis
 
-One container, one decode, one pass. Runs per file on Cloud Run.
+One container, one decode, one pass. Each file runs once, in a Cloudflare Container.
 
 ### What it produces
 
@@ -413,12 +413,12 @@ All measured locally on Apple M1 (8 cores), 6:00 44.1 kHz stereo, `ffmpeg` 8.0.1
 | Opus 128k preview | 3.33 s | — | **lossless sources only**; 3.9 MB out |
 | Spectrogram PNG | 0.74 s | — | **only on a suspect verdict**, not every track |
 
-**Totals: ~20 s CPU for a lossless track (with preview), ~16 s for an MP3.** On an x86 Cloud Run vCPU budget **~1.75×** → **30–40 s/track**.
+**Totals: ~20 s CPU for a lossless track (with preview), ~16 s for an MP3.** Cloudflare Containers run on x86 hardware, not the Apple M1 used for these measurements. x86 is about **1.75×** slower, so every cost figure in this document is built on **~35 s of billed CPU per track**.
 
 **Three findings that change the design:**
 
-1. **Threading makes it *more expensive*, not less.** Beat This! at 1 thread is 13.2 s CPU / 13.2 s wall. At 8 threads it's 5.7 s wall but **19.5 s CPU**. Cloud Run bills vCPU-seconds, so parallelism costs 48% more for the same work. **Pin `torch.set_num_threads(1)`, run 1 vCPU with concurrency 1, and accept the longer wall clock.** This is a background job; nobody is watching.
-2. **Export Beat This! to ONNX and run `onnxruntime` (MIT).** A PyTorch image is ~2.5 GB against ~300 MB for onnxruntime — which matters for Cloud Run cold start — and ONNX CPU inference is typically 1.5–3× faster than eager PyTorch. This is the single highest-leverage optimisation available and it should be **benchmarked as the first task of the analysis worker**, because 65% of the compute budget rides on it.
+1. **More threads cost more money, not less.** Beat This! uses 13.2 s of CPU on 1 thread. On 8 threads it uses **19.5 s of CPU**, even though wall-clock time drops to 5.7 s. Cloudflare bills active CPU time, so 8 threads cost 48% more for the same result. **Set `torch.set_num_threads(1)`. Use a 1 vCPU instance and process one file at a time. Accept the longer wall-clock time.** This is a background job; nobody watches it run.
+2. **Export Beat This! to ONNX and run `onnxruntime` (MIT).** A PyTorch image is about 2.5 GB; an onnxruntime image is about 300 MB. Image size matters for cold start on Cloudflare Containers, and ONNX CPU inference is typically 1.5–3× faster than eager PyTorch. This is the single highest-leverage optimisation available and it should be **benchmarked as the first task of the analysis worker**, because 65% of the compute budget rides on it.
 3. **Derive BPM by least-squares fit over the beat index, never from the median inter-beat interval.** Measured: on a 128.000 BPM track median-IBI gives **130.43**; on 174.000 it gives **176.47**. The least-squares fit gives **128.000** and **174.000** exactly. Beat This! quantises beat times to its ~20 ms frame grid (IBI std ≈ 9 ms), and the median inherits that quantisation while a linear fit averages it out. A 2% BPM error is beatmatching-fatal.
 
 ```python
@@ -427,7 +427,7 @@ slope, _ = np.linalg.lstsq(np.vstack([k, np.ones_like(k)]).T, beats, rcond=None)
 bpm = 60.0 / slope
 ```
 
-Memory: run each stage as a **sequential subprocess** (which §7.3 requires anyway for Essentia) so peak RSS is `max(stage)` ≈ 1 GB, not the sum. **A 1 vCPU / 2 GiB instance is sufficient.**
+Memory: run each stage as a **sequential subprocess** (which §7.3 requires anyway for Essentia) so peak RSS is `max(stage)` ≈ 1 GB, not the sum. Peak RSS of 977 MB would fit a 2 GiB instance, but Cloudflare Containers enforce a **minimum of 3 GiB of memory per vCPU**. So the container runs at **1 vCPU / 3 GiB memory / 6 GB disk** — the 3 GiB is a platform floor, not a choice, and it costs $0.30 extra across the entire 2,000-track backfill (§10).
 
 > **Encouraging but not proof:** Beat This! returned **176.47** on the 174 BPM test track — it did **not** half-time it, where Essentia's three estimators all returned 87.00 on the research agent's DnB test. But the test track here is a clean synthetic kick pattern, which is far easier than real drum & bass with a half-time bassline. Treat this as a positive signal, not as evidence the octave problem is solved. The ×2/÷2 control below still ships.
 
@@ -818,19 +818,17 @@ Even an all-lossless worst case is 2,000 × 62 MB = **124 GB**.
 | R2 storage — (55 − 10 free) GB × $0.015 | **$0.68** |
 | R2 Class A + B operations | $0 (free tier by ~3 orders of magnitude) |
 | R2 egress | **$0, always** |
-| Cloud Run compute — 7,000 vCPU-s/mo vs 180,000 free | **$0** (3.9%) |
-| GCP egress (previews → R2), ongoing | ~$0 (under the 1 GiB/mo free) |
-| Artifact Registry (image over 0.5 GB free) | ~$0.10 |
+| Cloudflare Containers — CPU, memory, disk at 200 tracks/mo | **$0.00** (inside Workers Paid allowances) |
 | Supabase | $0 (free tier) |
 | Apple Developer Program | $0 marginal — already held |
-| **Cloudflare Workers Paid** — required for Queues | **$5.00** |
-| **Total** | **≈ $6/month** |
+| **Cloudflare Workers Paid** — required for Queues and Containers | **$5.00** |
+| **Total** | **≈ $5.68/month** |
 
 Growth: +200 tracks/mo ≈ +5.2 GB ≈ **+$0.08/mo, each month**. Year-1 end ≈ 117 GB ≈ $1.61/mo storage, so **~$7/month**.
 
-**Backfill (one-off):** 2,000 tracks × ~35 s = **70,000 vCPU-s vs 180,000 free (39%)** and 140,000 GiB-s vs 360,000 free (39%). Fits in one month with room for a second full re-analysis after an `algo_version` bump. Previews back to R2 cost 2.9 GB − 1 GiB free × $0.12 = **$0.23, once**. Even entirely outside the free tier a full backfill is ~$2 at list.
+**Backfill (one-off):** 2,000 tracks × ~35 s of billed CPU = 70,000 vCPU-s, and 3 GiB × 70,000 s awake = 210,000 GiB-s of memory. After the Workers Paid allowances (22,500 vCPU-s and 90,000 GiB-s included free each month), the backfill costs **$0.95** in CPU and **$0.30** in memory. Disk stays fully inside its allowance at **$0.00**. Add **$0.03** for the `sleepAfter` idle tails between bursts. **Total: $1.28, once.** The instances stay warm when tracks are fed back to back, so the idle tail is paid once per burst, not once per track.
 
-**The headline: Workers Paid at $5 is the single largest line item — the queue costs more than all the storage and all the compute combined.** If that offends, it is skippable: `files.state` in Postgres is already the system of record with a stuck-job cron, so the Supabase Edge Function could POST Cloud Run directly and let the cron re-drive failures. That drops the bill to **~$2/month** at the cost of R2 event notifications and at-least-once delivery. Not recommended at this price, but it's a real option.
+**The headline: Workers Paid at $5 is the single largest line item — it costs more than all the storage and all the compute combined.** Unlike an earlier design built around Google Cloud, this line is no longer skippable: Cloudflare Containers itself requires the Workers Paid plan, with no free tier at all. So even if the Supabase Edge Function called the container directly and skipped Queues, the $5/month floor would remain. Queues is effectively free at this volume (see below), so there is no lever left to cut this line.
 
 Operations pricing is irrelevant here — you'd need ~7M Class A ops/month before ops matched storage. Architect for correctness and reconcile as often as you like. For comparison, the same content on S3 with modest listening would add a **per-play egress line that grows forever**; R2's zero egress is the entire reason it's the right store.
 
@@ -930,9 +928,12 @@ Browser (Astro + Solid islands, Cloudflare)
 R2 object-create event
    └──► Cloudflare Queue
           └──► consumer Worker
-                 ├─ mints short-TTL presigned GET/PUT
-                 ├─ POSTs {file_id, get_url, put_url, analysis_version} ──► Cloud Run
-                 └─ writes the returned result to Supabase
+                 ├─ gets a Durable Object stub (one container instance)
+                 ├─ DO reads the file from R2 through a binding, streams it
+                 │  to the container, and calls its /analyze endpoint
+                 ├─ DO pulls derived artifacts back and writes them to R2,
+                 │  through the same binding
+                 └─ consumer Worker writes the returned result to Supabase
 ```
 
 ### App: Astro on Cloudflare
@@ -941,24 +942,28 @@ Matches `butternutcrack`, same platform as R2, cheapest option, and its persiste
 
 **One thing that must change from butternutcrack:** it is `output: 'static'` and fetches Supabase at *build time* with a top-level `await` in `src/data/mixes.ts`, so every metadata change requires a redeploy. A pool where ten people upload continuously cannot work that way. localchune needs SSR (`@astrojs/cloudflare` adapter with a real `main` Worker) or client-side fetching. That also gives you the R2 binding butternutcrack's static-assets-only `wrangler.jsonc` doesn't have.
 
-### Analysis worker: Google Cloud Run
+### Analysis worker: Cloudflare Containers
 
-Not Railway, not Workers.
+Not Railway, not Google Cloud, not plain Workers.
 
 - **Workers is dead three ways over.** 128 MB per isolate covering JS heap *and* all WASM allocations — a 3-minute stereo track is ~63 MB of float32 PCM before working buffers. No native binaries, ever. And `ffmpeg.wasm` fails four independent ways: a ~31 MB core against a 3/10 MB bundle cap, `workerd` blocking runtime WASM compilation from fetched bytes (exactly what ffmpeg.wasm does at init), no Web Workers, and CPU/memory exhaustion regardless.
 - **Supabase Edge Functions cap CPU at 2 seconds.** You need 5–30. That number ends the discussion before the 256 MB ceiling and no-native-binaries problems.
-- **Railway can't scale to zero for this shape.** Its Serverless mode detects inactivity by *outbound* traffic, and its own docs list open DB connections and telemetry as sleep-blockers. A queue-polling worker never sleeps, so you pay a permanent idle floor for ~100 minutes of monthly work.
-- **Cloud Run**: request-based services get 180,000 vCPU-s + 360,000 GiB-s + 2M requests free every month, as a standing offering, not promo credit. Your ongoing load (200 tracks × ~30 s) is **~3% of that**. The entire 2,000-track backfill in a single month is ~33%. It genuinely autoscales through a 200-track burst *and* genuinely scales to zero. 60-minute request ceiling means no pathological FLAC times you out. And it's a plain Dockerfile behind an HTTP handler, so it lifts to Fly/Railway/ECS unchanged.
+- **Google Cloud is ruled out.** The owner has decided against a second cloud vendor for this project. Running the worker there also meant a Google Cloud project, a service account, a container image registry, and about 40 lines of WebCrypto JWT signing in the Worker just to authenticate as a Google client. None of that plumbing is needed once the worker lives next to the files it reads.
+- **Railway loses on idle cost, not on capability.** It floors at **$5/month even at zero traffic**, because the service stays resident whether or not a file is queued. Its per-vCPU-second rate is 2.6× better than Cloudflare's, which would matter if the machine were busy — but this worker is idle about **99.7% of the time** (roughly 35 seconds of billed work per track, at ~200 tracks a month). Idle memory dominates the bill, and the break-even against Cloudflare is around **30,000 tracks/month — about 150× the current volume**. Railway remains the documented fallback if that volume is ever reached.
 
-Cost of that choice: a GCP project, a service account, Artifact Registry, and ~40 lines of WebCrypto RS256 JWT signing in the Worker to mint a Google ID token (deploy `--no-allow-unauthenticated`). One afternoon.
+**Cloudflare Containers is the choice.** It went generally available on 13 April 2026, on the Workers Paid plan ($5/month, already paid for Queues). One-off processing of the 2,000-track backfill costs about **$1.28**; the ongoing load of 200 tracks/month costs **$0.00**, inside allowances already paid for. §10 has the arithmetic.
 
-**Fallback: Cloudflare Containers** ($5/mo Workers Paid floor, GA since 2026-04-13, 1–3 s cold start, one vendor, no OIDC plumbing). Two things to accept: memory and disk bill on *provisioned* resources for full wall-clock uptime while only CPU is active-billed — on a 4 GiB instance the included 25 GiB-hours is just 6.25 hours/month, and a container you forget to `sleepAfter` runs ~$26/mo. And **it has no autoscaling** — Cloudflare says so and points at `getRandom` for manual fan-out. Since absorbing a 200-track burst is the defining requirement, that gap is the real reason it's the fallback, not the $5.
+Memory and disk bill for the whole time an instance stays awake; only CPU bills for active work. That is why `sleepAfter` is set to **30 seconds** instead of the 10-minute default — the default alone turns a $0.00 month into about $0.73 for identical work. The same asymmetry means a smaller, fractional-vCPU instance costs *more*, not less: a quarter-vCPU instance turns 35 seconds of CPU work into about 140 seconds of elapsed time, so the memory bill rises even though the machine runs slower. The instance size is **1 vCPU / 3 GiB memory / 6 GB disk**. Peak memory use is 977 MB, which would fit 2 GiB, but the platform enforces a minimum of 3 GiB of memory per vCPU, so 3 GiB is a floor, not a choice.
+
+Containers run on `linux/amd64` only, so images are cross-built on the M1 with `docker buildx` and cannot be timed locally — a cross-built image runs under QEMU emulation, and QEMU timings are meaningless.
+
+One real limit remains: a container does not autoscale in the traditional sense. Concurrent files are handled by starting more container instances behind more Durable Objects, up to a fixed `max_instances` cap; a request beyond that cap **fails instead of queuing**. The cap is set well above the expected burst size, and this failure mode does not reproduce in local development — it has to be designed around, not tested.
 
 ### Orchestration: Cloudflare Queues
 
-Free at this volume (10,000 ops/day on the free plan; ongoing load ~600 ops/month, full backfill ~6,000 in one day). Native R2 event notifications mean uploads trigger analysis with no poller anywhere. The consumer Worker is exactly where presigned-URL minting belongs.
+Free at this volume (10,000 ops/day on the free plan; ongoing load ~600 ops/month, full backfill ~6,000 in one day). Native R2 event notifications mean uploads trigger analysis with no poller anywhere. The consumer Worker's job is to get a Durable Object stub for the container and call it — no URL minting, because the Durable Object reaches R2 through a binding instead.
 
-**Keep the Cloud Run worker stateless and credential-free**: presigned URLs mean it never sees an R2 key; returning results to the Worker rather than writing to Postgres directly means the `service_role` key never leaves Cloudflare, and makes retries trivially safe because a failed run mutates nothing.
+**Keep the container stateless and credential-free.** The Durable Object in front of it holds the only R2 access, through a binding, so the container itself never holds an R2 key, a Supabase key, or a bearer token of any kind. This is a step up from the earlier presigned-URL design: a presigned URL is itself a credential, one with a countdown on it, and this design has none anywhere. Returning results to the Worker rather than writing to Postgres directly means the `service_role` key never leaves Cloudflare, and makes retries trivially safe because a failed run mutates nothing.
 
 **Queues is at-least-once, so the handler must be idempotent.** Use `content_sha256` as the idempotency key and `ON CONFLICT (file_id, analysis_version) DO UPDATE`. One track per message, never a batch — a batch retry re-delivers every message in it.
 
@@ -968,7 +973,7 @@ Free at this volume (10,000 ops/day on the free plan; ongoing load ~600 ops/mont
 
 FLAC/WAV/AIFF are not broadly streamable in-browser. Analysis emits a **128 kbps Opus preview** (~5.5 MB for 6 min) written back to R2 alongside the peaks JSON. The player streams the preview; download serves the original.
 
-GCP egress is $0.12/GB with 1 GiB/month free, so pushing previews back from Cloud Run costs ~$0.14/mo ongoing and ~$1.44 for the whole backfill. Real but trivial. If it ever matters, move the transcode step to a Cloudflare Container ($0.025/GB, 1 TB included).
+The Opus preview is written back to R2 through the same binding the container uses to read the source file. There is no egress cost, because the container and R2 sit on the same network.
 
 Playback itself: presigned GET, `<audio>`, R2's edge handles Range so seeking is free and egress is $0. **Never proxy audio bytes through a Worker.**
 
@@ -1014,7 +1019,7 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 
 1. **Auth + schema.** `allowlist`, `members`, `credit_grants`, `grant_days()`, before-user-created hook (verify a non-allowlisted Google account gets 403 and creates **no** `auth.users` row), owner seed migration, admin page.
 2. **Upload.** Presigned PUT + multipart, client duration pre-flight, batch UI with resume journal, server-side duration re-verify, `files` rows.
-3. **Analysis worker.** One Cloud Run container: decode → fpcalc → key/BPM → loudness → peaks → tags → quality forensics. Queue + consumer Worker + the stuck-job cron.
+3. **Analysis worker.** One Cloudflare Container: decode → fpcalc → key/BPM → loudness → peaks → tags → quality forensics. Queue + consumer Worker + Durable Object + the stuck-job cron.
 4. **Dedup.** Fingerprints table + GIN, candidate query, offset-swept BER, bands, `assign_track` with the advisory lock, merge/undo, review queue with the divergence strip.
 5. **Pool UI.** Track list, filters, player, download.
 6. **Crates.**
@@ -1036,7 +1041,7 @@ Nothing for v1. It's a fork of `better-cue-parser` — a CD `.cue` **sheet** tex
 | Fake-upgrade false positives insult contributors | Abstain generously (5–15% to review is correct), always show the spectrogram, always allow appeal, strikes not bans. |
 | MusicBrainz coverage gap on white-labels | Uploader-supplied artwork and tags as a first-class path, not a fallback. |
 | Thresholds are guesses | Explicit calibration step at ~2k tracks; every decision records the thresholds it used. |
-| GCP account is a second cloud to operate | Fallback to Cloudflare Containers is a documented swap; the worker is a plain container either way. |
+| Container burst exceeds `max_instances` and errors instead of queuing | Set the cap well above the expected concurrent burst; this can't be reproduced in local dev, so verify behaviour on the first real production burst. |
 | Free Supabase projects pause after ~7 days idle | Would silently break the stuck-job cron. Monitor, or take the paid tier. |
 
 ---
