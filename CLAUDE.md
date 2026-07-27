@@ -1,3 +1,18 @@
+## Deploy
+
+- Production URL: `https://localchune.butternutcrack.com`
+- Deploy with `npm run deploy` (`astro build && wrangler deploy`).
+- `wrangler.jsonc` routes the Worker via the custom-domain form (`custom_domain: true`)
+  on the `butternutcrack.com` zone — Cloudflare provisions DNS and the cert.
+- `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are Worker secrets
+  (`wrangler secret put`), sourced from `.env`. `SUPABASE_SERVICE_KEY` and
+  `SUPABASE_DB_PASSWORD` stay CLI-only in `.secrets.env` and must never be set
+  as Worker secrets — the app does not read them.
+- The Supabase redirect allow-list (`additional_redirect_urls` in
+  `supabase/config.toml`) must contain the production callback
+  `https://localchune.butternutcrack.com/auth/callback`, or sign-in silently
+  falls back to `site_url`.
+
 ## Supabase
 
 - Changes to `auth`/`supabase/config.toml` (e.g. auth hooks) require `npx supabase stop && npx supabase start` to take effect. `npx supabase db reset` only restarts containers — it does NOT reload GoTrue's auth config.
