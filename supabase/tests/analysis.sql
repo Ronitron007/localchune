@@ -5,7 +5,7 @@
 -- entry points the queue consumer drives.
 
 begin;
-select plan(38);
+select plan(39);
 
 -- allowlist BEFORE auth.users: handle_new_user() aborts with 'not
 -- allowlisted' otherwise. The on_auth_user_created trigger then provisions
@@ -58,7 +58,18 @@ values
   ('00000000-0000-0000-0000-0000000000c6','00000000-0000-0000-0000-0000000000ba',
    '00000000-0000-0000-0000-0000000000a1',
    'audio/00000000-0000-0000-0000-0000000000a1/00000000-0000-0000-0000-0000000000c6.m4a',
-   'corrupt.m4a', 4000000, 'm4a', 'received', now(), now());
+   'corrupt.m4a', 4000000, 'm4a', 'received', now(), now()),
+  -- [F4] Already 'analysing', but its 10-minute lease expired 1 minute ago.
+  -- Distinct from c4 above: c4 stays untouched by any test so
+  -- analysis_stuck()'s "exactly one row" assertion keeps holding: this row
+  -- is only 11 minutes stale, well under analysis_stuck()'s one-hour
+  -- default, so calling analysis_begin on it here cannot contaminate that
+  -- later result.
+  ('00000000-0000-0000-0000-0000000000c7','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000a1',
+   'audio/00000000-0000-0000-0000-0000000000a1/00000000-0000-0000-0000-0000000000c7.flac',
+   'lease-expired.flac', 5000000, 'flac', 'analysing',
+   now() - interval '20 minutes', now() - interval '11 minutes');
 
 insert into public.ingest_jobs (file_id, batch_id, user_id, declared_byte_size, multipart)
 select f.id, f.batch_id, f.uploaded_by, f.byte_size, false
@@ -72,8 +83,10 @@ set local role service_role;
 -- ---- analysis_begin ----
 select is( public.analysis_begin('00000000-0000-0000-0000-0000000000c1'), 'analysing',
            'analysis_begin moves received -> analysing' );
-select is( public.analysis_begin('00000000-0000-0000-0000-0000000000c1'), 'analysing',
-           'a replayed analysis_begin is a no-op, not an error (queues are at-least-once)' );
+select is( public.analysis_begin('00000000-0000-0000-0000-0000000000c1'), 'busy',
+           '[F4] a duplicate delivery inside the 10-minute lease is refused, not re-run' );
+select is( public.analysis_begin('00000000-0000-0000-0000-0000000000c7'), 'analysing',
+           '[F4] a row whose lease has expired is reclaimed, same as the stuck-job cron would' );
 select throws_ok(
   $$ select public.analysis_begin('00000000-0000-0000-0000-0000000000ff') $$,
   'P0002', NULL,

@@ -7,11 +7,18 @@
 -- entry points the queue consumer (workers/analysis/) drives it through.
 --
 -- The filename is pinned by M5's plan (docs/superpowers/plans/
--- 2026-07-28-05-pool-ui.md, "Prerequisites"): M5's migration 10 re-declares
+-- 2026-07-28-05-pool-ui.md, "Prerequisites"): M5's migration re-declares
 -- the artifact-key columns, the SELECT policy and the grants below with
 -- `if not exists` / `drop policy if exists`, so whichever milestone lands
 -- first wins and the other is a no-op. Landing this one first is the
 -- preferred order, and this file is what makes M5's copies redundant.
+--
+-- NUMBERING: the plan above still calls its own migration "migration 10" in
+-- several places. That slot was taken by the M3 final-review fix in
+-- 20260729120000_10_close_acls.sql (Findings F3/F4) before M5 started
+-- implementation. M5's migration must land as 11, not 10, and its
+-- in-plan references bumped accordingly -- see the note in that plan's
+-- Prerequisites section.
 
 -- ============================================================
 -- Tables
@@ -188,9 +195,12 @@ create policy "members read analysis for visible files"
 -- one believed they were writing. Revoking first makes the grant below mean
 -- the same thing on both databases.
 --
--- NOTE FOR A FOLLOW-UP: files, upload_batches, file_claims and ingest_jobs
--- (migration 06) have the same open ACL in production for the same reason.
--- Narrowing those is M2 surface and is deliberately not done here.
+-- SUPERSEDED: this note originally said "files, upload_batches, file_claims
+-- and ingest_jobs (migration 06) have the same open ACL in production."
+-- That list was incomplete -- live `relacl` also showed it on allowlist,
+-- credit_grants and members (migrations 01/01b), which the note missed
+-- entirely. All SEVEN tables are closed together in migration 10
+-- (20260729120000_10_close_acls.sql, Finding F3 of the M3 final review).
 revoke all on public.audio_analysis from anon, authenticated;
 revoke all on public.fingerprints   from anon, authenticated;
 
