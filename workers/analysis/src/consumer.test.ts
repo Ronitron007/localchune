@@ -299,6 +299,11 @@ describe('summarise', () => {
     expect(line.length).toBeLessThan(300)
   })
 
+  it('lists the thumb among the produced artifacts', () => {
+    const line = summarise(response({ artwork_key: 'artwork.jpg', thumb_key: 'thumb.jpg' }))
+    expect(line).toContain('artifacts=peaks.json,artwork.jpg,thumb.jpg')
+  })
+
   it('names the artifacts that were skipped', () => {
     const line = summarise(response({
       artwork_key: null,
