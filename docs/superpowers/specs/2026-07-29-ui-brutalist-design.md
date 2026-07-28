@@ -32,6 +32,11 @@ Five rules, none negotiable:
    v1 ships light only. Dark mode is the token swap and nothing else —
    when it ships, it is a `prefers-color-scheme` media query over the same
    six tokens. No second stylesheet, no component-level overrides.
+
+   **Resolved (owner decision, 2026-07-29), closes the plan's Unresolved
+   question 1:** light-only for v1. The dark variant that shipped with the
+   original implementation is deliberately removed, not deferred by
+   omission. Revisit post-v1.
 3. **Hard geometry.** Borders are `1px solid var(--line)`. `border-radius: 0`
    and `box-shadow: none`, globally. The dropzone may use `dashed`.
 4. **Native controls.** Inputs, selects, checkboxes, buttons and the audio

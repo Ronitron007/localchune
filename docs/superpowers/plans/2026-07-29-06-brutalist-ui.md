@@ -1457,7 +1457,9 @@ M5's deferral table stands, with these spec-driven changes: cross-page player pe
 
 ## Unresolved questions
 
-1. Dark mode: spec §1 says "v1 ships light only" but §6's done-list requires the inversion to work. Plan ships the 8-line `prefers-color-scheme` token swap (it *is* "the token swap and nothing else"). Rip it out if you want literal light-only.
+1. ~~Dark mode: spec §1 says "v1 ships light only" but §6's done-list requires the inversion to work. Plan ships the 8-line `prefers-color-scheme` token swap (it *is* "the token swap and nothing else"). Rip it out if you want literal light-only.~~
+   **Resolved (owner decision, 2026-07-29):** ripped out. Light-only for v1;
+   see spec §1 point 2.
 2. Art thumbs in colour (spec current) — confirm, or CSS-grayscale?
 3. `thumb.jpg` 64px JPEG q~70 — confirm before Task 9 lands.
 4. M3 Task 9 (queue consumer + `persist()`): lands separately on the m3 branch. Its `persist()` must write `preview_key`/`peaks_key`/`artwork_key`/`thumb_key` — recorded here and in migration 10's comments.

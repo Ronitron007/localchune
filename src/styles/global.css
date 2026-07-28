@@ -5,7 +5,7 @@
 
    The entire visual language. Six greyscale tokens, no font-family (the
    browser default is the typeface), 1px solid borders, zero radii, zero
-   shadows. Dark mode is the token swap below and NOTHING else — if a
+   shadows. v1 is light-only, on purpose — see the spec, §1 point 2 — if a
    component ever needs a colour this file does not define, the design is
    wrong, not this file. */
 
@@ -16,17 +16,6 @@
   --line: #000;
   --faint: #ddd;
   --zebra: #f4f4f4;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #000;
-    --fg: #fff;
-    --mid: #aaa;
-    --line: #fff;
-    --faint: #333;
-    --zebra: #121212;
-  }
 }
 
 *, *::before, *::after {

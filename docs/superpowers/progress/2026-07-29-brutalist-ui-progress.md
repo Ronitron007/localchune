@@ -151,15 +151,24 @@ before resuming local verification.
 
 ## Not done yet
 
-1. **Browser visual checklist** (plan Task 10 Step 7): dark-mode inversion,
-   player bar visuals, playback-across-navigation click-through, and anything
-   needing real R2 objects (streaming, downloads, thumbs as pixels). Local R2
-   env vars are not set in dev, so source/download 502 locally — expected.
-   The signed-in HTTP checks above were not repeated after the second
-   rebase; the automated gates were. Production now has four analysed
-   tracks with real thumbs, so this checklist can be run against prod.
-2. Spec's unresolved questions 1–3 (dark-mode-in-v1, colour thumbs, 64px
-   format) — plan chose the spec defaults; confirm or amend.
+1. **Browser visual checklist** (plan Task 10 Step 7): player bar visuals,
+   playback-across-navigation click-through, and anything needing real R2
+   objects (streaming, downloads, thumbs as pixels). Local R2 env vars are
+   not set in dev, so source/download 502 locally — expected. The signed-in
+   HTTP checks above were not repeated after the second rebase; the
+   automated gates were. Production now has four analysed tracks with real
+   thumbs, so this checklist can be run against prod. Dark-mode inversion
+   is dropped from this checklist — see below.
+2. Spec's unresolved questions 2–3 (colour thumbs, 64px format) — plan
+   chose the spec defaults; confirm or amend.
+
+## Dark mode removed — 2026-07-29
+
+Owner decision: light-only for v1. The `@media (prefers-color-scheme: dark)`
+token-swap block shipped with Task 6 (`src/styles/global.css`) is deleted;
+the light palette is unchanged. No `data-theme` plumbing or `color-scheme`
+meta property existed to remove. See spec §1 point 2 and the plan's
+Unresolved question 1, both marked resolved. Revisit post-v1.
 
 ## Local test-login harness (for resuming verification)
 
