@@ -17,9 +17,19 @@
 // key should have no HTTP surface at all.
 
 import { Container } from '@cloudflare/containers'
-import { handleMessage, type AnalyzeMessage } from './consumer'
+import { handleDeadLetter, handleMessage, type AnalyzeMessage } from './consumer'
 import { analysisBegin, analysisFail, analysisPersist } from './supabase'
 import type { AnalyzeResponse } from './types'
+
+/**
+ * [F5] The dead-letter queue name, as configured in this file's
+ * `queues.consumers` (wrangler.jsonc) and as the target of
+ * `dead_letter_queue` on the main `localchune-analyze` consumer. Named here
+ * rather than read off `batch.queue` unconditionally, so a batch from any
+ * OTHER queue this Worker might one day consume fails loud instead of
+ * silently running the wrong decision table.
+ */
+const DLQ_NAME = 'localchune-analyze-dlq'
 
 export type {
   AnalyzeResponse, Beats, Fingerprint, Forensics, Key, Loudness,
@@ -242,6 +252,26 @@ export default {
    * rest of a batch un-acked.
    */
   async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    // [F5] The DLQ consumer. A batch delivered from localchune-analyze-dlq
+    // never touches the container or handleMessage()'s decision table — its
+    // only job is analysis_fail(), so the row stops lying about being
+    // 'analysing' and the stuck-job cron stops resurrecting it forever.
+    if (batch.queue === DLQ_NAME) {
+      for (const m of batch.messages) {
+        const outcome = await handleDeadLetter(m.body, m.attempts, {
+          fail: (fileId, reason) => analysisFail(env, fileId, reason),
+        })
+        if (outcome.action === 'ack') {
+          console.log(`[dlq] ${outcome.reason}`)
+          m.ack()
+        } else {
+          console.error(`[dlq] retry in ${outcome.delaySeconds}s — ${outcome.reason}`)
+          m.retry({ delaySeconds: outcome.delaySeconds })
+        }
+      }
+      return
+    }
+
     for (const m of batch.messages) {
       const outcome = await handleMessage(m.body, m.attempts, {
         begin: (fileId) => analysisBegin(env, fileId),

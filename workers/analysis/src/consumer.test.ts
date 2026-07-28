@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import {
-  OK_FALSE_MAX_ATTEMPTS, handleMessage, parseMessage, summarise, type Deps,
+  OK_FALSE_MAX_ATTEMPTS, handleDeadLetter, handleMessage, parseMessage, summarise, type Deps,
 } from './consumer'
 import { NO_DATA_FOUND, PostgrestError } from './supabase'
 import type { AnalyzeResponse } from './types'
@@ -136,6 +136,17 @@ describe('handleMessage', () => {
     },
   )
 
+  it('[F4] retries rather than analysing when analysis_begin reports busy', async () => {
+    const d = deps({ begin: vi.fn().mockResolvedValue('busy') })
+    const out = await handleMessage(BODY, 1, d)
+
+    expect(out.action).toBe('retry')
+    expect(out.reason).toContain('already analysing')
+    // The whole point: a duplicate delivery inside the lease must not run a
+    // second ~45 vCPU-s container analysis.
+    expect(d.analyse).not.toHaveBeenCalled()
+  })
+
   it('retries when the DO throws — an r2 miss rides the retries into the DLQ', async () => {
     const d = deps({
       analyse: vi.fn().mockRejectedValue(new Error(`r2 miss: ${R2_KEY}`)),
@@ -182,6 +193,16 @@ describe('handleMessage', () => {
     expect((await handleMessage(BODY, OK_FALSE_MAX_ATTEMPTS, d)).action).toBe('retry')
   })
 
+  it('[F8] acks, rather than retries, when the file was deleted before the failure could be recorded', async () => {
+    const d = deps({
+      analyse: vi.fn().mockResolvedValue(response({ ok: false, error: 'decode failed' })),
+      fail: vi.fn().mockRejectedValue(new PostgrestError('unknown file', 404, NO_DATA_FOUND)),
+    })
+    const out = await handleMessage(BODY, OK_FALSE_MAX_ATTEMPTS, d)
+
+    expect(out.action).toBe('ack')
+  })
+
   it('retries when persist fails, so no analysis is silently thrown away', async () => {
     const d = deps({
       persist: vi.fn().mockRejectedValue(new PostgrestError('timeout', 504, null)),
@@ -224,6 +245,39 @@ describe('handleMessage', () => {
       if (out.action === 'retry') delays.push(out.delaySeconds)
     }
     expect(delays).toEqual([60, 120, 300, 300])
+  })
+})
+
+describe('[F5] handleDeadLetter', () => {
+  it('marks the file failed and acks', async () => {
+    const fail = vi.fn().mockResolvedValue('failed')
+    const out = await handleDeadLetter(BODY, 1, { fail })
+
+    expect(out.action).toBe('ack')
+    expect(fail).toHaveBeenCalledWith(FILE_ID, 'dead-lettered after 5 attempts')
+  })
+
+  it('acks a malformed message instead of retrying it forever', async () => {
+    const fail = vi.fn()
+    const out = await handleDeadLetter({ nonsense: true }, 1, { fail })
+
+    expect(out.action).toBe('ack')
+    expect(out.reason).toContain('malformed')
+    expect(fail).not.toHaveBeenCalled()
+  })
+
+  it('acks, rather than retries, when the file is already gone (P0002)', async () => {
+    const fail = vi.fn().mockRejectedValue(new PostgrestError('unknown file', 404, NO_DATA_FOUND))
+    const out = await handleDeadLetter(BODY, 1, { fail })
+
+    expect(out.action).toBe('ack')
+  })
+
+  it('retries any other analysis_fail failure — the database having a bad minute is not terminal', async () => {
+    const fail = vi.fn().mockRejectedValue(new PostgrestError('boom', 500, null))
+    const out = await handleDeadLetter(BODY, 1, { fail })
+
+    expect(out.action).toBe('retry')
   })
 })
 

@@ -92,12 +92,34 @@
         // pool size (4, src/index.ts), which is the real ceiling on distinct
         // instances a burst can wake.
         "max_concurrency": 4,
-        // Five attempts, then the DLQ. The file stays 'analysing', and the
-        // maintenance Worker's hourly cron re-enqueues it — files.state is
-        // the system of record, never the queue, whose retention is finite
-        // whatever the plan says.
+        // Five attempts, then the DLQ. files.state is the system of
+        // record, never the queue, whose retention is finite whatever the
+        // plan says — see the DLQ consumer below for what actually happens
+        // to the row once a message lands here.
         "max_retries": 5,
         "dead_letter_queue": "localchune-analyze-dlq"
+      },
+      // [F5] Without this the DLQ was a black hole: a file that exhausted
+      // the five retries above left no trail, and its row stayed
+      // 'analysing' forever — worse, the maintenance Worker's hourly
+      // stuck-job cron would re-enqueue it and run it straight back into
+      // the same five-retry wall, indefinitely, with no attempt ceiling.
+      //
+      // This consumer's only job is index.ts's handleDeadLetter(): call
+      // analysis_fail() so the row becomes 'failed' (terminal, and no
+      // longer a state analysis_stuck() returns) and ack. No container
+      // work, no R2 access — see src/consumer.ts.
+      //
+      // No `dead_letter_queue` here on purpose: a DLQ cannot be its own
+      // sink, and a message that still fails after max_retries below (the
+      // database itself being down, say) is dropped rather than looping —
+      // by then files.state is stuck but not silently so, since the main
+      // queue's own delivery already logged the original failure reason.
+      {
+        "queue": "localchune-analyze-dlq",
+        "max_batch_size": 10,
+        "max_concurrency": 1,
+        "max_retries": 3
       }
     ]
   }

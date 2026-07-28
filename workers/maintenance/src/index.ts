@@ -233,14 +233,21 @@ interface StuckRow {
  * The stuck-job cron: M3's self-healing loop.
  *
  * The queue is not the system of record and must never become one. Its
- * retention is finite whatever the plan says, and a message that dies in the
- * dead-letter queue leaves a file stranded in 'analysing' forever.
- * `files.state` is the record; this turns queue retention into a non-issue.
+ * retention is finite whatever the plan says, and this is what turns that
+ * into a non-issue: `files.state` is the record.
  *
  * Two kinds of stuck row, and analysis_stuck() returns both:
  *
  *   'analysing' -- the consumer claimed it and never finished. The container
- *     died, the retries ran out, the message reached the DLQ.
+ *     died, or the retries ran out and the message reached the DLQ. [F5]
+ *     Reaching the DLQ no longer means stranded forever: the analysis
+ *     Worker's DLQ consumer (workers/analysis/src/consumer.ts,
+ *     handleDeadLetter) calls analysis_fail() on it, which moves the row to
+ *     'failed' -- a state this query does NOT return, so a poisoned file
+ *     stops being resurrected here every hour. A row can still show up
+ *     'analysing' here in the narrower window before that DLQ delivery
+ *     lands; re-enqueueing it then is exactly the safe, idempotent replay
+ *     described below.
  *   'received'  -- nobody ever claimed it. Either the /api/upload/complete
  *     send failed (it never throws, by design -- see analyze-queue.ts), or
  *     the row predates the producer existing at all, which is exactly the

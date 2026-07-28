@@ -122,6 +122,15 @@ export async function handleMessage(
     return retry(`${msg.file_id}: analysis_begin: ${describe(e)}`, attempts)
   }
 
+  // [F4] 'busy' means another delivery claimed this file inside
+  // analysis_begin()'s 10-minute lease and is presumably still running it —
+  // this delivery must back off and let that one finish, not start a
+  // second ~45 vCPU-s container analysis on the same file. Queues' own
+  // backoff (delaySeconds below) comfortably outlasts the lease.
+  if (state === 'busy') {
+    return retry(`${msg.file_id}: another delivery is already analysing this file`, attempts)
+  }
+
   // Anything but 'analysing' means the state machine has already moved this
   // file somewhere this consumer must not drag it back from: another
   // delivery finished it ('stored'), a human quarantined it, the upload was
@@ -151,6 +160,14 @@ export async function handleMessage(
     try {
       await deps.fail(msg.file_id, reason)
     } catch (e) {
+      // [F8] Mirrors the same guard on the persist path below: the file
+      // vanished (deleted) between the container's answer and this call, so
+      // there is nothing left to mark failed. Retrying would just rediscover
+      // NO_DATA_FOUND four more times and dump the message in the DLQ for a
+      // file that no longer exists.
+      if (e instanceof PostgrestError && e.code === NO_DATA_FOUND) {
+        return ack(`${msg.file_id}: file disappeared before the failure could be recorded, dropping`)
+      }
       // The failure must be RECORDED before the message is acked. Acking now
       // would leave the file in 'analysing' with nothing left to move it.
       return retry(`${msg.file_id}: analysis_fail: ${describe(e)}`, attempts)
@@ -168,6 +185,49 @@ export async function handleMessage(
   }
 
   return ack(summarise(result))
+}
+
+/**
+ * [F5] One message that `localchune-analyze` gave up on after five
+ * attempts, delivered from `localchune-analyze-dlq`. Called from index.ts's
+ * queue handler ONLY when `batch.queue === 'localchune-analyze-dlq'` —
+ * never mixed with handleMessage() above, which is the main queue's own
+ * decision table.
+ *
+ * Before this existed the DLQ had zero consumers: a poisoned file left no
+ * trail, and its row sat in 'analysing' forever, because analysis_stuck()
+ * (the stuck-job cron's query) only ever re-enqueues 'received'/'analysing'
+ * rows — so the same file would be resurrected and sent to its death every
+ * hour, indefinitely, with no attempt ceiling.
+ *
+ * The fix is the smallest one that stops the loop: call analysis_fail(),
+ * which flips the row to 'failed' — terminal, visible in
+ * ingest_jobs.last_error, and no longer a state analysis_stuck() returns.
+ */
+export async function handleDeadLetter(
+  body: unknown,
+  attempts: number,
+  deps: Pick<Deps, 'fail'>,
+): Promise<Outcome> {
+  const msg = parseMessage(body)
+  if (!msg) {
+    // Nothing to key a failure record on. Same call as handleMessage's own
+    // malformed-message guard — retrying re-delivers the same unparseable
+    // body forever.
+    return ack(`dead-lettered malformed message discarded: ${JSON.stringify(body)?.slice(0, 300)}`)
+  }
+
+  try {
+    await deps.fail(msg.file_id, 'dead-lettered after 5 attempts')
+  } catch (e) {
+    // [F8, same guard] The file is already gone — nothing left to mark
+    // failed, and nothing gained by retrying a delete that already happened.
+    if (e instanceof PostgrestError && e.code === NO_DATA_FOUND) {
+      return ack(`${msg.file_id}: no such file, dropping dead letter`)
+    }
+    return retry(`${msg.file_id}: analysis_fail (dead letter): ${describe(e)}`, attempts)
+  }
+  return ack(`${msg.file_id}: marked failed after exhausting the main queue's retries`)
 }
 
 /**
