@@ -1,9 +1,0 @@
-# localchune — MIT licensed. See LICENSE.
-# NOTE: the distributed combination is AGPL-3.0 because the analysis
-# worker includes Essentia. LICENSE explains why.
-#
-# PLACEHOLDER — see edmm.yaml in this directory for the full explanation.
-# This one is the `edma` profileType, stored alongside edmm as an alt
-# profile (see analyze_key in app/key.py). Task 8 finalises the content.
-tonal:
-  keyProfile: edma
