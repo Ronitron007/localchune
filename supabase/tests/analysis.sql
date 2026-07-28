@@ -5,7 +5,7 @@
 -- entry points the queue consumer drives.
 
 begin;
-select plan(36);
+select plan(38);
 
 -- allowlist BEFORE auth.users: handle_new_user() aborts with 'not
 -- allowlisted' otherwise. The on_auth_user_created trigger then provisions
@@ -278,6 +278,19 @@ select throws_ok(
   $$ select 1 from public.fingerprints limit 1 $$,
   '42501', NULL,
   'fingerprints are internal: authenticated cannot reach them at all' );
+-- A hosted project's default privileges hand authenticated every privilege
+-- on every new public table, so without the explicit REVOKE in migration 09
+-- these two would be an ACL pass and RLS would be the only thing left. They
+-- fail at the ACL, which is where they should fail.
+select throws_ok(
+  $$ insert into public.audio_analysis (file_id, analysis_version)
+     values ('00000000-0000-0000-0000-0000000000c1', 'v2') $$,
+  '42501', NULL,
+  'authenticated has no INSERT on audio_analysis -- writes are service_role only' );
+select throws_ok(
+  $$ update public.audio_analysis set bpm = 1 $$,
+  '42501', NULL,
+  'nor UPDATE -- a member cannot rewrite the pool''s bpm' );
 select throws_ok(
   $$ select public.analysis_persist('{}'::jsonb) $$,
   '42501', NULL,

@@ -170,6 +170,30 @@ create policy "members read analysis for visible files"
     and exists (select 1 from public.files f where f.id = audio_analysis.file_id)
   );
 
+-- REVOKE FIRST, and this is not belt-and-braces.
+--
+-- A hosted Supabase project ships an ALTER DEFAULT PRIVILEGES that grants
+-- anon, authenticated AND service_role every privilege (arwdDxtm) on every
+-- new table in public. `supabase start` locally does not. Verified on
+-- 2026-07-29 by comparing pg_class.relacl on both: hosted showed
+-- `authenticated=arwdDxtm` on files, audio_analysis and fingerprints, local
+-- showed `authenticated=rDxtm` / `Dxtm`.
+--
+-- So a bare `grant select` below would be a no-op against production and the
+-- real ACL there would be "everything", with RLS as the only thing standing
+-- between a member and an UPDATE. RLS does hold that line -- there is no
+-- permissive policy for insert, update or delete on either table, and RLS
+-- default-denies what no policy allows -- but "the ACL says all privileges
+-- and we rely entirely on RLS" is not what the two migrations before this
+-- one believed they were writing. Revoking first makes the grant below mean
+-- the same thing on both databases.
+--
+-- NOTE FOR A FOLLOW-UP: files, upload_batches, file_claims and ingest_jobs
+-- (migration 06) have the same open ACL in production for the same reason.
+-- Narrowing those is M2 surface and is deliberately not done here.
+revoke all on public.audio_analysis from anon, authenticated;
+revoke all on public.fingerprints   from anon, authenticated;
+
 grant select on public.audio_analysis to authenticated;
 grant select, insert, update, delete on public.audio_analysis to service_role;
 grant select, insert, update, delete on public.fingerprints   to service_role;
