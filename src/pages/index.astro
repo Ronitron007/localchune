@@ -2,19 +2,14 @@
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+import Shell from '../layouts/Shell.astro'
 import { creditsRemaining } from '../lib/session'
 const m = Astro.locals.member!
 ---
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>localchune</title>
-</head>
-<body>
+<Shell title="localchune">
   <h1>localchune</h1>
   <p>{m.email} — {creditsRemaining(m.access_expires_at)} credits</p>
   <p><a href="/upload">Upload tracks</a></p>
   {m.role === 'owner' && <a href="/admin">Admin</a>}
   <form method="post" action="/auth/signout"><button>Sign out</button></form>
-</body></html>
+</Shell>

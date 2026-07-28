@@ -1,7 +1,10 @@
 {
   "extends": "astro/tsconfigs/strict",
   "compilerOptions": {
-    "types": ["@cloudflare/workers-types"],
+    // "node" is here for astro.config.ts alone (execSync, process.env for the
+    // build-SHA injection) — it never leaks into src/, which stays Worker-only
+    // via @cloudflare/workers-types.
+    "types": ["@cloudflare/workers-types", "node"],
     // AllowlistForm.tsx (Task 6) is the project's first .tsx file. Without
     // this, tsc/astro check cannot resolve JSX.IntrinsicElements for Solid
     // components ("no interface 'JSX.IntrinsicElements' exists").

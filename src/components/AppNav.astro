@@ -1,0 +1,22 @@
+---
+// src/components/AppNav.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+import { creditsRemaining } from '../lib/session'
+const m = Astro.locals.member!
+const here = Astro.url.pathname
+---
+<nav class="appnav">
+  <a href="/" aria-current={here === '/' ? 'page' : undefined}>Pool</a>
+  <a href="/upload" aria-current={here === '/upload' ? 'page' : undefined}>Upload</a>
+  {/* Crates is M6 and Admin is owner-only. Both are OMITTED rather than
+      shown disabled — a disabled link is a promise with no delivery date,
+      and it tells a non-owner that an admin page exists. */}
+  {m.role === 'owner' && (
+    <a href="/admin" aria-current={here.startsWith('/admin') ? 'page' : undefined}>Admin</a>
+  )}
+  <span class="who">{m.email}</span>
+  <span class="credits">{creditsRemaining(m.access_expires_at)} credits</span>
+  <form method="post" action="/auth/signout"><button type="submit">Sign out</button></form>
+</nav>

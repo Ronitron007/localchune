@@ -1,0 +1,169 @@
+/* src/styles/global.css
+   localchune — MIT licensed. See LICENSE.
+   NOTE: the distributed combination is AGPL-3.0 because the analysis
+   worker includes Essentia. LICENSE explains why.
+
+   The entire visual language. Six greyscale tokens, no font-family (the
+   browser default is the typeface), 1px solid borders, zero radii, zero
+   shadows. Dark mode is the token swap below and NOTHING else — if a
+   component ever needs a colour this file does not define, the design is
+   wrong, not this file. */
+
+:root {
+  --bg: #fff;
+  --fg: #000;
+  --mid: #555;
+  --line: #000;
+  --faint: #ddd;
+  --zebra: #f4f4f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --mid: #aaa;
+    --line: #fff;
+    --faint: #333;
+    --zebra: #121212;
+  }
+}
+
+*, *::before, *::after {
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  margin: 0 auto;
+  max-width: 72rem;
+  /* Room for the fixed player bar. */
+  padding: 0 1rem 6rem;
+}
+
+a { color: var(--fg); }
+
+h1, h2 { font-weight: bold; }
+
+/* Numeric data is the one permitted second face. */
+.num, .keychip { font-family: monospace; }
+
+/* --- nav / footer --- */
+.appnav {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.appnav a[aria-current='page'] { font-weight: bold; text-decoration: none; }
+.appnav .who, .appnav .credits { color: var(--mid); margin-left: auto; }
+.appnav .who + .credits { margin-left: 0; }
+
+.appfoot {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--mid);
+  flex-wrap: wrap;
+}
+
+/* --- native controls: border, padding, accent — nothing else --- */
+input, select, button {
+  accent-color: var(--fg);
+  border: 1px solid var(--line);
+  padding: 0.15rem 0.4rem;
+}
+input[type='checkbox'], input[type='radio'] { border: none; }
+
+/* --- filter form --- */
+.filterbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0;
+}
+.filterbar fieldset {
+  border: 1px solid var(--faint);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+}
+.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.filterbar input[type='number'] { width: 4.5rem; }
+
+/* --- the table --- */
+table { border-collapse: collapse; width: 100%; }
+th, td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--faint);
+}
+thead th { border-bottom: 1px solid var(--line); }
+tbody tr:nth-child(even) { background: var(--zebra); }
+th a { text-decoration: none; }
+th a[aria-current] { font-weight: bold; }
+th a[aria-current]::after { content: ' ▾'; }
+td.uploader, td.added { color: var(--mid); }
+
+/* --- artwork thumbs: content keeps its colour; the box is chrome --- */
+img.thumb, .thumb-empty {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+img.thumb { object-fit: cover; border: 1px solid var(--line); }
+.thumb-empty { border: 1px solid var(--faint); }
+img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
+
+/* --- player bar --- */
+.playerbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.playerbar audio { flex: 1; max-width: 32rem; }
+.playerbar .nowplaying { color: var(--mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- odds and ends --- */
+.keychip {
+  background: var(--fg);
+  color: var(--bg);
+  padding: 0 0.35em;
+  display: inline-block;
+}
+.empty { border: 1px solid var(--faint); padding: 1rem; color: var(--mid); }
+.empty a, .empty p { color: var(--fg); }
+.counts { color: var(--mid); }
+.pager { padding: 0.75rem 0; }
+.dropzone { border: 1px dashed var(--line); }
+.status.error { color: var(--fg); font-weight: bold; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
+dt { color: var(--mid); }
+dd { margin: 0; }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

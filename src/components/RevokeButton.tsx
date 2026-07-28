@@ -3,6 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { createSignal } from 'solid-js'
+import StatusRegion from './StatusRegion'
 
 export default function RevokeButton(props: { email: string }) {
   const [status, setStatus] = createSignal('')
@@ -27,7 +28,7 @@ export default function RevokeButton(props: { email: string }) {
   return (
     <span>
       <button type="button" onClick={revoke}>Revoke</button>
-      <span aria-live="polite">{status()}</span>
+      <StatusRegion message={status()} />
     </span>
   )
 }

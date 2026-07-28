@@ -1,0 +1,18 @@
+---
+// src/components/StorageChip.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+import { formatBytes } from '../lib/format'
+
+// Astro.locals.supabase — the cookie-bound client middleware already built
+// for this request. Never a second serverClient(cookies, request).
+const { data, error } = await Astro.locals.supabase.rpc('my_storage')
+if (error) console.error('my_storage failed:', error.message)
+const s = data?.[0] ?? null
+---
+{s && (
+  <span class="storage" title="Occupying = your files still in the bucket. Contributed = everything you brought to the pool, including uploads that deduped onto someone else's copy.">
+    {formatBytes(s.occupying_bytes)} occupying · {formatBytes(s.contributed_bytes)} contributed
+  </span>
+)}
