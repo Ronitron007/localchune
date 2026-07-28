@@ -74,6 +74,18 @@ export function rpcError(error: { code?: string; message: string }): Response {
   return jsonError(status, code, error.message)
 }
 
+/**
+ * A thrown/rejected PostgREST call (transient 5xx, failed JWT refresh, an
+ * in-Worker `fetch failed`) must still produce a JSON body — never the
+ * bodyless 500 an uncaught throw yields in production workerd. 503, not
+ * 500: the failure is the database being unreachable right now, and the
+ * client's next attempt may simply work.
+ */
+export function dbErrorResponse(message: string): Response {
+  console.error('db:', message)
+  return jsonError(503, 'db_error', 'try again')
+}
+
 // ---------------------------------------------------------------- parsers
 
 export function parseBatchBody(b: Record<string, unknown>): Parsed<{ label: string | null }> {
@@ -196,18 +208,27 @@ export type OwnedJob = {
  * Task 3's RPCs re-check `uploaded_by = auth.uid()` independently. The
  * redundancy is deliberate: only this layer can mint a write capability
  * that the database cannot revoke.
+ *
+ * Returns `Parsed<OwnedJob | null>`, never throws: a PostgREST error
+ * (transient 5xx, failed JWT refresh, `fetch failed`) comes back as
+ * `{ ok: false, error }` instead of an exception. A route that let this
+ * throw would have the call land outside its try/catch — an uncaught throw
+ * in production workerd is a bodyless 500 with no content-type at all,
+ * which is indistinguishable from a dropped connection to Task 7's client
+ * and aborts the whole batch. Every caller must check `.ok` and, on
+ * failure, return `dbErrorResponse(result.error)` — a real JSON 503.
  */
 export async function loadOwnedJob(
   supabase: SupabaseClient, fileId: string, userId: string,
-): Promise<OwnedJob | null> {
+): Promise<Parsed<OwnedJob | null>> {
   const { data: job, error: jobErr } = await supabase
     .from('ingest_jobs')
     .select('file_id, multipart, part_size, part_count, upload_id')
     .eq('file_id', fileId)
     .eq('user_id', userId)
     .maybeSingle()
-  if (jobErr) throw new Error(`ingest_jobs: ${jobErr.message}`)
-  if (!job) return null
+  if (jobErr) return bad(`ingest_jobs: ${jobErr.message}`)
+  if (!job) return { ok: true, value: null }
 
   const { data: file, error: fileErr } = await supabase
     .from('files')
@@ -215,18 +236,21 @@ export async function loadOwnedJob(
     .eq('id', fileId)
     .eq('uploaded_by', userId)
     .maybeSingle()
-  if (fileErr) throw new Error(`files: ${fileErr.message}`)
-  if (!file) return null
+  if (fileErr) return bad(`files: ${fileErr.message}`)
+  if (!file) return { ok: true, value: null }
 
   return {
-    fileId,
-    r2Key: file.r2_key as string,
-    state: file.state as string,
-    container: (file.container as string | null) ?? null,
-    byteSize: Number(file.byte_size),
-    multipart: Boolean(job.multipart),
-    partSize: job.part_size === null ? null : Number(job.part_size),
-    partCount: job.part_count === null ? null : Number(job.part_count),
-    uploadId: (job.upload_id as string | null) ?? null,
+    ok: true,
+    value: {
+      fileId,
+      r2Key: file.r2_key as string,
+      state: file.state as string,
+      container: (file.container as string | null) ?? null,
+      byteSize: Number(file.byte_size),
+      multipart: Boolean(job.multipart),
+      partSize: job.part_size === null ? null : Number(job.part_size),
+      partCount: job.part_count === null ? null : Number(job.part_count),
+      uploadId: (job.upload_id as string | null) ?? null,
+    },
   }
 }

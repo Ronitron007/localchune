@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro'
 import {
-  jsonError, loadOwnedJob, parseAbortBody, readJsonBody, rpcError,
+  dbErrorResponse, jsonError, loadOwnedJob, parseAbortBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
 import { R2Error, abortMultipartUpload, r2ErrorResponse } from '../../../lib/r2'
 
@@ -16,7 +16,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.ok) return jsonError(400, 'bad_request', parsed.error)
   const { fileId, reason } = parsed.value
 
-  const job = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  const jobResult = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  if (!jobResult.ok) return dbErrorResponse(jobResult.error)
+  const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
 
   // A single PUT has nothing to abort — S3 PUT is atomic, so there is never

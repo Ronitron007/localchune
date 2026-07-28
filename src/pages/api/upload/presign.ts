@@ -6,7 +6,7 @@
 import type { APIRoute } from 'astro'
 import { contentTypeFor, preflight, preflightMessage } from '../../../lib/upload-policy'
 import {
-  jsonError, loadOwnedJob, parsePresignBody, readJsonBody, rpcError,
+  dbErrorResponse, jsonError, loadOwnedJob, parsePresignBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
 import {
   createMultipartUpload, presignExpiresAt, presignPut, r2ErrorResponse,
@@ -52,8 +52,24 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const contentType = contentTypeFor(verdict.container)
 
+  // The row exists by now — ingest_begin just inserted it, or this is a
+  // replay that found one already there. Load it to get the STORED plan.
+  // ingest_begin never updates multipart/part_size/part_count on a replay
+  // (see the migration), so `verdict.plan` — recomputed from THIS request's
+  // byte_size — must never drive the multipart-vs-single branch or the part
+  // numbers below: a replay with a changed byte_size would otherwise wedge
+  // the file (small→large hands out a whole-object PUT while /parts still
+  // expects multipart; large→small does the opposite and /complete 409s
+  // forever). The stored plan is authoritative, never recomputed — this is
+  // also the fix for a thrown DB error surfacing here as a bodyless 500
+  // instead of a JSON 503: loadOwnedJob no longer throws.
+  const jobResult = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  if (!jobResult.ok) return dbErrorResponse(jobResult.error)
+  const job = jobResult.value
+  if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
+
   try {
-    if (!verdict.plan.multipart) {
+    if (!job.multipart) {
       const url = await presignPut(row.r2_key)
       const { error: markErr } = await locals.supabase.rpc('ingest_mark_uploading', {
         p_file_id: fileId, p_upload_id: null,
@@ -67,9 +83,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     // Reuse the stored UploadId on a replay. Creating a second one orphans
     // the first, and ingest_jobs only remembers the one the sweeper aborts.
-    const job = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
-    if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
-
     const uploadId = job.uploadId ?? await createMultipartUpload(row.r2_key, contentType)
 
     const { error: markErr } = await locals.supabase.rpc('ingest_mark_uploading', {
@@ -79,8 +92,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     return Response.json({
       file_id: fileId, state: 'uploading', multipart: true, resumable: true,
-      upload_id: uploadId, part_size: verdict.plan.partSize,
-      part_count: verdict.plan.partCount, content_type: contentType,
+      upload_id: uploadId, part_size: job.partSize as number,
+      part_count: job.partCount as number, content_type: contentType,
     })
   } catch (e) {
     return r2ErrorResponse(e)

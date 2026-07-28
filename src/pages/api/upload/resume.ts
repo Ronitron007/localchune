@@ -4,7 +4,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-import { jsonError, loadOwnedJob, parseFileIdParam } from '../../../lib/upload-api'
+import { dbErrorResponse, jsonError, loadOwnedJob, parseFileIdParam } from '../../../lib/upload-api'
 import { R2Error, listParts, r2ErrorResponse } from '../../../lib/r2'
 
 /**
@@ -22,7 +22,9 @@ export const GET: APIRoute = async ({ url, locals }) => {
   if (!parsed.ok) return jsonError(400, 'bad_request', parsed.error)
   const fileId = parsed.value
 
-  const job = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  const jobResult = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  if (!jobResult.ok) return dbErrorResponse(jobResult.error)
+  const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
 
   const base = {

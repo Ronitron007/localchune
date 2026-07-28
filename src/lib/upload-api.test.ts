@@ -8,7 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   MAX_PART_URLS_PER_CALL, isUuid, readJsonBody, parseBatchBody, parsePresignBody,
   parsePartsBody, parseCompleteBody, parseAbortBody, parseFileIdParam,
-  rpcError, loadOwnedJob,
+  rpcError, loadOwnedJob, dbErrorResponse,
 } from './upload-api'
 
 const U1 = '11111111-1111-1111-1111-111111111111'
@@ -22,8 +22,14 @@ const json = (body: unknown) =>
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
 
-/** Records every .eq() so a test can assert the ownership filters exist. */
-function fakeClient(rows: Record<string, unknown>) {
+/**
+ * Records every .eq() so a test can assert the ownership filters exist.
+ * `errors[table]` simulates a thrown-in-production PostgREST failure — a
+ * transient 5xx, a failed JWT refresh, an in-Worker `fetch failed` — so
+ * loadOwnedJob's non-throwing contract can be tested without ever needing
+ * a real Supabase client.
+ */
+function fakeClient(rows: Record<string, unknown>, errors: Record<string, { message: string }> = {}) {
   const seen: { table: string; filters: [string, unknown][] }[] = []
   const client = {
     from(table: string) {
@@ -33,6 +39,7 @@ function fakeClient(rows: Record<string, unknown>) {
         eq: (col: string, val: unknown) => { filters.push([col, val]); return q },
         maybeSingle: async () => {
           seen.push({ table, filters })
+          if (errors[table]) return { data: null, error: errors[table] }
           return { data: rows[table] ?? null, error: null }
         },
       }
@@ -192,15 +199,52 @@ describe('loadOwnedJob', () => {
       { table: 'files', filters: [['id', U1], ['uploaded_by', ME]] },
     ])
   })
-  it('returns null when the job is not the caller\'s', async () => {
+  it('returns ok:true, value:null when the job is not the caller\'s', async () => {
     const { client } = fakeClient({ ingest_jobs: null, files: file })
-    expect(await loadOwnedJob(client, U1, ME)).toBeNull()
+    expect(await loadOwnedJob(client, U1, ME)).toEqual({ ok: true, value: null })
   })
-  it('returns the merged row', async () => {
+  it('returns the merged row as ok:true', async () => {
     const { client } = fakeClient({ ingest_jobs: job, files: file })
     expect(await loadOwnedJob(client, U1, ME)).toEqual({
-      fileId: U1, r2Key: `audio/${ME}/${U1}.flac`, state: 'uploading', container: 'flac',
-      byteSize: 50_000_000, multipart: true, partSize: 16_777_216, partCount: 3, uploadId: 'UP1',
+      ok: true,
+      value: {
+        fileId: U1, r2Key: `audio/${ME}/${U1}.flac`, state: 'uploading', container: 'flac',
+        byteSize: 50_000_000, multipart: true, partSize: 16_777_216, partCount: 3, uploadId: 'UP1',
+      },
     })
+  })
+
+  // IMPORTANT 1 (Task 5 review): loadOwnedJob used to throw on a PostgREST
+  // error, and that call sat outside every route's try/catch. In production
+  // workerd an uncaught throw is HTTP 500 with content-length: 0 and no
+  // content-type header at all — indistinguishable from a dropped
+  // connection to Task 7's client, which then aborts an entire batch of up
+  // to 100 parts. It must never throw; every failure comes back typed.
+  it('never throws: an ingest_jobs PostgREST error becomes ok:false, and short-circuits before querying files', async () => {
+    const { client, seen } = fakeClient({ files: file }, { ingest_jobs: { message: 'connection reset' } })
+    const result = await loadOwnedJob(client, U1, ME)
+    expect(result).toEqual({ ok: false, error: 'ingest_jobs: connection reset' })
+    expect(seen).toEqual([{ table: 'ingest_jobs', filters: [['file_id', U1], ['user_id', ME]] }])
+  })
+  it('never throws: a files PostgREST error becomes ok:false', async () => {
+    const { client } = fakeClient({ ingest_jobs: job }, { files: { message: 'JWT expired' } })
+    expect(await loadOwnedJob(client, U1, ME)).toEqual({ ok: false, error: 'files: JWT expired' })
+  })
+
+  // THE assertion that matters (Task 5 review): a thrown/rejected database
+  // call must still produce a JSON body with an application/json
+  // content-type, not a bodyless response. This is exactly what every
+  // /api/upload/* route now does: `if (!jobResult.ok) return
+  // dbErrorResponse(jobResult.error)`.
+  it('a thrown database error, run through dbErrorResponse, is a JSON 503 with application/json content-type', async () => {
+    const { client } = fakeClient({}, { ingest_jobs: { message: 'fetch failed' } })
+    const result = await loadOwnedJob(client, U1, ME)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected loadOwnedJob to fail')
+
+    const res = dbErrorResponse(result.error)
+    expect(res.status).toBe(503)
+    expect(res.headers.get('content-type')).toMatch(/^application\/json/)
+    expect(await res.json()).toEqual({ error: 'db_error', message: 'try again' })
   })
 })

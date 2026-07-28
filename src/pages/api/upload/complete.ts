@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro'
 import {
-  jsonError, loadOwnedJob, parseCompleteBody, readJsonBody, rpcError,
+  dbErrorResponse, jsonError, loadOwnedJob, parseCompleteBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
 import {
   R2Error, completeMultipartUpload, headObject, listParts, r2ErrorResponse,
@@ -18,7 +18,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.ok) return jsonError(400, 'bad_request', parsed.error)
   const { fileId, parts: claimed } = parsed.value
 
-  const job = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  const jobResult = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  if (!jobResult.ok) return dbErrorResponse(jobResult.error)
+  const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
   if (job.state === 'received') {
     return Response.json({ file_id: fileId, state: 'received', byte_size: job.byteSize, already: true })
@@ -58,9 +60,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const head = await headObject(job.r2Key)
 
     if (!head) {
-      await locals.supabase.rpc('ingest_fail', {
+      // Result checked so a failed bookkeeping RPC doesn't leave the row
+      // silently stuck in 'uploading' until the 24h sweeper — see Task 5
+      // review. The response to the client is unchanged either way: the
+      // completion already failed, and a secondary logging failure here
+      // must not change which error the caller sees.
+      const { error: failErr } = await locals.supabase.rpc('ingest_fail', {
         p_file_id: fileId, p_reason: 'complete: no object at the key after upload',
       })
+      if (failErr) console.error('complete: ingest_fail failed after object_missing:', failErr.message)
       return jsonError(409, 'object_missing', 'nothing was uploaded to that key')
     }
 
@@ -69,10 +77,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // and complete a large one. Same answer to both. The object is left
       // where it is — Task 8's nightly reconcile deletes orphans; no request
       // handler in this milestone deletes anything.
-      await locals.supabase.rpc('ingest_fail', {
+      const { error: failErr } = await locals.supabase.rpc('ingest_fail', {
         p_file_id: fileId,
         p_reason: `complete: size mismatch — declared ${job.byteSize}, object ${head.size}`,
       })
+      if (failErr) console.error('complete: ingest_fail failed after size_mismatch:', failErr.message)
       return jsonError(
         409, 'size_mismatch',
         `the object is ${head.size} bytes but ${job.byteSize} were declared; retry with a new file id`,

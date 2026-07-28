@@ -5,3 +5,7 @@
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
+# wrangler.jsonc deliberately has no top-level R2_BUCKET var — omitting this
+# line would silently run local smoke tests against the PRODUCTION bucket.
+# conf() in src/lib/r2.ts throws R2NotConfigured instead of defaulting.
+R2_BUCKET=localchune-audio-dev

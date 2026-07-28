@@ -6,7 +6,7 @@
 import type { APIRoute } from 'astro'
 import { partRange } from '../../../lib/upload-policy'
 import {
-  jsonError, loadOwnedJob, parsePartsBody, readJsonBody, rpcError,
+  dbErrorResponse, jsonError, loadOwnedJob, parsePartsBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
 import { presignExpiresAt, presignPut, r2ErrorResponse } from '../../../lib/r2'
 
@@ -17,7 +17,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.ok) return jsonError(400, 'bad_request', parsed.error)
   const { fileId, from, to } = parsed.value
 
-  const job = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  const jobResult = await loadOwnedJob(locals.supabase, fileId, locals.member.user_id)
+  if (!jobResult.ok) return dbErrorResponse(jobResult.error)
+  const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
   if (!job.multipart || job.partSize === null || job.partCount === null) {
     return jsonError(409, 'not_multipart', 'that file is a single PUT — use the url from /presign')
@@ -38,22 +40,30 @@ export const POST: APIRoute = async ({ request, locals }) => {
   })
   if (error) return rpcError(error)
 
-  try {
-    const numbers: number[] = []
-    for (let n = from; n <= to; n++) numbers.push(n)
+  const numbers: number[] = []
+  for (let n = from; n <= to; n++) numbers.push(n)
 
-    const parts = await Promise.all(numbers.map(async (n) => {
-      // Offsets derive from the STORED part size, never a recomputed one:
-      // R2 checks "all non-trailing parts are equal length" only at
-      // CompleteMultipartUpload, after every byte is already uploaded.
-      const { start, end } = partRange(n, job.partSize as number, job.byteSize)
-      return {
-        part_number: n,
-        start,
-        end,
-        url: await presignPut(job.r2Key, { partNumber: n, uploadId: job.uploadId as string }),
-      }
-    }))
+  // Offsets derive from the STORED part size, never a recomputed one: R2
+  // checks "all non-trailing parts are equal length" only at
+  // CompleteMultipartUpload, after every byte is already uploaded. A throw
+  // here is a client-input problem (a stale or malformed range against this
+  // file's stored plan), not an R2 failure — kept out of the try below so
+  // it never gets mislabeled as an upstream r2_error/502.
+  let ranges: { start: number; end: number }[]
+  try {
+    ranges = numbers.map((n) => partRange(n, job.partSize as number, job.byteSize))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return jsonError(400, 'bad_part_range', message)
+  }
+
+  try {
+    const parts = await Promise.all(numbers.map(async (n, i) => ({
+      part_number: n,
+      start: ranges[i].start,
+      end: ranges[i].end,
+      url: await presignPut(job.r2Key, { partNumber: n, uploadId: job.uploadId as string }),
+    })))
 
     return Response.json({
       file_id: fileId,
