@@ -134,19 +134,43 @@ export function presignExpiresAt(ttlSeconds: number = PRESIGN_TTL_SECONDS): stri
 }
 
 /**
+ * One hour, matching PRESIGN_TTL_SECONDS, and for a related reason: the TTL
+ * has to outlive the LISTENING SESSION, not the first request. Seeking in a
+ * 15-minute track issues a fresh Range request against the same URL, so a
+ * 15-minute TTL would make a scrub near the end of a long track fail with
+ * an opaque media error.
+ */
+export const GET_TTL_SECONDS = PRESIGN_TTL_SECONDS
+
+/**
  * A presigned GET, for the original audio or for a derived artifact.
  *
  * A signed GET is a bearer READ capability to one exact key for its lifetime,
  * so the same one-hour policy as `presignPut` applies and for the same
  * reason: it bounds what one leaked URL is worth.
+ *
+ * Response-header overrides are part of the SIGNED query string, so the
+ * recipient cannot alter them — this is what makes it safe to put a
+ * filename in a URL the browser will follow (the download route) or an
+ * immutable cache-control on artwork (the art route).
  */
 export async function presignGet(
   key: string,
-  opts: { ttlSeconds?: number } = {},
+  opts: {
+    ttlSeconds?: number
+    contentDisposition?: string
+    contentType?: string
+    cacheControl?: string
+  } = {},
 ): Promise<string> {
   const { accessKeyId, secretAccessKey } = conf()
   const url = new URL(readObjectUrl(key))
-  url.searchParams.set('X-Amz-Expires', String(opts.ttlSeconds ?? PRESIGN_TTL_SECONDS))
+  url.searchParams.set('X-Amz-Expires', String(opts.ttlSeconds ?? GET_TTL_SECONDS))
+  if (opts.contentDisposition) {
+    url.searchParams.set('response-content-disposition', opts.contentDisposition)
+  }
+  if (opts.contentType) url.searchParams.set('response-content-type', opts.contentType)
+  if (opts.cacheControl) url.searchParams.set('response-cache-control', opts.cacheControl)
   const signed = await signer(accessKeyId, secretAccessKey)
     .sign(url.toString(), { method: 'GET', aws: { signQuery: true } })
   return signed.url

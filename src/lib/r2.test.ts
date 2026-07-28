@@ -190,3 +190,41 @@ describe('deleteObjectQuietly', () => {
     expect(errorSpy).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('presignGet', () => {
+  beforeEach(() => {
+    for (const k of Object.keys(mockEnv)) delete mockEnv[k]
+    mockEnv.R2_ACCOUNT_ID = 'acct'
+    mockEnv.R2_ACCESS_KEY_ID = 'key'
+    mockEnv.R2_SECRET_ACCESS_KEY = 'secret'
+    mockEnv.R2_BUCKET = 'bucket'
+  })
+
+  it('signs a derived-artifact key', async () => {
+    const url = await presignGet(DERIVED)
+    expect(url).toContain('/bucket/derived/')
+    expect(url).toContain('X-Amz-Signature=')
+    expect(url).toContain('X-Amz-Expires=3600')
+  })
+
+  it('signs an upload key too, for the original download', async () => {
+    expect(await presignGet(KEY)).toContain('X-Amz-Signature=')
+  })
+
+  it('carries the response-header overrides inside the signature', async () => {
+    const url = await presignGet(KEY, { contentDisposition: 'attachment; filename="a.mp3"' })
+    expect(url).toContain('response-content-disposition=')
+  })
+
+  it('still refuses anything that is neither shape', async () => {
+    await expect(presignGet('derived/../../etc/passwd')).rejects.toThrow(R2Error)
+    await expect(presignGet('audio/nope')).rejects.toThrow(R2Error)
+  })
+
+  it('does NOT loosen the write path', () => {
+    // objectUrl feeds presignPut and the multipart control plane. A derived
+    // key must never be writable through them.
+    expect(() => objectUrl(DERIVED)).toThrow(R2Error)
+    expect(readObjectUrl(DERIVED)).toContain('/bucket/derived/')
+  })
+})
