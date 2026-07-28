@@ -6,13 +6,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Request parsing, error mapping and the ownership lookup shared by the six
- * /api/upload routes.
+ * Request parsing, error mapping and the ownership lookup shared by the
+ * /api/upload routes, and the JSON error vocabulary (`jsonError`,
+ * `rpcError`, `dbErrorResponse`, `isUuid`) shared by every JSON route
+ * including /api/track/* and /api/upload/status.
  *
- * This module exists separately from the routes because every route imports
- * src/lib/r2.ts, which imports `cloudflare:workers` — a workerd built-in
- * Vitest cannot resolve. A validator inside a route file is therefore
- * permanently untestable. Nothing here may import r2.ts.
+ * This module exists separately from the routes because every upload route
+ * imports src/lib/r2.ts, which imports `cloudflare:workers` — a workerd
+ * built-in Vitest cannot resolve. A validator inside a route file is
+ * therefore permanently untestable. Nothing here may import r2.ts.
  */
 
 /** One /api/upload/parts call mints at most this many signed URLs. */
