@@ -1,0 +1,65 @@
+---
+// src/components/TrackRow.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// One row. No crates column (M6 — omit, don't disable). Artist and title
+// come from the server (migration 10's display_* fallbacks) and are never
+// re-derived here — search matches the server's strings.
+//
+// The play control is a LINK whose href is the track page: with JS the
+// site script intercepts it and streams; without JS it navigates, which
+// still works. The thumb <img> only renders when thumb.jpg exists — rows
+// never load full-size art, and a missing thumb is a bordered empty box,
+// never a broken image.
+import KeyChip from './KeyChip.astro'
+import QualityBadge from './QualityBadge.astro'
+import { formatBpm } from '../lib/track-format'
+import { formatDuration } from '../lib/format'
+import type { PoolTrack } from '../lib/pool-api'
+
+interface Props { track: PoolTrack }
+const { track } = Astro.props
+const artist = track.display_artist ?? 'Unknown artist'
+const noBeat = track.bpm === null || track.bpm <= 0
+const added = new Date(track.created_at).toISOString().slice(0, 10)
+---
+<tr class="trackrow">
+  <td class="controls">
+    <a
+      class="play"
+      href={`/track/${track.file_id}`}
+      data-track-id={track.file_id}
+      data-label={`${artist} — ${track.display_title}`}
+      aria-label={`Play ${track.display_title}`}
+    >▶</a>
+  </td>
+  <td class="art">
+    {track.has_thumb
+      ? <img class="thumb" src={`/api/track/${track.file_id}/art`} alt="" width="28" height="28" loading="lazy" />
+      : <span class="thumb-empty" aria-hidden="true"></span>}
+  </td>
+  <td class="title">
+    <a href={`/track/${track.file_id}`}>
+      <span class="artist">{artist}</span>
+      <span class="sep"> — </span>
+      <span class="name">{track.display_title}</span>
+    </a>
+  </td>
+  <td class="bpm num" title={noBeat ? 'no beat detected' : undefined}>
+    {formatBpm(track.bpm, track.ibi_std_ms)}
+  </td>
+  <td class="key">
+    <KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} />
+  </td>
+  <td class="duration num">{formatDuration(track.duration_ms)}</td>
+  <td class="quality">
+    <QualityBadge tier={track.quality_tier} lossyAncestor={track.lossy_ancestor} measCutoffHz={track.meas_cutoff_hz} />
+  </td>
+  <td class="uploader">{track.uploader_name}</td>
+  <td class="added num">{added}</td>
+  <td class="download">
+    <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
+  </td>
+</tr>

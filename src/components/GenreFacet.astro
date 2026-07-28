@@ -1,0 +1,21 @@
+---
+// src/components/GenreFacet.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The M8 slot. Genre needs a normalised vocabulary from the Discogs dumps
+// (PRD §9.1); until that data exists `families` is always [] and this
+// renders NOTHING, so no one sees a facet that filters nothing. Shipped
+// now, empty, so the M8 task is a data task and not a layout task.
+interface Props { families: { family: string; styles: string[] }[] }
+const { families } = Astro.props
+---
+{families.length > 0 && (
+  <fieldset class="facet genre">
+    <legend>Genre</legend>
+    {families.map((fam) => (
+      <span class="family">{fam.family}: {fam.styles.join(', ')}</span>
+    ))}
+  </fieldset>
+)}

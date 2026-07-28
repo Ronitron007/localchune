@@ -89,11 +89,10 @@ export function preflightFile(
   }
 }
 
-export function formatDuration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return '--:--'
-  const total = Math.round(ms / 1000)
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
-}
+// Moved to ./format so pool components can import it without pulling in
+// music-metadata and the pre-flight Web Worker. Re-exported here because
+// UploadDropzone and preflight.test.ts both import it from this module.
+export { formatDuration } from './format'
 
 // --------------------------------------------------------------- the worker
 

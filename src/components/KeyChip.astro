@@ -1,0 +1,16 @@
+---
+// src/components/KeyChip.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// Camelot on the chip, the other two profiles in the tooltip. Inverted
+// black/white, monospace — the circle-of-fifths colouring from cue-tracks
+// is dead on arrival here: it violates the monochrome rule.
+import { keyTooltip } from '../lib/track-format'
+interface Props { camelot: string | null; open: string | null; musical: string | null }
+const { camelot, open, musical } = Astro.props
+---
+{camelot
+  ? <span class="keychip" title={keyTooltip(camelot, open, musical)}>{camelot}</span>
+  : <span class="num" title={keyTooltip(null, null, null)}>—</span>}

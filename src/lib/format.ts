@@ -18,3 +18,9 @@ export function formatBytes(n: number): string {
   while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`
 }
+
+export function formatDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return '--:--'
+  const total = Math.round(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}

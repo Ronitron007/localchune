@@ -1,15 +1,41 @@
 ---
+// src/pages/index.astro
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+//
+// The pool is server-rendered. Zero islands. This page parses its own URL,
+// calls pool_list() once, and renders everything — a filtered URL is the
+// complete filter state and every view is shareable. View-source shows the
+// rows; no client fetch renders anything.
 import Shell from '../layouts/Shell.astro'
-import { creditsRemaining } from '../lib/session'
-const m = Astro.locals.member!
+import FilterBar from '../components/FilterBar.astro'
+import TrackTable from '../components/TrackTable.astro'
+import { PAGE_SIZE, parsePoolQuery, poolListArgs, type PoolTrack } from '../lib/pool-api'
+
+const query = parsePoolQuery(Astro.url.searchParams)
+const rawCursor = Astro.url.searchParams.get('cursor')
+const cursor = rawCursor !== null && rawCursor.length > 36 ? rawCursor : null
+
+// Astro.locals.supabase — the request's cookie-bound client. Never a second one.
+const { data, error } = await Astro.locals.supabase.rpc(
+  'pool_list', poolListArgs(query, cursor, PAGE_SIZE))
+if (error) console.error('pool_list failed:', error.message)
+const tracks = (data ?? []) as PoolTrack[]
+const nextCursor =
+  tracks.length === PAGE_SIZE ? tracks[tracks.length - 1].row_cursor : null
+
+const { data: uploaderRows, error: uploaderError } =
+  await Astro.locals.supabase.rpc('pool_uploaders')
+if (uploaderError) console.error('pool_uploaders failed:', uploaderError.message)
+const uploaders = uploaderRows ?? []
+
+// pool_uploaders() groups over stored files, so zero groups means the pool
+// itself is empty — a different message from "your filters matched nothing".
+const poolEmpty = uploaders.length === 0
 ---
 <Shell title="localchune">
-  <h1>localchune</h1>
-  <p>{m.email} — {creditsRemaining(m.access_expires_at)} credits</p>
-  <p><a href="/upload">Upload tracks</a></p>
-  {m.role === 'owner' && <a href="/admin">Admin</a>}
-  <form method="post" action="/auth/signout"><button>Sign out</button></form>
+  <h1>Pool</h1>
+  <FilterBar query={query} uploaders={uploaders} />
+  <TrackTable tracks={tracks} query={query} nextCursor={nextCursor} poolEmpty={poolEmpty} />
 </Shell>
