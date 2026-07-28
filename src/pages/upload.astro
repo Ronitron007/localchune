@@ -2,19 +2,18 @@
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
-import { creditsRemaining } from '../lib/session'
+import UploadDropzone from '../components/UploadDropzone'
 const m = Astro.locals.member!
 ---
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>localchune</title>
+  <title>localchune — upload</title>
 </head>
 <body>
-  <h1>localchune</h1>
-  <p>{m.email} — {creditsRemaining(m.access_expires_at)} credits</p>
-  <p><a href="/upload">Upload tracks</a></p>
-  {m.role === 'owner' && <a href="/admin">Admin</a>}
-  <form method="post" action="/auth/signout"><button>Sign out</button></form>
+  <h1>Upload</h1>
+  <p>{m.email}</p>
+  <UploadDropzone userId={m.user_id} client:load />
+  <p><a href="/">← pool</a></p>
 </body></html>
