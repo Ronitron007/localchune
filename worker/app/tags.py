@@ -72,3 +72,19 @@ def extract_artwork(path: str, out: str) -> bool:
         os.remove(out)
         return False
     return True
+
+def make_thumb(src: str, out: str, size: int = 64) -> bool:
+    """Downscale extracted cover art to a `size`-square JPEG (~q70).
+
+    Cover-crop rather than letterbox: scale the short edge to `size`, crop
+    the centre. Returns False instead of raising when `src` is missing or
+    unreadable -- a track with undecodable art is a track with no thumb,
+    not a failed analysis. ffmpeg's -q:v 7 lands near libjpeg quality 70.
+    """
+    result = subprocess.run(
+        ['ffmpeg', '-v', 'error', '-y', '-i', src,
+         '-vf', f'scale={size}:{size}:force_original_aspect_ratio=increase,'
+                f'crop={size}:{size}',
+         '-frames:v', '1', '-q:v', '7', out],
+        capture_output=True)
+    return result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0
