@@ -9,8 +9,15 @@ output and a plain ffmpeg stream copy, and verified against real files
 generated with real ffmpeg 8.0.1 across MP3/FLAC/M4A/Ogg, not just a canned
 mock.
 """
-import os, subprocess
+import logging, os, subprocess
 from .decode import probe
+
+log = logging.getLogger("analysis")
+
+# Matches workers/analysis/src/index.ts's MAX_ARTWORK_BYTES. That side skips
+# an oversized artifact rather than buffering it into the DO's 128 MB
+# isolate; this side is the cheaper backstop -- don't ship the bytes at all.
+MAX_ARTWORK_BYTES = 20 * 1024 * 1024
 
 def parse_tags(doc: dict) -> dict:
     """Extract a flat, lowercased tag dict from a decoded ffprobe document.
@@ -45,8 +52,23 @@ def extract_artwork(path: str, out: str) -> bool:
     -- ffmpeg exits non-zero with "Output file does not contain any
     stream" (verified on real ffmpeg 8.0.1), which is the expected, common
     case for plenty of legitimately-tagged files, not an error.
+
+    Also returns False, having deleted `out`, when the extracted stream
+    exceeds MAX_ARTWORK_BYTES. ffmpeg's stream copy here has no size limit of
+    its own -- it copies whatever attached-picture block the source declares,
+    and the lossless upload gate permits files up to ~544 MB, so a crafted
+    FLAC can carry a multi-hundred-MB "cover art" block on trivial audio.
+    Capped at the source: cheaper to not ship an oversized artifact than to
+    ship it and have the Durable Object skip it on the other side.
     """
     result = subprocess.run(
         ['ffmpeg', '-v', 'error', '-y', '-i', path, '-an', '-c:v', 'copy', out],
         capture_output=True)
-    return result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0
+    if result.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+        return False
+    size = os.path.getsize(out)
+    if size > MAX_ARTWORK_BYTES:
+        log.warning("artwork %s is %dB, over the %dB cap -- dropping", out, size, MAX_ARTWORK_BYTES)
+        os.remove(out)
+        return False
+    return True

@@ -4,6 +4,7 @@
 import os
 import subprocess
 
+from app import tags
 from app.tags import parse_tags, read_tags, extract_artwork
 
 
@@ -129,6 +130,25 @@ def test_extract_artwork_returns_false_when_no_art_embedded(tmp_path):
     mp3 = str(tmp_path / 'noart.mp3')
     out = str(tmp_path / 'art.jpg')
     _tagged_mp3_no_art(mp3)
+
+    assert extract_artwork(mp3, out) is False
+    assert not os.path.exists(out)
+
+def test_extract_artwork_drops_and_returns_false_when_over_cap(tmp_path, monkeypatch):
+    """A crafted source can carry an attached-picture stream of any size --
+    ffmpeg's stream copy has no limit of its own. Generating a real >20MB
+    fixture is slow and wasteful for a unit test, so the cap is monkeypatched
+    down to a few bytes: the ordinary small cover produced by _cover_png then
+    reliably exceeds it, exercising the same over-cap path a genuinely huge
+    embedded image would take. extract_artwork must return False and leave
+    no output file behind -- a missing cover must never fail an analysis."""
+    monkeypatch.setattr(tags, 'MAX_ARTWORK_BYTES', 16)
+
+    mp3 = str(tmp_path / 'tagged.mp3')
+    cover = str(tmp_path / 'cover.png')
+    out = str(tmp_path / 'art.jpg')
+    _cover_png(cover)
+    _tagged_mp3_with_art(mp3, cover)
 
     assert extract_artwork(mp3, out) is False
     assert not os.path.exists(out)

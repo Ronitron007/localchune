@@ -110,6 +110,17 @@ export interface AnalyzeResponse {
   preview_key: string | null
   artwork_key: string | null
   cpu_seconds: number
+  /**
+   * DO-side only — app/models.py has no such field, so this is never present
+   * in the container's JSON. Populated here, after the fact, when
+   * `putArtifact` skips a derived artifact because its Content-Length was
+   * missing or over the per-artifact ceiling (see MAX_*_BYTES below). Keyed
+   * by artifact kind ('peaks' | 'preview' | 'artwork' | 'spectrogram'),
+   * valued by the skip reason. The corresponding `*_key` is nulled out in
+   * the same pass, so a skipped artifact never points at an R2 object that
+   * was never written.
+   */
+  artifact_skipped?: Record<string, string>
 }
 
 export class AnalysisContainer extends Container<Env> {
@@ -199,17 +210,41 @@ export class AnalysisContainer extends Container<Env> {
    * short stream waits forever rather than erroring. Do not "restore" it
    * without reproducing that.
    *
-   * Buffering is safe at the sizes involved and the sizes are known, not
-   * hoped for: peaks.json is ~41 KB by construction (1000 buckets), artwork is
-   * one embedded cover, and the 128 kbps Opus preview of the longest
-   * permitted track (15 min, enforced by MAX_DURATION_MS) is ~14 MB, against a
-   * Worker's 128 MB. The one artifact that could break this rule is a future
-   * spectrogram PNG; whoever adds it owns re-testing this path.
+   * Buffering is safe ONLY because it is now gated on Content-Length below.
+   * peaks.json and the Opus preview are bounded by construction (~41 KB and
+   * ~14 MB respectively — see the ceilings), but embedded cover art is
+   * copied verbatim by worker/app/tags.py's extract_artwork from whatever
+   * attached-picture stream the source file has, with no size limit of its
+   * own upstream of Task 8's fix there. A crafted FLAC with a multi-hundred-
+   * MB "cover art" block and trivial audio would otherwise be buffered whole
+   * into this isolate's 128 MB. FastAPI's `FileResponse` (used by
+   * GET /artifact/{file_id}/{name}) always sets Content-Length, so its
+   * absence is itself treated as unsafe to buffer.
+   *
+   * Returns a skip reason string if the artifact was NOT written (missing or
+   * oversized Content-Length), or null on success. Never throws for a size
+   * problem — a missing cover must never fail an analysis.
    */
-  private async putArtifact(key: string, res: Response): Promise<void> {
+  // Per-artifact Content-Length ceilings enforced by putArtifact() below —
+  // the actual guard against the OOM this whole mechanism exists to prevent.
+  private static readonly MAX_ARTWORK_BYTES = 20 * 1024 * 1024 // uncapped at the source; this IS the backstop
+  private static readonly MAX_PREVIEW_BYTES = 20 * 1024 * 1024 // ~14 MB at the 15-min/128kbps cap; headroom, not the expected size
+  private static readonly MAX_PEAKS_BYTES = 1 * 1024 * 1024 // ~41 KB by construction (1000 buckets); generous headroom
+
+  private async putArtifact(key: string, res: Response, maxBytes: number): Promise<string | null> {
+    const declared = res.headers.get('content-length')
+    const len = declared === null ? NaN : Number(declared)
+    if (!Number.isFinite(len) || len > maxBytes) {
+      const reason = declared === null
+        ? 'missing_content_length'
+        : `too_large: ${len}B > ${maxBytes}B ceiling`
+      console.warn(`artifact ${key} skipped: ${reason}`)
+      return reason
+    }
     const body = await res.arrayBuffer()
     console.log(`artifact ${key} ${body.byteLength}B`)
     await this.env.AUDIO.put(key, body)
+    return null
   }
 
   /**
@@ -241,19 +276,42 @@ export class AnalysisContainer extends Container<Env> {
       if (!res.ok) throw new Error(`analyze ${res.status}: ${await res.text()}`)
       const out = (await res.json()) as AnalyzeResponse
 
-      for (const name of [
-        out.peaks_key,
-        out.preview_key,
-        out.artwork_key,
-        out.forensics?.spectrogram_key,
-      ]) {
+      const artifactSkipped: Record<string, string> = {}
+      const artifacts: Array<{
+        kind: string
+        name: string | null | undefined
+        maxBytes: number
+        clear: () => void
+      }> = [
+        { kind: 'peaks', name: out.peaks_key, maxBytes: AnalysisContainer.MAX_PEAKS_BYTES,
+          clear: () => { out.peaks_key = null } },
+        { kind: 'preview', name: out.preview_key, maxBytes: AnalysisContainer.MAX_PREVIEW_BYTES,
+          clear: () => { out.preview_key = null } },
+        { kind: 'artwork', name: out.artwork_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
+          clear: () => { out.artwork_key = null } },
+        // spectrogram_key is always null today — see the Forensics field
+        // comment above; nothing in app/ produces one yet — but the ceiling
+        // is wired up now so whoever adds a producer does not silently
+        // reopen this OOM path.
+        { kind: 'spectrogram', name: out.forensics?.spectrogram_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
+          clear: () => { if (out.forensics) out.forensics.spectrogram_key = null } },
+      ]
+
+      for (const { kind, name, maxBytes, clear } of artifacts) {
         if (!name) continue
         const a = await this.containerFetch(`http://c/artifact/${fileId}/${name}`)
         if (!a.ok || !a.body) {
           console.warn(`artifact ${name} not retrievable: ${a.status}`)
           continue
         }
-        await this.putArtifact(`derived/${fileId}/${name}`, a)
+        const skipReason = await this.putArtifact(`derived/${fileId}/${name}`, a, maxBytes)
+        if (skipReason) {
+          artifactSkipped[kind] = skipReason
+          clear()
+        }
+      }
+      if (Object.keys(artifactSkipped).length > 0) {
+        out.artifact_skipped = artifactSkipped
       }
       return out
     } finally {
