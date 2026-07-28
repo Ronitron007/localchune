@@ -1,0 +1,75 @@
+# localchune — MIT licensed. See LICENSE.
+# CI: every push to main and every PR runs the three test surfaces.
+# Deploys stay manual (npm run deploy / deploy:analysis / deploy:maintenance)
+# — they need production secrets that deliberately do not live in CI.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: vitest + astro check + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run check
+      - run: npm run build
+        env:
+          # Build needs the PUBLIC_ pair to exist; real values are irrelevant
+          # for a build-only check and secrets stay out of CI.
+          PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+          PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+
+  db:
+    name: pgTAP (supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: supabase start
+      - run: supabase test db
+      # supabase start applies every migration from zero, so this job is also
+      # the migration-replayability check the reviews keep re-running by hand.
+
+  worker:
+    name: pytest (analysis worker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: worker/pyproject.toml
+      - name: system deps (ffmpeg + chromaprint — real-encoder tests use them)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools
+      - name: install torch (cpu wheel — the default pypi wheel drags CUDA)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: install worker
+        run: pip install -e "./worker[dev]"
+      - name: unit tests
+        # --ignore: the integration file imports beat_this at module level,
+        # which needs the model checkpoint; -m alone deselects too late
+        # (after collection already imported it).
+        run: |
+          cd worker
+          python -m pytest tests/ -q -m "not integration" \
+            --ignore=tests/test_beats_integration.py
