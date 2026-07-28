@@ -175,37 +175,41 @@ export class AnalysisContainer extends Container<Env> {
   }
 
   /**
-   * Put one derived artifact into R2 without buffering it.
+   * Put one derived artifact into R2.
    *
-   * `env.AUDIO.put(key, response.body)` looks obvious and throws:
+   * Buffered, deliberately, and this is the second attempt.
+   *
+   * `env.AUDIO.put(key, response.body)` — the obvious line, and the brief's —
+   * throws on the real platform:
    *
    *   TypeError: Provided readable stream must have a known length
    *   (request/response body or readable half of FixedLengthStream)
    *
-   * R2 has to declare Content-Length before it starts writing, and a body
-   * arriving from the container is a plain chunked stream. Measured on the
-   * deployed Worker — and only measurable there, because it cannot happen
-   * until an analysis actually SUCCEEDS and produces an artifact to drain.
+   * R2 must declare Content-Length before it starts writing, and a body
+   * arriving from the container is a plain chunked stream. Neither failure
+   * here is reachable before an analysis SUCCEEDS and produces an artifact to
+   * drain, so both are deploy-only.
    *
-   * FixedLengthStream is the fix that keeps the streaming property: the
-   * length is asserted up front from the container's Content-Length and the
-   * bytes still flow straight through. The pipe is started BEFORE the put is
-   * awaited, because put() consumes the readable half and the two halves have
-   * to run concurrently or they deadlock. arrayBuffer() is the fallback for a
-   * response with no Content-Length, which buffers, and is why it is the
-   * fallback rather than the rule.
+   * The streaming fix — pipe through `new FixedLengthStream(contentLength)`,
+   * start the pipe before awaiting `put` — was written, deployed and measured,
+   * and it HUNG: the Durable Object invocation sat until the client gave up at
+   * 900s and the platform logged it Canceled. The likely cause is a mismatch
+   * between the Content-Length the container declares and what the proxy
+   * actually delivers; R2 waits for the byte count it was promised, and a
+   * short stream waits forever rather than erroring. Do not "restore" it
+   * without reproducing that.
+   *
+   * Buffering is safe at the sizes involved and the sizes are known, not
+   * hoped for: peaks.json is ~41 KB by construction (1000 buckets), artwork is
+   * one embedded cover, and the 128 kbps Opus preview of the longest
+   * permitted track (15 min, enforced by MAX_DURATION_MS) is ~14 MB, against a
+   * Worker's 128 MB. The one artifact that could break this rule is a future
+   * spectrogram PNG; whoever adds it owns re-testing this path.
    */
   private async putArtifact(key: string, res: Response): Promise<void> {
-    const len = res.headers.get('content-length')
-    if (len !== null && res.body) {
-      const fixed = new FixedLengthStream(Number(len))
-      const pumping = res.body.pipeTo(fixed.writable)
-      await this.env.AUDIO.put(key, fixed.readable)
-      await pumping
-      return
-    }
-    console.warn(`artifact ${key} had no content-length; buffering`)
-    await this.env.AUDIO.put(key, await res.arrayBuffer())
+    const body = await res.arrayBuffer()
+    console.log(`artifact ${key} ${body.byteLength}B`)
+    await this.env.AUDIO.put(key, body)
   }
 
   /**
