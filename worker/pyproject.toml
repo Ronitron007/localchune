@@ -12,6 +12,9 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.24"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+  "integration: slow tests that run real model inference against audio fixtures",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
