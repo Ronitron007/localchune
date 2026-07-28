@@ -63,6 +63,42 @@ def measure_cutoff(windows: list[np.ndarray], sr: int) -> tuple[int, float]:
     ref = S[(freqs >= 1000) & (freqs <= 4000)].mean()
     thresh = ref - 50.0
 
+    # Adaptive noise-floor threshold. The fixed ref-50dB threshold above is a
+    # FLOOR ON the threshold, not the whole story: on real 128kbps LAME
+    # encodes of white noise, some noise realisations leave a stopband floor
+    # that sits ~1dB ABOVE ref-50 across the entire stopband (~950
+    # consecutive bins) -- no RUN value can reject a sustained excursion that
+    # size, and it reads as a full-band 'none' instead of 'confirmed', a
+    # false negative in the anti-cheat this module exists to prevent
+    # (verified on seeds 2024 and 31337; see test_forensics.py).
+    #
+    # Fix: measure the actual floor from the top octave (15kHz-Nyquist) and
+    # raise the threshold above it. FLOOR_GATE=20dB guards the one case this
+    # can break: genuinely full-band content (a lossless master, or any
+    # brief brickwall test whose cutoff sits AT/ABOVE ~19-20kHz) has no
+    # floor at all in that window -- percentile(top, 10) there sits within
+    # ~1dB of ref (verified: full-band synthetic noise, ref=41.84,
+    # p10=40.74; brickwall@20500, ref=41.97 with its true floor correctly
+    # isolated by p10 at -90.51 despite median being contaminated at 41.60).
+    # A genuine LAME stopband floor sits ~48-50dB below ref on these same
+    # seeds -- FLOOR_GATE=20 sits with a wide margin inside that ~47dB gap
+    # between the two clusters, so "floor" only fires when there really is
+    # one, and never overrides ref-50 for full-band/near-Nyquist content.
+    #
+    # MARGIN=8dB: modest per the brief (6-10dB), picked as the midpoint --
+    # floor+MARGIN lands at the tail of the real transition band on the
+    # failing seeds (~-5.5 to -5.8dB, verified against the real per-bin
+    # spectrum), comfortably below the ~21dB transition-band level and the
+    # ~35dB passband, so the highest bin with genuine signal is still found
+    # rather than the floor being mistaken for signal.
+    FLOOR_GATE = 20.0
+    MARGIN = 8.0
+    top = S[freqs >= 15000]
+    if top.size:
+        floor = float(np.percentile(top, 10))
+        if floor <= ref - FLOOR_GATE:
+            thresh = max(thresh, floor + MARGIN)
+
     above = np.where(S >= thresh)[0]
     if above.size == 0:
         return 0, 0.0

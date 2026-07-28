@@ -148,7 +148,7 @@ def _real_128k_mp3_roundtrip(tmp_path, seed: int) -> str:
     _run('ffmpeg', '-y', '-v', 'error', '-i', mp3, '-c:a', 'pcm_s16le', dec)
     return dec
 
-@pytest.mark.parametrize("seed", [1, 42, 999])
+@pytest.mark.parametrize("seed", [1, 42, 999, 2024, 31337])
 def test_real_128kbps_fake_flac_is_confirmed_near_16khz(tmp_path, seed):
     """A real 128kbps MP3 decoded back to WAV -- the actual anti-cheat target
     -- must measure a brickwall near 16kHz and be classified 'confirmed'.
@@ -156,6 +156,14 @@ def test_real_128kbps_fake_flac_is_confirmed_near_16khz(tmp_path, seed):
     Seed 999 is the specific case that caught bug #2 above (spurious 5-bin
     run past 20800Hz on this noise realisation, pre-fix) -- kept in the
     parametrization as a regression pin, not just a smoke test.
+
+    Seeds 2024 and 31337 are permanent regressions for the adaptive-floor
+    fix: at RUN=20 (bug #2's fix) these two still false-negatived to 'none'.
+    Real LAME's stopband noise floor sits ~1dB ABOVE the fixed ref-50dB
+    threshold across the entire stopband (~950 consecutive bins) on these
+    noise realisations -- no RUN value rejects a sustained excursion that
+    size, only an adaptive threshold that measures the actual floor. See the
+    comment in app.forensics.measure_cutoff.
     """
     dec = _real_128k_mp3_roundtrip(tmp_path, seed)
     w = decode_windows(dec, count=8, secs=10, duration_s=60.0)
