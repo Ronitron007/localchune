@@ -12,7 +12,8 @@
     "astro": "astro",
     "test": "vitest run",
     "check": "astro check",
-    "deploy": "astro build && wrangler deploy"
+    "deploy": "astro build && wrangler deploy",
+    "deploy:maintenance": "wrangler deploy -c workers/maintenance/wrangler.jsonc"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.1.4",

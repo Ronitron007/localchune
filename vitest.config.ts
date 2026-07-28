@@ -4,5 +4,12 @@
 
 import { defineConfig } from 'vitest/config'
 export default defineConfig({
-  test: { environment: 'node', include: ['src/**/*.test.ts'], passWithNoTests: true },
+  test: {
+    environment: 'node',
+    // workers/** is here because the maintenance Worker's pure logic lives
+    // outside src/. With the old src-only glob its tests were collected by
+    // nothing and passWithNoTests kept the run green.
+    include: ['src/**/*.test.ts', 'workers/**/*.test.ts'],
+    passWithNoTests: true,
+  },
 })

@@ -1,0 +1,57 @@
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+
+{
+  "name": "localchune-maintenance",
+  // Paths are resolved relative to THIS file, not the repo root.
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+
+  // No "routes", and workers_dev explicitly off. This Worker holds a
+  // service_role key; it must have no reachable URL of any kind. Omitting
+  // "routes" alone is not enough -- an account with workers.dev enabled
+  // would still publish <name>.<subdomain>.workers.dev, and there would be
+  // no fetch handler to answer it but the endpoint would exist.
+  "workers_dev": false,
+
+  // Nobody watches a 04:40 cron. Without this, a failing sweep is invisible.
+  "observability": { "enabled": true },
+
+  // UTC, always -- Cloudflare crons have no timezone.
+  //   "17 * * * *" hourly at :17. The sweeper. Offset from the top of the
+  //     hour to dodge the platform's busiest scheduling minute. Hourly
+  //     rather than daily because an abandoned multipart upload BILLS for
+  //     its stored parts from the moment it stalls: R2's own auto-abort is
+  //     7 days, the lifecycle rule from Task 1 cuts that to 1 day as a
+  //     backstop, and this is the primary mechanism that ends it within an
+  //     hour of the 24h threshold.
+  //   "40 4 * * *" nightly. The R2 reconcile. Listing the whole bucket is
+  //     the expensive one, so it runs once, off-peak.
+  // These two strings are duplicated as constants in src/index.ts and must
+  // stay identical -- the scheduled handler dispatches on controller.cron.
+  "triggers": { "crons": ["17 * * * *", "40 4 * * *"] },
+
+  // The reconcile is I/O-bound (thousands of awaits, almost no compute), so
+  // this ceiling is about a runaway loop, not about normal operation.
+  "limits": { "cpu_ms": 30000 },
+
+  // R2_BUCKET must name the SAME bucket as the binding below. The binding
+  // does the listing and the deletes; R2_BUCKET only builds the SigV4 URL
+  // for AbortMultipartUpload, which the binding does not expose.
+  // RECONCILE_DELETE_ORPHANS is a string, not a boolean: wrangler vars are
+  // strings, and "false" is truthy in JS -- src/index.ts compares to the
+  // literal "true" for that reason.
+  "vars": {
+    "R2_BUCKET": "localchune-audio",
+    "RECONCILE_DELETE_ORPHANS": "false"
+  },
+
+  // "remote": true for the same reason Task 1 gives on the app Worker: in
+  // local dev, miniflare's R2 is a separate, empty bucket, and a reconcile
+  // run against it reports every single file as missing. That is not a
+  // useful failure, it is a misleading one.
+  "r2_buckets": [
+    { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
+  ]
+}

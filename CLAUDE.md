@@ -5,9 +5,17 @@
 - `wrangler.jsonc` routes the Worker via the custom-domain form (`custom_domain: true`)
   on the `butternutcrack.com` zone — Cloudflare provisions DNS and the cert.
 - `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are Worker secrets
-  (`wrangler secret put`), sourced from `.env`. `SUPABASE_SERVICE_KEY` and
-  `SUPABASE_DB_PASSWORD` stay CLI-only in `.secrets.env` and must never be set
-  as Worker secrets — the app does not read them.
+  (`wrangler secret put`), sourced from `.env`.
+- `SUPABASE_SERVICE_KEY` and `SUPABASE_DB_PASSWORD` stay CLI-only in
+  `.secrets.env` and must never be set as secrets on the **app** Worker
+  (`localchune`) — it has no code path that reads them, so a copy there is
+  pure attack surface. The one exception is the route-less maintenance
+  Worker (`localchune-maintenance`, `workers/maintenance/wrangler.jsonc`),
+  which has its own secret store and needs `SUPABASE_SERVICE_KEY` to run the
+  stale-upload sweeper with no user session. Neither key may ever appear in
+  `.env`: `astro build` copies `.env` into `dist/server/.dev.vars`.
+- The maintenance Worker deploys separately: `npm run deploy:maintenance`.
+  `npm run deploy` deploys the app Worker only.
 - The Supabase redirect allow-list (`additional_redirect_urls` in
   `supabase/config.toml`) must contain the production callback
   `https://localchune.butternutcrack.com/auth/callback`, or sign-in silently
