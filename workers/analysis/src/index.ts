@@ -175,6 +175,40 @@ export class AnalysisContainer extends Container<Env> {
   }
 
   /**
+   * Put one derived artifact into R2 without buffering it.
+   *
+   * `env.AUDIO.put(key, response.body)` looks obvious and throws:
+   *
+   *   TypeError: Provided readable stream must have a known length
+   *   (request/response body or readable half of FixedLengthStream)
+   *
+   * R2 has to declare Content-Length before it starts writing, and a body
+   * arriving from the container is a plain chunked stream. Measured on the
+   * deployed Worker — and only measurable there, because it cannot happen
+   * until an analysis actually SUCCEEDS and produces an artifact to drain.
+   *
+   * FixedLengthStream is the fix that keeps the streaming property: the
+   * length is asserted up front from the container's Content-Length and the
+   * bytes still flow straight through. The pipe is started BEFORE the put is
+   * awaited, because put() consumes the readable half and the two halves have
+   * to run concurrently or they deadlock. arrayBuffer() is the fallback for a
+   * response with no Content-Length, which buffers, and is why it is the
+   * fallback rather than the rule.
+   */
+  private async putArtifact(key: string, res: Response): Promise<void> {
+    const len = res.headers.get('content-length')
+    if (len !== null && res.body) {
+      const fixed = new FixedLengthStream(Number(len))
+      const pumping = res.body.pipeTo(fixed.writable)
+      await this.env.AUDIO.put(key, fixed.readable)
+      await pumping
+      return
+    }
+    console.warn(`artifact ${key} had no content-length; buffering`)
+    await this.env.AUDIO.put(key, await res.arrayBuffer())
+  }
+
+  /**
    * Stream R2 -> container, analyse, drain artifacts back to R2, clean up.
    *
    * Throws on infrastructure failure (R2 miss, container unreachable). A
@@ -211,8 +245,11 @@ export class AnalysisContainer extends Container<Env> {
       ]) {
         if (!name) continue
         const a = await this.containerFetch(`http://c/artifact/${fileId}/${name}`)
-        if (a.ok && a.body) await this.env.AUDIO.put(`derived/${fileId}/${name}`, a.body)
-        else console.warn(`artifact ${name} not retrievable: ${a.status}`)
+        if (!a.ok || !a.body) {
+          console.warn(`artifact ${name} not retrievable: ${a.status}`)
+          continue
+        }
+        await this.putArtifact(`derived/${fileId}/${name}`, a)
       }
       return out
     } finally {
