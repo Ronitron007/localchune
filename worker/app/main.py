@@ -64,6 +64,47 @@ def _paths(file_id: str) -> tuple[str, str]:
     return d, os.path.join(d, "in.audio")
 
 
+# streaming_extractor_music picks its metadata reader from the FILE
+# EXTENSION, not from the content. Measured on the deployed container: the
+# same FLAC exits 0 as `in.flac` and exits 1 as `in.audio`, with
+#   MetadataReader: File does not exist or does not seem to be of a supported
+#   filetype. metadatautils: pcmMetadata cannot read files which are neither
+#   "wav" nor "aiff"
+# TagLib refuses the unknown extension, the pcm fallback only knows wav/aiff,
+# and the run dies before any audio is read. Bytes arrive over PUT with no
+# name, so the extension has to be reattached here — from ffprobe's verdict,
+# never from the uploaded filename, which is exactly the sort of claim this
+# milestone does not trust.
+_EXT_OVERRIDE = {"mov": "m4a", "matroska": "mkv", "asf": "wma"}
+
+
+def _extension_for(format_name: str) -> str:
+    """ffprobe format_name -> a file extension Essentia recognises.
+
+    format_name is a comma-separated list of the demuxers that matched
+    ('mov,mp4,m4a,3gp,3g2,mj2'); the first entry is the canonical one, and the
+    few whose first entry is not a usable extension are mapped by hand.
+    """
+    first = format_name.split(",")[0].strip().lower()
+    return _EXT_OVERRIDE.get(first, first) or "bin"
+
+
+def _link_with_extension(src: str, ext: str) -> str:
+    """A second name for the same bytes, ending in `.ext`.
+
+    A hard link, not a copy: a 15-minute FLAC is ~150 MB and the container has
+    6 GB of disk it must not spend twice. The original name is left in place so
+    a retried analysis still finds what PUT wrote.
+    """
+    link = f"{src}.{ext}"
+    if not os.path.exists(link):
+        try:
+            os.link(src, link)
+        except OSError:
+            shutil.copyfile(src, link)
+    return link
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     """Load the model before the port accepts traffic.
@@ -163,6 +204,10 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
 
         container = info["format"]["format_name"].split(",")[0]
         codec = stream.get("codec_name", "")
+        # Everything downstream runs against the extension-bearing name — not
+        # only Essentia, since any other tool that sniffs a suffix gets the
+        # right answer for free.
+        src = _link_with_extension(src, _extension_for(info["format"]["format_name"]))
 
         # Forensic measurement runs and is LOGGED, but no verdict is
         # synthesised: `forensics` stays None in the response. Reason —
@@ -222,7 +267,18 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
         )
     except Exception as e:  # noqa: BLE001
         log.exception("analyze failed for %s", req.file_id)
-        return fail(f"{type(e).__name__}: {e}")
+        # subprocess.CalledProcessError stringifies to the exit code and argv
+        # and throws the actual diagnosis away. The first real failure on the
+        # deployed container reported only "returned non-zero exit status 1",
+        # which named the symptom and hid the cause; the binary had written
+        # the reason to stderr all along.
+        detail = getattr(e, "stderr", None)
+        if isinstance(detail, (bytes, bytearray)):
+            detail = detail.decode("utf-8", "replace")
+        msg = f"{type(e).__name__}: {e}"
+        if detail:
+            msg += f" | stderr: {detail.strip()[-500:]}"
+        return fail(msg)
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)

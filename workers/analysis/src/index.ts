@@ -175,30 +175,6 @@ export class AnalysisContainer extends Container<Env> {
   }
 
   /**
-   * TEMPORARY — Task 8 verification only. Runs one shell command inside the
-   * deployed container and returns its output. This exists to answer the
-   * Task 2 carry ("re-run benchmark.py onnx on the REAL amd64 container")
-   * without shipping onnxruntime in the production image, and to read the
-   * Essentia JSON straight off the platform.
-   *
-   * DELETE THIS METHOD, `ping`, and the `fetch` handler when Task 9 lands.
-   * It is reachable only through a Worker with no route and no workers.dev
-   * subdomain, behind a bearer token that is not set in normal operation —
-   * but it is still arbitrary code execution and has no business outliving
-   * the measurement it was written for.
-   */
-  async debugExec(script: string): Promise<{ exitCode: number; out: string }> {
-    const c = this.ctx.container
-    if (!c) throw new Error('no container binding on this DO')
-    if (!c.running) await this.start()
-    const p = await c.exec(['sh', '-c', script], {
-      stderr: 'combined',
-    })
-    const o = await p.output()
-    return { exitCode: o.exitCode, out: new TextDecoder().decode(o.stdout) }
-  }
-
-  /**
    * Stream R2 -> container, analyse, drain artifacts back to R2, clean up.
    *
    * Throws on infrastructure failure (R2 miss, container unreachable). A
@@ -297,13 +273,6 @@ export default {
 
     if (action === 'ping') {
       const res = await stub.ping()
-      return Response.json({ wall_ms: Date.now() - t0, ...res })
-    }
-
-    if (action === 'exec') {
-      const script = url.searchParams.get('sh')
-      if (!script) return new Response('need ?sh=', { status: 400 })
-      const res = await stub.debugExec(script)
       return Response.json({ wall_ms: Date.now() - t0, ...res })
     }
 
