@@ -1,0 +1,22 @@
+# Local values for `wrangler dev -c workers/maintenance/wrangler.jsonc`.
+# wrangler reads .dev.vars NEXT TO THE CONFIG FILE, so this one lives at
+# workers/maintenance/.dev.vars — the repo-root .dev.vars is not read here.
+#
+# NEVER put SUPABASE_SERVICE_KEY in .env: astro build copies .env into
+# dist/server/.dev.vars. .gitignore already excludes .dev.vars at any depth.
+#
+# Local Supabase values come from: npx supabase status -o env
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_KEY=
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+# `.dev.vars` wins over `vars` per key, wrangler.jsonc's env.dev block
+# included -- so this line is what actually keeps a plain `wrangler dev`
+# (no --env dev) off the production bucket. NEVER set this to
+# localchune-audio: src/index.ts's sweep() refuses to run at all when
+# SWEEP_OLDER_THAN is set and R2_BUCKET is the production name, precisely so
+# a missing/wrong line here fails loudly instead of sweeping production.
+R2_BUCKET=localchune-audio-dev
+# Optional: shortens the 24h staleness threshold for a manual sweep test.
+# SWEEP_OLDER_THAN=5 minutes

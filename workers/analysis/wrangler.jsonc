@@ -1,0 +1,126 @@
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "localchune-analysis",
+  // Paths are resolved relative to THIS file, not the repo root.
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // No "routes", and workers_dev explicitly off — same posture as the
+  // maintenance Worker. Nothing here is reachable from the internet; it is
+  // driven by the queue (Task 9). Omitting "routes" alone is not enough: an
+  // account with workers.dev enabled would still publish
+  // <name>.<subdomain>.workers.dev.
+  "workers_dev": false,
+
+  // Container cold starts, container errors and per-track cpu_seconds all
+  // surface here. Without it, a failed analysis is invisible.
+  "observability": { "enabled": true },
+
+  "containers": [
+    {
+      "class_name": "AnalysisContainer",
+      "image": "../../worker/Dockerfile",
+      "image_build_context": "../../worker",
+
+      // Peak RSS is ~1 GB (1058 MB measured for Beat This! on the M1
+      // baseline), which wants ~2 GiB. Custom instance types enforce a
+      // MINIMUM of 3 GiB memory per vCPU, so 3 GiB is the cheapest legal
+      // 1-vCPU box and the floor is what sets this number, not the workload.
+      //
+      // Do NOT "save money" by dropping to `basic` (1/4 vCPU, 1 GiB): memory
+      // is billed on PROVISIONED resources for as long as the instance is
+      // awake, so 1/4 vCPU stretches ~35 vCPU-s into ~140s wall = 140 GiB-s,
+      // worse than 3 GiB x 35s = 105 GiB-s, and four times slower. Fractional
+      // vCPUs are strictly dominated for this workload.
+      //
+      // Nor to the named `standard-2` (1 vCPU, 6 GiB, 12 GB): same vCPU,
+      // DOUBLE the memory, and memory bills on wall clock — it is the same
+      // machine for this workload at twice the memory cost.
+      //
+      // disk_mb 6000 because the custom-instance rule is a MAXIMUM of 2 GB
+      // disk per 1 GiB memory: 3 GiB buys at most 6 GB and we take all of it.
+      // The working set is one audio file plus its derived artifacts, so it
+      // is never close to full; the headroom exists so a leaked working
+      // directory shows up as slow drift rather than an immediate failure.
+      "instance_type": { "vcpu": 1, "memory_mib": 3072, "disk_mb": 6000 },
+
+      // max_instances ERRORS when exceeded, it does not queue. Kept above the
+      // consumer's max_concurrency (4, Task 9) and above the DO pool size (4,
+      // src/index.ts) so a burst never trips it, and low enough that a
+      // runaway loop is bounded. NOT enforced in local dev — the "too many
+      // concurrent containers" error is a production-only failure mode.
+      "max_instances": 8
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "ANALYSIS", "class_name": "AnalysisContainer" }]
+  },
+  // Container-backed DOs must use new_sqlite_classes, not new_classes.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }],
+
+  // The whole reason a container on Cloudflare beats an external host: no S3
+  // access key exists anywhere in this design. The DO reads and writes R2
+  // through this binding and hands the container nothing but bytes.
+  // No "remote": true here, unlike the app and maintenance Workers — this
+  // Worker is never run under `wrangler dev` against production data.
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "localchune-audio" }],
+
+  // The only way in. This Worker has no route, no workers.dev host and no
+  // fetch handler; a message on localchune-analyze is the entire trigger
+  // surface. Producers are the app Worker's /api/upload/complete route and
+  // the maintenance Worker's stuck-job cron, both of which read the r2_key
+  // out of Postgres before sending.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "localchune-analyze",
+        // LOAD-BEARING. A batch retry re-delivers EVERY message in the
+        // batch, so with a batch of 10 one poisoned file would re-run its
+        // nine neighbours — nine more ~55 vCPU-s container runs, billed, for
+        // a failure that had nothing to do with them.
+        "max_batch_size": 1,
+        // Strictly below the container's max_instances (8, above).
+        // max_instances ERRORS when exceeded, it does not queue, and it is
+        // NOT enforced in local dev — so `wrangler dev` will never show you
+        // this failure. The margin is the design. It also sits at the DO
+        // pool size (4, src/index.ts), which is the real ceiling on distinct
+        // instances a burst can wake.
+        "max_concurrency": 4,
+        // Five attempts, then the DLQ. files.state is the system of
+        // record, never the queue, whose retention is finite whatever the
+        // plan says — see the DLQ consumer below for what actually happens
+        // to the row once a message lands here.
+        "max_retries": 5,
+        "dead_letter_queue": "localchune-analyze-dlq"
+      },
+      // [F5] Without this the DLQ was a black hole: a file that exhausted
+      // the five retries above left no trail, and its row stayed
+      // 'analysing' forever — worse, the maintenance Worker's hourly
+      // stuck-job cron would re-enqueue it and run it straight back into
+      // the same five-retry wall, indefinitely, with no attempt ceiling.
+      //
+      // This consumer's only job is index.ts's handleDeadLetter(): call
+      // analysis_fail() so the row becomes 'failed' (terminal, and no
+      // longer a state analysis_stuck() returns) and ack. No container
+      // work, no R2 access — see src/consumer.ts.
+      //
+      // No `dead_letter_queue` here on purpose: a DLQ cannot be its own
+      // sink, and a message that still fails after max_retries below (the
+      // database itself being down, say) is dropped rather than looping —
+      // by then files.state is stuck but not silently so, since the main
+      // queue's own delivery already logged the original failure reason.
+      {
+        "queue": "localchune-analyze-dlq",
+        "max_batch_size": 10,
+        "max_concurrency": 1,
+        "max_retries": 3
+      }
+    ]
+  }
+}

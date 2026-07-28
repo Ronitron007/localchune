@@ -11,5 +11,44 @@
   "observability": { "enabled": true },
   "routes": [
     { "pattern": "localchune.butternutcrack.com", "custom_domain": true }
-  ]
+  ],
+  // R2_BUCKET is deliberately NOT a `vars` entry here. `wrangler dev`/
+  // `astro dev` merge `vars` with `.dev.vars`, with `.dev.vars` winning per
+  // key — so a committed production bucket name in `vars` would silently
+  // become the default for any local `.dev.vars` that carries R2
+  // credentials but forgets its own R2_BUCKET line. `conf()` in
+  // src/lib/r2.ts throws R2NotConfigured when R2_BUCKET is absent instead:
+  // failing closed beats defaulting to production. The production value is
+  // set as a Worker secret instead — `wrangler secret put R2_BUCKET`
+  // (value: localchune-audio) — the same mechanism this repo already uses
+  // for PUBLIC_SUPABASE_URL/PUBLIC_SUPABASE_ANON_KEY (see CLAUDE.md
+  // "Deploy"). Secrets persist across `wrangler deploy` and never appear in
+  // `vars`, so local dev has no production default to fall back to.
+  //
+  // The binding is declared for M3+ (server-side reads of derived artifacts)
+  // and for `wrangler r2 object` tooling parity. The ingest path in this
+  // milestone deliberately does NOT use it: presigned URLs necessarily point
+  // at the real bucket, so in `astro dev` a local binding would resolve to
+  // miniflare's own empty R2 and the finalize HEAD would report "object
+  // missing" for an upload that plainly succeeded. `"remote": true` keeps
+  // the binding pointed at the real bucket in dev so the two can never
+  // disagree.
+  "r2_buckets": [
+    { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
+  ],
+
+  // PRODUCER ONLY. The consumer lives in workers/analysis/, not here:
+  // @astrojs/cloudflare owns this Worker's entrypoint (`main` above is the
+  // adapter's own module), so a `queue` export cannot be added without
+  // shimming adapter internals — the same wall M2 hit and routed around by
+  // creating workers/maintenance/.
+  //
+  // "remote": true for the same reason as the R2 binding: without it,
+  // `astro dev` sends into miniflare's own local queue and the message
+  // silently never reaches the deployed consumer.
+  "queues": {
+    "producers": [
+      { "binding": "ANALYZE_QUEUE", "queue": "localchune-analyze", "remote": true }
+    ]
+  }
 }

@@ -14,6 +14,7 @@ const m = Astro.locals.member!
 <body>
   <h1>localchune</h1>
   <p>{m.email} — {creditsRemaining(m.access_expires_at)} credits</p>
+  <p><a href="/upload">Upload tracks</a></p>
   {m.role === 'owner' && <a href="/admin">Admin</a>}
   <form method="post" action="/auth/signout"><button>Sign out</button></form>
 </body></html>
