@@ -264,6 +264,30 @@ container** before ruling out ONNX for good — the exported `.onnx` file and
 attention path on x86 behaves better than Accelerate's does here, the
 result could flip. Until that check runs, PyTorch stays the safer default.
 
+**Update — Task 8's amd64 re-check (M3 final review, Finding F7).** It
+flipped, as the caveat above predicted it might. Measured on the deployed
+container class (the actual `linux/amd64` target, not this Mac), across the
+same two fixtures used above:
+
+| Fixture | PyTorch (s) | ONNX Runtime (s) | ONNX vs PyTorch |
+|---|---|---|---|
+| 128 BPM, 6 min | 35.85 | 32.42 | ~10% faster |
+| 174 BPM, 6 min | 34.58 | 26.53 | ~23% faster |
+
+Beat output was byte-identical between the two runtimes on both fixtures,
+same as the arm64 result above. oneDNN's attention path on x86 evidently
+does not carry the same fusion gap Apple's Accelerate/vecLib showed on
+arm64 — the mechanism section above ("Why not ONNX") explains the gap that
+no longer applies here.
+
+This does **not** flip the Dockerfile's choice on its own. `worker/Dockerfile`
+still installs PyTorch: the win here is 10-23% CPU per track, real but not
+urgent, and adopting ONNX Runtime is not a drop-in swap — it needs its own
+pass to actually drop the torch/torchaudio dependency chain from the image
+(see "There is a second, separate reason" above; this benchmark's ONNX path
+still imports torch for preprocessing). That is unscoped work and stays on
+the backlog. The Dockerfile comment records this as deferred, not rejected.
+
 ## Changes from the brief
 
 1. **Fixed export shape, not `dynamic_axes` on frames.** The brief's

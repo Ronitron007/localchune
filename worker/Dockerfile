@@ -139,9 +139,22 @@ COPY --from=fetch /out/bin/fpcalc /usr/local/bin/fpcalc
 # the default CUDA build and the image grows by ~2 GB of unusable GPU
 # runtime. Installed BEFORE the app so the slow layer caches across app edits.
 #
-# PyTorch, not ONNX Runtime — Task 2 measured ONNX 2.2x SLOWER on this model
-# (unfused attention on the ORT CPU EP). onnxruntime stays in the [bench]
-# extra and must never land in this image.
+# PyTorch, for now — not a rejection of ONNX Runtime, a DEFERRAL.
+#
+# Task 2's benchmark measured ONNX 2.2x SLOWER than PyTorch, on an M1 Mac
+# (unfused attention on the ORT CPU EP). Task 8 re-measured both on THIS
+# image's actual deployment target, `linux/amd64`, per the caveat Task 2's
+# own report carried ("the size of the gap, maybe even its direction, might
+# not hold on amd64" — worker/bench/README.md). It flipped: ONNX Runtime
+# came out 10-23% FASTER on amd64 (torch 35.85s/34.58s vs onnx 32.42s/26.53s
+# across two fixtures), with byte-identical beat output either way. See
+# worker/bench/README.md's amd64 section for the full numbers and method.
+#
+# The switch is deferred, not adopted here: it needs its own image-diet pass
+# (onnxruntime instead of full torch/torchaudio would also shrink the
+# image), which is unscoped work, not a drop-in swap. Backlog value: ~10-20%
+# less CPU per track and a smaller image. onnxruntime stays in the [bench]
+# extra until that lands.
 #
 # --retries/--timeout for the same reason as the curl calls above: this layer
 # pulls a 192 MB wheel and took 743s on the build that produced the numbers in
