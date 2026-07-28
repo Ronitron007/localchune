@@ -52,8 +52,12 @@ Migration 09 therefore **revokes first, then grants**. Do the same in every
 new migration, and prove it with a pgTAP `throws_ok(..., '42501', ...)` on
 an INSERT as `authenticated`.
 
-`files`, `upload_batches`, `file_claims` and `ingest_jobs` (migration 06)
-still carry the open ACL in production. Narrow them in a follow-up.
+Migration 10 closed the remaining open ACLs: `files`, `upload_batches`,
+`file_claims`, `ingest_jobs` (migration 06) and `allowlist`, `credit_grants`,
+`members` (migrations 01/01b) — all seven tables in the project, done. Any
+**new** table added after migration 10 starts from the same open hosted
+default and needs the same revoke-first treatment on day one, not as a
+follow-up.
 
 ## Queues
 
@@ -71,6 +75,24 @@ message that failed five attempts.
 - Wrangler has no send command. To enqueue by hand, POST to
   `/accounts/<account>/queues/<queue_id>/messages` with the OAuth token from
   `wrangler whoami`, or deploy the maintenance Worker and let the cron do it.
+- `localchune-analyze-dlq` has its own consumer on the analysis Worker
+  (`workers/analysis/wrangler.jsonc`, `handleDeadLetter` in
+  `src/consumer.ts`): a dead-lettered message calls `analysis_fail()` and
+  acks. Confirm it is live with `wrangler queues info localchune-analyze-dlq`
+  → `Consumers: 1`.
+- **A deploy that touches the container image rolls out gradually, not
+  atomically.** `wrangler deploy` on `workers/analysis` defaults to a
+  `[10,100]` rollout — the old image keeps serving some fraction of traffic
+  for **minutes** after the deploy reports SUCCESS. Poll
+  `npx wrangler containers info <image>` (or the dashboard) to confirm the
+  rollout actually completed before assuming a container-level fix is live,
+  or pass `--containers-rollout=immediate` to skip the gradual rollout
+  entirely. TS-only edits (no Dockerfile change) do not rebuild the image,
+  so this only applies when `worker/Dockerfile` or its build context changed.
+- `max_instances` (workers/analysis/wrangler.jsonc, container config)
+  **errors when exceeded — it does not queue the excess**, and it is **not
+  enforced in local dev**, so `wrangler dev` will never reproduce that
+  failure. It only shows up against the real platform under real load.
 
 ### Maintenance Worker — what it is and how to deploy it
 

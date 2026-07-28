@@ -14,6 +14,18 @@
  * precisely so they can only be called from here and from the maintenance
  * Worker's cron.
  *
+ * [F2/F9] That narrows what this Worker's CODE calls, not what the KEY can
+ * do. Correction to an earlier version of this comment, which read as
+ * though the four RPCs above were the containment boundary — they are not.
+ * `service_role` is BYPASSRLS with full arwdDxtm on every table in `public`
+ * reachable through PostgREST (`/rest/v1/<table>`), not just these four
+ * function names; anyone holding this key can `POST /rest/v1/members` and
+ * write any row directly, no RPC involved. The narrow surface is a property
+ * of this file's code, defended nowhere by the key itself. Real scoping —
+ * a dedicated `analysis_worker` Postgres role, `nologin`, `EXECUTE`-only on
+ * these four functions, driven by a custom JWT claim instead of the shared
+ * service_role secret — is M4 backlog, not done here.
+ *
  * Plain fetch rather than @supabase/supabase-js for the reason the
  * maintenance Worker gives: there is no session to manage, and importing the
  * app's serverClient() would suggest there is one server client in the
