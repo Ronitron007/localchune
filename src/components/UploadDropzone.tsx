@@ -22,6 +22,7 @@ import {
 } from '../lib/uploader'
 import { pump, FILE_CONCURRENCY, PREFLIGHT_CONCURRENCY } from '../lib/upload-queue'
 import { formatBytes } from '../lib/format'
+import { setCurrentBatchId } from '../lib/upload-batch'
 import StatusRegion from './StatusRegion'
 
 type RowStatus =
@@ -256,6 +257,9 @@ export default function UploadDropzone(props: { userId: string }) {
     try {
       if (batchId === null) {
         batchId = (await httpApi.createBatch(label().trim() || null)).batchId
+        // Publish to FileStateTicker, which is a sibling island and cannot
+        // read this closure.
+        setCurrentBatchId(batchId)
       }
       await pump(
         keys.map((key) => (signal: AbortSignal) => runOne(key, signal)),

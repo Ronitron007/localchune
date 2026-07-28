@@ -5,9 +5,11 @@
 // worker includes Essentia. LICENSE explains why.
 import Shell from '../layouts/Shell.astro'
 import UploadDropzone from '../components/UploadDropzone'
+import FileStateTicker from '../components/FileStateTicker'
 const m = Astro.locals.member!
 ---
 <Shell title="localchune — upload">
   <h1>Upload</h1>
   <UploadDropzone userId={m.user_id} client:load />
+  <FileStateTicker client:load />
 </Shell>

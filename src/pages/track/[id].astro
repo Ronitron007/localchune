@@ -1,0 +1,117 @@
+---
+// src/pages/track/[id].astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+import Shell from '../../layouts/Shell.astro'
+import KeyChip from '../../components/KeyChip.astro'
+import QualityBadge from '../../components/QualityBadge.astro'
+import { formatBytes, formatDuration } from '../../lib/format'
+import { formatBpm } from '../../lib/track-format'
+import { isUuid } from '../../lib/upload-api'
+
+const { id } = Astro.params
+// Guard before the RPC: a non-uuid path segment would otherwise reach
+// Postgres and come back as 22P02 — a 500-shaped answer to a 404 question.
+if (!isUuid(id)) return new Response('Not found', { status: 404 })
+
+const { data, error } = await Astro.locals.supabase.rpc('pool_get', { p_file_id: id })
+if (error) console.error('pool_get failed:', error.message)
+const t = data?.[0]
+// pool_get applies the visibility rule, so "not yours to see" and "does
+// not exist" are the same answer — which is the point.
+if (!t) return new Response('Not found', { status: 404 })
+
+const artist = t.display_artist ?? 'Unknown artist'
+const title = `${artist} — ${t.display_title}`
+const hasArt = t.artwork_key !== null || t.thumb_key !== null
+const num = (v: number | null, digits = 1, unit = '') =>
+  v === null || v === undefined ? '—' : `${v.toFixed(digits)}${unit}`
+---
+<Shell title={`localchune — ${title}`}>
+  <article class="trackdetail">
+    <header>
+      <h1>{title}</h1>
+      {/* The larger copy. Colour, unfiltered — content is not chrome.
+          M7 note: if this art is ever Apple-sourced, the "Listen on
+          Apple Music" badge is required HERE (PRD §8.1) — this page,
+          never the table. */}
+      {hasArt && (
+        <img class="art" src={`/api/track/${t.file_id}/art?full=1`} alt={`Cover art for ${t.display_title}`} />
+      )}
+      <p class="transport">
+        <a
+          class="play"
+          href={`/track/${t.file_id}`}
+          data-track-id={t.file_id}
+          data-label={title}
+        >▶ Play</a>
+        {' '}
+        <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
+      </p>
+    </header>
+
+    <section class="identity">
+      <h2>Identity</h2>
+      <dl>
+        <dt>Artist</dt><dd>{artist}</dd>
+        <dt>Title</dt><dd>{t.display_title}</dd>
+        <dt>Filename</dt><dd>{t.original_filename}</dd>
+      </dl>
+      {/* M7 slot: canonical artist/title/album/label from the catalogue
+          match. Nothing until then — no placeholder, no empty box. */}
+    </section>
+
+    <section class="analysis">
+      <h2>Analysis</h2>
+      <dl>
+        <dt>BPM</dt>
+        <dd class="num" title={t.bpm === null || t.bpm <= 0 ? 'no beat detected' : `${t.beat_count} beats on the grid`}>
+          {formatBpm(t.bpm, t.ibi_std_ms)}
+        </dd>
+        <dt>Key</dt>
+        <dd><KeyChip camelot={t.key_camelot} open={t.key_open} musical={t.key_musical} /></dd>
+        <dt title="What each key-detection profile answered. Disagreement between them is the honest signal that the key is ambiguous.">
+          Other key profiles
+        </dt>
+        <dd>{t.key_alt_profiles
+              ? Object.entries(t.key_alt_profiles).map(([p, k]) => `${p}: ${k}`).join(' · ')
+              : '—'}</dd>
+        <dt>Length</dt><dd class="num">{formatDuration(t.duration_ms)}</dd>
+        <dt>Integrated loudness</dt><dd class="num">{num(t.integrated_lufs, 1, ' LUFS')}</dd>
+        <dt>Loudness range</dt><dd class="num">{num(t.lra_lu, 1, ' LU')}</dd>
+        <dt>True peak</dt><dd class="num">{num(t.true_peak_dbtp, 1, ' dBTP')}</dd>
+        <dt>ReplayGain</dt><dd class="num">{num(t.replaygain_db, 1, ' dB')}</dd>
+      </dl>
+    </section>
+
+    <section class="forensics">
+      <h2>Source quality</h2>
+      <p><QualityBadge tier={t.quality_tier} lossyAncestor={t.lossy_ancestor} measCutoffHz={t.meas_cutoff_hz} /></p>
+      <dl>
+        <dt>Container</dt><dd>{t.container ?? '—'}</dd>
+        <dt>Size</dt><dd class="num">{formatBytes(t.byte_size)}</dd>
+        <dt>Measured cutoff</dt>
+        <dd class="num">{t.meas_cutoff_hz ? `${(t.meas_cutoff_hz / 1000).toFixed(1)} kHz` : '—'}</dd>
+        <dt title="A suspicion proxy, not a verdict. Loud modern masters clip on purpose.">
+          Clipped samples
+        </dt>
+        <dd class="num">{num(t.clipped_pct, 2, ' %')}</dd>
+      </dl>
+    </section>
+
+    <section class="provenance">
+      <h2>Provenance</h2>
+      <dl>
+        <dt>Uploaded by</dt><dd>{t.uploader_name}</dd>
+        <dt>Batch</dt><dd>{t.batch_label ?? t.batch_id}</dd>
+        <dt>Added</dt><dd class="num">{new Date(t.created_at).toISOString().slice(0, 10)}</dd>
+        <dt>Analysed</dt>
+        <dd class="num">{t.analyzed_at ? `${new Date(t.analyzed_at).toISOString().slice(0, 16).replace('T', ' ')} (${t.analysis_version})` : '—'}</dd>
+        <dt>Also contributed by</dt>
+        <dd>{(t.claim_names ?? []).join(', ') || '—'}</dd>
+      </dl>
+      {/* M4 slot: the duplicate-review verdict and the merge/undo history. */}
+    </section>
+  </article>
+</Shell>
