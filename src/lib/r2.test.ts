@@ -15,9 +15,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const mockEnv = vi.hoisted(() => ({} as Record<string, string | undefined>))
 vi.mock('cloudflare:workers', () => ({ env: mockEnv }))
 
-const { R2Error, objectUrl, deleteObjectQuietly } = await import('./r2')
+const { R2Error, objectUrl, readObjectUrl, presignGet, presignPut, deleteObjectQuietly } =
+  await import('./r2')
 
 const KEY = 'audio/00000000-0000-0000-0000-000000000000/11111111-1111-1111-1111-111111111111.mp3'
+const DERIVED = 'derived/11111111-1111-1111-1111-111111111111/peaks.json'
 
 describe('conf (exercised via objectUrl)', () => {
   beforeEach(() => {
@@ -54,6 +56,79 @@ describe('conf (exercised via objectUrl)', () => {
     mockEnv.R2_BUCKET = 'localchune-audio-dev'
 
     expect(objectUrl(KEY)).toBe(`https://acct.r2.cloudflarestorage.com/localchune-audio-dev/${KEY}`)
+  })
+})
+
+/**
+ * The derived-key pattern. M3 Task 9's contract is that the analysis DO's
+ * artifacts under `derived/<file_id>/` become signable for READ — and that
+ * the write path does not move an inch while that happens. Both halves are
+ * asserted here, because a second pattern bolted onto the existing check
+ * would have quietly made `presignPut` accept derived keys too.
+ */
+describe('derived artifact keys', () => {
+  beforeEach(() => {
+    for (const k of Object.keys(mockEnv)) delete mockEnv[k]
+    mockEnv.R2_ACCOUNT_ID = 'acct'
+    mockEnv.R2_ACCESS_KEY_ID = 'key'
+    mockEnv.R2_SECRET_ACCESS_KEY = 'secret'
+    mockEnv.R2_BUCKET = 'localchune-audio-dev'
+  })
+
+  it('readObjectUrl accepts a derived key', () => {
+    expect(readObjectUrl(DERIVED))
+      .toBe(`https://acct.r2.cloudflarestorage.com/localchune-audio-dev/${DERIVED}`)
+  })
+
+  it('readObjectUrl still accepts an audio key — the player falls back to the original', () => {
+    expect(readObjectUrl(KEY)).toContain(KEY)
+  })
+
+  it.each(['peaks.json', 'preview.opus', 'artwork.jpg', 'spectrogram.png'])(
+    'readObjectUrl accepts the artifact basename %s',
+    (name) => {
+      expect(readObjectUrl(`derived/11111111-1111-1111-1111-111111111111/${name}`))
+        .toContain(name)
+    },
+  )
+
+  it('objectUrl — the WRITE path — still refuses a derived key', () => {
+    // This is the assertion that keeps the second pattern read-only.
+    // presignPut, deleteObject, createMultipartUpload and listParts all
+    // build their URL with objectUrl, so this one check covers every
+    // mutating call.
+    expect(() => objectUrl(DERIVED)).toThrow(R2Error)
+    try {
+      objectUrl(DERIVED)
+    } catch (e) {
+      expect((e as InstanceType<typeof R2Error>).code).toBe('BadKey')
+    }
+  })
+
+  it('presignPut refuses a derived key', async () => {
+    await expect(presignPut(DERIVED)).rejects.toThrow(R2Error)
+  })
+
+  it.each([
+    ['derived/11111111-1111-1111-1111-111111111111/../../audio/x.mp3', 'traversal'],
+    ['derived/11111111-1111-1111-1111-111111111111/sub/peaks.json', 'a nested path'],
+    ['derived/not-a-uuid/peaks.json', 'a non-uuid directory'],
+    ['derived/11111111-1111-1111-1111-111111111111/PEAKS.JSON', 'an uppercase basename'],
+    ['derived/11111111-1111-1111-1111-111111111111/peaks', 'no extension'],
+    ['derived//peaks.json', 'an empty directory'],
+  ])('readObjectUrl refuses %s (%s)', (bad) => {
+    expect(() => readObjectUrl(bad)).toThrow(R2Error)
+  })
+
+  it('presignGet signs a derived key for GET only', async () => {
+    const url = await presignGet(DERIVED, { ttlSeconds: 60 })
+    expect(url).toContain(DERIVED)
+    expect(url).toContain('X-Amz-Expires=60')
+    expect(url).toContain('X-Amz-Signature=')
+  })
+
+  it('presignGet refuses an implausible key rather than signing it', async () => {
+    await expect(presignGet('derived/../secrets')).rejects.toThrow(R2Error)
   })
 })
 
