@@ -26,11 +26,15 @@
   //     7 days, the lifecycle rule from Task 1 cuts that to 1 day as a
   //     backstop, and this is the primary mechanism that ends it within an
   //     hour of the 24h threshold.
+  //   "31 * * * *" hourly at :31. M3's stuck-job cron. Re-enqueues files
+  //     that have sat in received or analysing for over an hour -- a send
+  //     that failed, a message that died in the DLQ, or a row that predates
+  //     the producer. Offset from :17 so the two hourly jobs never contend.
   //   "40 4 * * *" nightly. The R2 reconcile. Listing the whole bucket is
   //     the expensive one, so it runs once, off-peak.
-  // These two strings are duplicated as constants in src/index.ts and must
+  // These three strings are duplicated as constants in src/index.ts and must
   // stay identical -- the scheduled handler dispatches on controller.cron.
-  "triggers": { "crons": ["17 * * * *", "40 4 * * *"] },
+  "triggers": { "crons": ["17 * * * *", "31 * * * *", "40 4 * * *"] },
 
   // The reconcile is I/O-bound (thousands of awaits, almost no compute), so
   // this ceiling is about a runaway loop, not about normal operation.
@@ -58,6 +62,22 @@
     { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
   ],
 
+  // PRODUCER ONLY -- this Worker enqueues, workers/analysis/ consumes.
+  //
+  // "remote": true so a manual run reaches the real queue:
+  //   npx wrangler dev -c workers/maintenance/wrangler.jsonc --test-scheduled
+  //   curl "http://localhost:8787/__scheduled?cron=31+*+*+*+*"
+  // Unlike the sweeper, that is a benign thing to point at production:
+  // analysis_stuck() changes no state, and a duplicate message is acked by
+  // the consumer as "not claimable" or absorbed by analysis_persist()'s
+  // upsert. env.dev below deliberately drops the flag, so a --env dev run
+  // sends into miniflare's local queue and reaches nothing.
+  "queues": {
+    "producers": [
+      { "binding": "ANALYZE_QUEUE", "queue": "localchune-analyze", "remote": true }
+    ]
+  },
+
   // Important #1 (M2 final review): without this block, `wrangler dev`
   // against this config defaulted straight to the PRODUCTION bucket and
   // (via .dev.vars) whatever Supabase project SUPABASE_URL pointed at --
@@ -81,7 +101,15 @@
       },
       "r2_buckets": [
         { "binding": "AUDIO", "bucket_name": "localchune-audio-dev", "remote": true }
-      ]
+      ],
+      // No "remote" here, on purpose: a --env dev run must not be able to
+      // push work at the production consumer, which would wake real
+      // containers against real audio.
+      "queues": {
+        "producers": [
+          { "binding": "ANALYZE_QUEUE", "queue": "localchune-analyze" }
+        ]
+      }
     }
   }
 }

@@ -35,5 +35,20 @@
   // disagree.
   "r2_buckets": [
     { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
-  ]
+  ],
+
+  // PRODUCER ONLY. The consumer lives in workers/analysis/, not here:
+  // @astrojs/cloudflare owns this Worker's entrypoint (`main` above is the
+  // adapter's own module), so a `queue` export cannot be added without
+  // shimming adapter internals — the same wall M2 hit and routed around by
+  // creating workers/maintenance/.
+  //
+  // "remote": true for the same reason as the R2 binding: without it,
+  // `astro dev` sends into miniflare's own local queue and the message
+  // silently never reaches the deployed consumer.
+  "queues": {
+    "producers": [
+      { "binding": "ANALYZE_QUEUE", "queue": "localchune-analyze", "remote": true }
+    ]
+  }
 }

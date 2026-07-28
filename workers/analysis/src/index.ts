@@ -2,125 +2,40 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// The Durable Object that fronts the analysis container.
+// The Durable Object that fronts the analysis container, and the queue
+// consumer that drives it.
 //
 // Shape of it: a Cloudflare container is only reachable through its Durable
 // Object. The DO holds the R2 binding, so every credential-bearing operation
 // happens on THIS side of the boundary. The container is handed bytes and
 // gives back JSON — it never sees a presigned URL, a bearer token or an S3
-// key. Task 9 adds the `queue` handler to this same file.
+// key.
+//
+// There is no `fetch` handler and no route. Task 8's token-guarded one, used
+// to measure the deployed container by hand, is gone: the queue is the entry
+// point now, and an unreachable Worker with an R2 binding and a service_role
+// key should have no HTTP surface at all.
 
 import { Container } from '@cloudflare/containers'
+import { handleMessage, type AnalyzeMessage } from './consumer'
+import { analysisBegin, analysisFail, analysisPersist } from './supabase'
+import type { AnalyzeResponse } from './types'
+
+export type {
+  AnalyzeResponse, Beats, Fingerprint, Forensics, Key, Loudness,
+} from './types'
 
 export interface Env {
   ANALYSIS: DurableObjectNamespace<AnalysisContainer>
   AUDIO: R2Bucket
   /**
-   * Set ONLY while measuring a deployed container by hand (Task 8, Step 6).
-   * Absent in normal operation, and the Worker has no workers.dev subdomain
-   * and no route, so there is nothing to reach even when it is set.
+   * The second legitimate service_role key in the project, for the same
+   * reason as the maintenance Worker's: this Worker is route-less, is driven
+   * by a queue, and has no user session to bind a cookie client to. See
+   * supabase.ts and CLAUDE.md.
    */
-  ANALYSIS_TEST_TOKEN?: string
-}
-
-/**
- * Mirrors app/models.py:AnalyzeResponse, field for field.
- *
- * Spelled out in full ON PURPOSE, with no `[k: string]: unknown` catch-all:
- * Workers RPC only accepts structurally serializable return types, and a
- * single `unknown` member makes the whole type unserializable — at which
- * point `Rpc.Result<T>` collapses to `never`, `await stub.analyse(...)`
- * silently yields `never`, and every downstream type error disappears
- * instead of being caught. `astro check` flags it as ts(80007) "'await' has
- * no effect on the type of this expression"; that hint is the symptom.
- */
-export interface Fingerprint {
-  algo_version: string
-  duration_s: number
-  frame_count: number
-  fp_compressed_b64: string
-  fp_sha256: string
-  query_items: number[]
-}
-
-export interface Beats {
-  bpm: number
-  bpm_median_ibi: number
-  beat_count: number
-  ibi_std_ms: number
-  beat_grid: number[]
-  downbeat_grid: number[]
-  confidence: number
-}
-
-export interface Key {
-  key: string
-  scale: 'major' | 'minor'
-  camelot: string
-  open_key: string
-  strength: number
-  alt_profiles: Record<string, string>
-}
-
-export interface Loudness {
-  integrated_lufs: number
-  lra_lu: number
-  true_peak_dbtp: number
-  replaygain_db: number
-  clipped_pct: number
-}
-
-export interface Forensics {
-  meas_cutoff_hz: number
-  meas_cliff_db_500: number
-  meas_eff_bit_depth: number
-  meas_eff_sample_rate: number
-  lame_tag_present: boolean
-  lame_lowpass_hz: number | null
-  lame_vbr_method: string | null
-  encoder_string: string | null
-  lossy_ancestor: 'none' | 'suspected' | 'confirmed' | 'abstain'
-  inferred_source_kbps: number | null
-  tier: number
-  quality_score: number
-  spectrogram_key: string | null
-}
-
-export interface AnalyzeResponse {
-  file_id: string
-  analysis_version: string
-  ok: boolean
-  error: string | null
-  duration_ms: number
-  container: string
-  codec: string
-  sample_rate: number
-  bit_depth: number
-  channels: number
-  fingerprint: Fingerprint | null
-  beats: Beats | null
-  key: Key | null
-  loudness: Loudness | null
-  // Always null today: the container measures cutoff/cliff and LOGS them, but
-  // synthesises no verdict because nothing produces hf_ref_delta_db or a
-  // measured effective bit depth. See app/main.py.
-  forensics: Forensics | null
-  tags: Record<string, string>
-  peaks_key: string | null
-  preview_key: string | null
-  artwork_key: string | null
-  cpu_seconds: number
-  /**
-   * DO-side only — app/models.py has no such field, so this is never present
-   * in the container's JSON. Populated here, after the fact, when
-   * `putArtifact` skips a derived artifact because its Content-Length was
-   * missing or over the per-artifact ceiling (see MAX_*_BYTES below). Keyed
-   * by artifact kind ('peaks' | 'preview' | 'artwork' | 'spectrogram'),
-   * valued by the skip reason. The corresponding `*_key` is nulled out in
-   * the same pass, so a skipped artifact never points at an R2 object that
-   * was never written.
-   */
-  artifact_skipped?: Record<string, string>
+  SUPABASE_URL: string
+  SUPABASE_SERVICE_KEY: string
 }
 
 export class AnalysisContainer extends Container<Env> {
@@ -144,45 +59,6 @@ export class AnalysisContainer extends Container<Env> {
   override onError(e: unknown) {
     console.error('container error', e instanceof Error ? e.stack : String(e))
     return e
-  }
-
-  /**
-   * TEMPORARY — Task 8 verification only. Boots the container and reports
-   * what the REAL binaries on the REAL platform say about themselves, so the
-   * assumptions Tasks 4-7 baked in (Essentia's nested key JSON, fpcalc's
-   * version string, ffmpeg's version) are checked on amd64 rather than on
-   * the M1 or under emulation. Delete with the `fetch` handler when Task 9
-   * lands the queue consumer.
-   */
-  async ping(): Promise<Record<string, string | number>> {
-    const c = this.ctx.container
-    if (!c) throw new Error('no container binding on this DO')
-    if (!c.running) await this.start()
-    const health = await this.containerFetch('http://c/healthz')
-    const dec = new TextDecoder()
-    const out: Record<string, string | number> = {
-      healthz: await health.text(),
-      status: health.status,
-    }
-    const probes: Record<string, string[]> = {
-      uname: ['uname', '-m'],
-      nproc: ['nproc'],
-      ffmpeg: ['sh', '-c', 'ffmpeg -version 2>&1 | head -1'],
-      fpcalc: ['sh', '-c', 'fpcalc -version 2>&1 | head -1'],
-      essentia: ['sh', '-c', 'streaming_extractor_music 2>&1 | head -6'],
-      cgroup_mem: ['sh', '-c', 'cat /sys/fs/cgroup/memory.max 2>/dev/null || echo n/a'],
-      torch: ['python', '-c', 'import torch;print(torch.__version__, torch.get_num_threads())'],
-    }
-    for (const [name, cmd] of Object.entries(probes)) {
-      try {
-        const p = await c.exec(cmd, { stderr: 'combined' })
-        const o = await p.output()
-        out[name] = dec.decode(o.stdout).trim()
-      } catch (e) {
-        out[name] = `EXEC FAILED: ${e}`
-      }
-    }
-    return out
   }
 
   /**
@@ -290,9 +166,9 @@ export class AnalysisContainer extends Container<Env> {
         { kind: 'artwork', name: out.artwork_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
           clear: () => { out.artwork_key = null } },
         // spectrogram_key is always null today — see the Forensics field
-        // comment above; nothing in app/ produces one yet — but the ceiling
-        // is wired up now so whoever adds a producer does not silently
-        // reopen this OOM path.
+        // comment in types.ts; nothing in app/ produces one yet — but the
+        // ceiling is wired up now so whoever adds a producer does not
+        // silently reopen this OOM path.
         { kind: 'spectrogram', name: out.forensics?.spectrogram_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
           clear: () => { if (out.forensics) out.forensics.spectrogram_key = null } },
       ]
@@ -334,6 +210,12 @@ export class AnalysisContainer extends Container<Env> {
  * single track, and one shared name would serialise a backfill through a
  * single box. POOL is kept below `max_instances` (8) so a burst can never
  * trip the limit — `max_instances` ERRORS when exceeded, it does not queue.
+ *
+ * Hashing the file id rather than picking at random also gives a retry the
+ * SAME instance, which is warm and already holds the model. Idempotency does
+ * not depend on that — it is enforced by analysis_persist()'s upsert on
+ * file_id — and a pool collision serialises on the container's own
+ * asyncio.Lock instead of doubling RSS.
  */
 const POOL = 4
 
@@ -345,43 +227,37 @@ export function containerFor(env: Env, fileId: string) {
 
 export default {
   /**
-   * Manual verification only, and inert unless ANALYSIS_TEST_TOKEN is set as
-   * a secret. There is no route and no workers.dev subdomain on this Worker
-   * in the committed configuration (see wrangler.jsonc), so this handler is
-   * unreachable as deployed; the token is the second lock, not the first.
-   * Task 9 replaces this entry point with the real `queue` consumer.
+   * One message, one track. `max_batch_size: 1` in wrangler.jsonc is
+   * load-bearing: a batch retry re-delivers EVERY message in the batch, so
+   * one poisoned file would re-run its neighbours — at ~55 vCPU-s each.
    *
-   * Split into short actions on purpose. A cold container has to pull a
-   * ~2.5 GB image and warm a model before it answers anything, and a
-   * 6-minute track then costs tens of seconds — one request that did all of
-   * that would sit far past the edge's patience. `ping` pays the cold start,
-   * `analyse` measures a warm run.
+   * The 30 s CPU limit is not the constraint it looks like. A queue consumer
+   * invocation gets 15 minutes of wall clock; 30 s is CPU. From here the
+   * ~55 s job is entirely I/O-wait on the DO, which costs ~0 ms of Worker
+   * CPU. Do not raise `limits.cpu_ms` to "be safe" — if this Worker ever
+   * approaches 30 s of CPU, something is deserialising audio in the Worker
+   * and that is the bug.
+   *
+   * handleMessage() never throws, so one bad message can never abandon the
+   * rest of a batch un-acked.
    */
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const expected = env.ANALYSIS_TEST_TOKEN
-    if (!expected) return new Response('not found', { status: 404 })
-    if (request.headers.get('authorization') !== `Bearer ${expected}`) {
-      return new Response('not found', { status: 404 })
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    for (const m of batch.messages) {
+      const outcome = await handleMessage(m.body, m.attempts, {
+        begin: (fileId) => analysisBegin(env, fileId),
+        analyse: (msg: AnalyzeMessage) =>
+          containerFor(env, msg.file_id).analyse(msg.file_id, msg.r2_key, msg.analysis_version),
+        persist: (result) => analysisPersist(env, result),
+        fail: (fileId, reason) => analysisFail(env, fileId, reason),
+      })
+
+      if (outcome.action === 'ack') {
+        console.log(outcome.reason)
+        m.ack()
+      } else {
+        console.error(`retry in ${outcome.delaySeconds}s — ${outcome.reason}`)
+        m.retry({ delaySeconds: outcome.delaySeconds })
+      }
     }
-
-    const url = new URL(request.url)
-    const action = url.searchParams.get('action') ?? 'analyse'
-    const fileId = url.searchParams.get('file_id') ?? 'probe'
-    const stub = containerFor(env, fileId)
-    const t0 = Date.now()
-
-    if (action === 'ping') {
-      const res = await stub.ping()
-      return Response.json({ wall_ms: Date.now() - t0, ...res })
-    }
-
-    const r2Key = url.searchParams.get('r2_key')
-    if (!r2Key) return new Response('need ?r2_key=', { status: 400 })
-    const out = await stub.analyse(
-      fileId,
-      r2Key,
-      url.searchParams.get('version') ?? 'v1',
-    )
-    return Response.json({ wall_ms: Date.now() - t0, result: out })
   },
-}
+} satisfies ExportedHandler<Env>

@@ -69,5 +69,36 @@
   // through this binding and hands the container nothing but bytes.
   // No "remote": true here, unlike the app and maintenance Workers — this
   // Worker is never run under `wrangler dev` against production data.
-  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "localchune-audio" }]
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "localchune-audio" }],
+
+  // The only way in. This Worker has no route, no workers.dev host and no
+  // fetch handler; a message on localchune-analyze is the entire trigger
+  // surface. Producers are the app Worker's /api/upload/complete route and
+  // the maintenance Worker's stuck-job cron, both of which read the r2_key
+  // out of Postgres before sending.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "localchune-analyze",
+        // LOAD-BEARING. A batch retry re-delivers EVERY message in the
+        // batch, so with a batch of 10 one poisoned file would re-run its
+        // nine neighbours — nine more ~55 vCPU-s container runs, billed, for
+        // a failure that had nothing to do with them.
+        "max_batch_size": 1,
+        // Strictly below the container's max_instances (8, above).
+        // max_instances ERRORS when exceeded, it does not queue, and it is
+        // NOT enforced in local dev — so `wrangler dev` will never show you
+        // this failure. The margin is the design. It also sits at the DO
+        // pool size (4, src/index.ts), which is the real ceiling on distinct
+        // instances a burst can wake.
+        "max_concurrency": 4,
+        // Five attempts, then the DLQ. The file stays 'analysing', and the
+        // maintenance Worker's hourly cron re-enqueues it — files.state is
+        // the system of record, never the queue, whose retention is finite
+        // whatever the plan says.
+        "max_retries": 5,
+        "dead_letter_queue": "localchune-analyze-dlq"
+      }
+    ]
+  }
 }
