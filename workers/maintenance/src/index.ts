@@ -23,8 +23,19 @@ import { deletablePendingObjects, reconcile, type DbFile, type R2ObjectRow } fro
  * this file with esbuild, not Vite, so the app's PUBLIC_ prefix rules do not
  * apply and every value below comes from the binding or the secret store.
  */
+/** Mirrors src/lib/analyze-queue.ts:AnalyzeMessage — the consumer in
+ *  workers/analysis/ validates the shape on arrival. Duplicated rather than
+ *  imported because that module reads `env` from `cloudflare:workers` at
+ *  import time and belongs to a different Worker's bundle. */
+interface AnalyzeMessage {
+  file_id: string
+  r2_key: string
+  analysis_version: string
+}
+
 export interface Env {
   AUDIO: R2Bucket
+  ANALYZE_QUEUE: Queue<AnalyzeMessage>
   R2_BUCKET: string
   R2_ACCOUNT_ID: string
   R2_ACCESS_KEY_ID: string
@@ -45,7 +56,15 @@ export interface Env {
 
 // Must equal triggers.crons in wrangler.jsonc, character for character.
 const CRON_SWEEP = '17 * * * *'
+const CRON_REQUEUE = '31 * * * *'
 const CRON_RECONCILE = '40 4 * * *'
+
+/** Must match src/lib/analyze-queue.ts:ANALYSIS_VERSION. */
+const ANALYSIS_VERSION = 'v1'
+/** How long a file may sit in received/analysing before it counts as stuck. */
+const STUCK_OLDER_THAN = '1 hour'
+/** analysis_stuck() clamps this to 500 itself. */
+const STUCK_LIMIT = 100
 
 /** Every object ingest_begin() ever mints lives under this prefix. */
 const KEY_PREFIX = 'audio/'
@@ -204,6 +223,78 @@ export async function sweep(env: Env): Promise<void> {
   )
 }
 
+interface StuckRow {
+  file_id: string
+  r2_key: string
+  state: string
+}
+
+/**
+ * The stuck-job cron: M3's self-healing loop.
+ *
+ * The queue is not the system of record and must never become one. Its
+ * retention is finite whatever the plan says, and this is what turns that
+ * into a non-issue: `files.state` is the record.
+ *
+ * Two kinds of stuck row, and analysis_stuck() returns both:
+ *
+ *   'analysing' -- the consumer claimed it and never finished. The container
+ *     died, or the retries ran out and the message reached the DLQ. [F5]
+ *     Reaching the DLQ no longer means stranded forever: the analysis
+ *     Worker's DLQ consumer (workers/analysis/src/consumer.ts,
+ *     handleDeadLetter) calls analysis_fail() on it, which moves the row to
+ *     'failed' -- a state this query does NOT return, so a poisoned file
+ *     stops being resurrected here every hour. A row can still show up
+ *     'analysing' here in the narrower window before that DLQ delivery
+ *     lands; re-enqueueing it then is exactly the safe, idempotent replay
+ *     described below.
+ *   'received'  -- nobody ever claimed it. Either the /api/upload/complete
+ *     send failed (it never throws, by design -- see analyze-queue.ts), or
+ *     the row predates the producer existing at all, which is exactly the
+ *     state the pool's first two uploads are in.
+ *
+ * It filters on state_changed_at, NEVER created_at. created_at is when the
+ * row was minted, BEFORE the bytes moved, so a 40-minute multipart upload
+ * would be re-enqueued the instant it entered 'analysing' -- while the
+ * container was still working on it. Migration 06 added state_changed_at and
+ * its index for exactly this query and says so in a column comment; the
+ * filter itself lives in analysis_stuck() (migration 09) with a pgTAP test
+ * that a three-hour-old row which entered 'analysing' a minute ago is NOT
+ * returned.
+ *
+ * Re-enqueueing is safe to repeat: analysis_begin() accepts 'analysing' as a
+ * source state and analysis_persist() upserts on file_id, so a file that is
+ * genuinely still being worked on gets a duplicate message that acks itself.
+ *
+ * Exported for its unit tests.
+ */
+export async function requeueStuck(env: Env): Promise<void> {
+  const stuck = await rpc<StuckRow[]>(env, 'analysis_stuck', {
+    p_older_than: STUCK_OLDER_THAN,
+    p_limit: STUCK_LIMIT,
+  })
+
+  let sent = 0
+  let failed = 0
+  for (const row of stuck) {
+    try {
+      await env.ANALYZE_QUEUE.send({
+        file_id: row.file_id,
+        r2_key: row.r2_key,
+        analysis_version: ANALYSIS_VERSION,
+      })
+      sent++
+    } catch (err) {
+      // One bad send must not abandon the rest of the batch. The row keeps
+      // its state, so the next hour tries again.
+      failed++
+      console.error(`requeue: ${row.file_id} (${row.state}): ${String(err)}`)
+    }
+  }
+
+  console.log(`requeue: stuck=${stuck.length} sent=${sent} failed=${failed}`)
+}
+
 /**
  * Read every files row, keyset-paginated on the unique r2_key. Keyset rather
  * than offset because an offset walk over a table that is being written to
@@ -334,6 +425,8 @@ export default {
     try {
       if (controller.cron === CRON_SWEEP) {
         await sweep(env)
+      } else if (controller.cron === CRON_REQUEUE) {
+        await requeueStuck(env)
       } else if (controller.cron === CRON_RECONCILE) {
         await reconcileBucket(env)
       } else {
@@ -341,8 +434,8 @@ export default {
         // the cheap, idempotent, time-sensitive one, and doing nothing would
         // let multipart uploads bill silently for a week.
         console.error(
-          `unknown cron "${controller.cron}" — expected "${CRON_SWEEP}" or ` +
-            `"${CRON_RECONCILE}"; running the sweeper`,
+          `unknown cron "${controller.cron}" — expected "${CRON_SWEEP}", ` +
+            `"${CRON_REQUEUE}" or "${CRON_RECONCILE}"; running the sweeper`,
         )
         await sweep(env)
       }

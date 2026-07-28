@@ -1,0 +1,34 @@
+[project]
+name = "localchune-analysis"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115", "uvicorn[standard]>=0.32", "pydantic>=2.9",
+  "numpy>=2.1", "soundfile>=0.12", "httpx>=0.27",
+  # PyTorch is the RUNTIME, not a benchmark extra: Task 2 measured ONNX
+  # Runtime 2.2x slower on this model and the decision is recorded in
+  # worker/bench/README.md. beat-this is on PyPI as of 1.1.0, so the image no
+  # longer needs a git checkout to build. torch/torchaudio are installed from
+  # PyTorch's CPU index in the Dockerfile before this list is resolved — see
+  # worker/Dockerfile for why (the default index serves the CUDA build).
+  "torch>=2.13", "torchaudio>=2.11", "beat-this==1.1.0",
+]
+[project.optional-dependencies]
+# onnxruntime lives HERE and must never reach the image: it is the runtime we
+# measured and rejected, and it would be 300 MB of dead weight in a container
+# whose image size is already the binding constraint on rollback headroom.
+bench = ["onnx>=1.22", "onnxruntime>=1.20"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+  "integration: slow tests that run real model inference against audio fixtures",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

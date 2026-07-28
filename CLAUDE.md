@@ -9,13 +9,90 @@
 - `SUPABASE_SERVICE_KEY` and `SUPABASE_DB_PASSWORD` stay CLI-only in
   `.secrets.env` and must never be set as secrets on the **app** Worker
   (`localchune`) — it has no code path that reads them, so a copy there is
-  pure attack surface. The one exception is the route-less maintenance
-  Worker (`localchune-maintenance`, `workers/maintenance/wrangler.jsonc`),
-  which has its own secret store and needs `SUPABASE_SERVICE_KEY` to run the
-  stale-upload sweeper with no user session. Neither key may ever appear in
-  `.env`: `astro build` copies `.env` into `dist/server/.dev.vars`.
-- The maintenance Worker deploys separately: `npm run deploy:maintenance`.
-  `npm run deploy` deploys the app Worker only.
+  pure attack surface. There are exactly two exceptions, and both are
+  route-less Workers with `workers_dev: false`, their own secret store, and
+  no user session to bind a cookie client to:
+  - `localchune-maintenance` (`workers/maintenance/wrangler.jsonc`) — runs
+    the stale-upload sweeper and the stuck-job cron.
+  - `localchune-analysis` (`workers/analysis/wrangler.jsonc`) — the queue
+    consumer writes `audio_analysis` through `analysis_persist()`.
+
+  Neither key may ever appear in `.env`: `astro build` copies `.env` into
+  `dist/server/.dev.vars`.
+- **`SUPABASE_SERVICE_KEY` in `.secrets.env` is the dashboard's MASKED
+  value**, not a key: `sb_secret_okMx0` followed by 26 U+00B7 middle dots.
+  It has never authenticated. The deployed analysis Worker carries the
+  project's **legacy `service_role` JWT** instead, read straight out of
+  `npx supabase projects api-keys` and piped into `wrangler secret put`.
+  The Management API returns the new-format secret key masked too, so the
+  full value exists only in the Supabase dashboard. To move to the
+  new-format key, reveal it there, fix `.secrets.env`, and run:
+  ```
+  grep '^SUPABASE_SERVICE_KEY=' .secrets.env | cut -d= -f2- \
+    | npx wrangler secret put SUPABASE_SERVICE_KEY -c workers/analysis/wrangler.jsonc
+  ```
+- Each Worker deploys separately. `npm run deploy` deploys the app Worker
+  only; `npm run deploy:maintenance` and `npm run deploy:analysis` the other
+  two.
+
+### Hosted Supabase grants every table to `anon` and `authenticated`
+
+A hosted project ships an `ALTER DEFAULT PRIVILEGES` that grants `anon`,
+`authenticated` and `service_role` **all** privileges (`arwdDxtm`) on every
+new table in `public`. A local `supabase start` does not. Compare
+`pg_class.relacl` on both to see it.
+
+The consequence is important. A `grant select ... to authenticated` line in
+a migration is a **no-op in production** — the role already had everything —
+so RLS becomes the only thing between a member and an `UPDATE`. RLS does
+hold that line, because no policy in this project is permissive for insert,
+update or delete. But the migration does not say what it means.
+
+Migration 09 therefore **revokes first, then grants**. Do the same in every
+new migration, and prove it with a pgTAP `throws_ok(..., '42501', ...)` on
+an INSERT as `authenticated`.
+
+Migration 10 closed the remaining open ACLs: `files`, `upload_batches`,
+`file_claims`, `ingest_jobs` (migration 06) and `allowlist`, `credit_grants`,
+`members` (migrations 01/01b) — all seven tables in the project, done. Any
+**new** table added after migration 10 starts from the same open hosted
+default and needs the same revoke-first treatment on day one, not as a
+follow-up.
+
+## Queues
+
+`localchune-analyze` carries `{file_id, r2_key, analysis_version}` from the
+app Worker to the analysis Worker. `localchune-analyze-dlq` catches a
+message that failed five attempts.
+
+- Producer: `/api/upload/complete`, after `ingest_finalize` commits. The send
+  never throws — the bytes are already verified.
+- Consumer: `localchune-analysis`, `max_batch_size: 1`. A batch retry
+  re-delivers the whole batch, and each message costs ~45 vCPU-s.
+- `files.state` is the system of record, never the queue. The maintenance
+  Worker re-enqueues anything stale in `received` or `analysing` at :31 past
+  the hour.
+- Wrangler has no send command. To enqueue by hand, POST to
+  `/accounts/<account>/queues/<queue_id>/messages` with the OAuth token from
+  `wrangler whoami`, or deploy the maintenance Worker and let the cron do it.
+- `localchune-analyze-dlq` has its own consumer on the analysis Worker
+  (`workers/analysis/wrangler.jsonc`, `handleDeadLetter` in
+  `src/consumer.ts`): a dead-lettered message calls `analysis_fail()` and
+  acks. Confirm it is live with `wrangler queues info localchune-analyze-dlq`
+  → `Consumers: 1`.
+- **A deploy that touches the container image rolls out gradually, not
+  atomically.** `wrangler deploy` on `workers/analysis` defaults to a
+  `[10,100]` rollout — the old image keeps serving some fraction of traffic
+  for **minutes** after the deploy reports SUCCESS. Poll
+  `npx wrangler containers info <image>` (or the dashboard) to confirm the
+  rollout actually completed before assuming a container-level fix is live,
+  or pass `--containers-rollout=immediate` to skip the gradual rollout
+  entirely. TS-only edits (no Dockerfile change) do not rebuild the image,
+  so this only applies when `worker/Dockerfile` or its build context changed.
+- `max_instances` (workers/analysis/wrangler.jsonc, container config)
+  **errors when exceeded — it does not queue the excess**, and it is **not
+  enforced in local dev**, so `wrangler dev` will never reproduce that
+  failure. It only shows up against the real platform under real load.
 
 ### Maintenance Worker — what it is and how to deploy it
 
@@ -25,6 +102,7 @@ the internet can reach it. It exists only to run two scheduled jobs:
 | Cron | Job | What it does |
 |---|---|---|
 | `17 * * * *` (hourly) | **sweeper** | Finds uploads stuck in `pending`/`uploading` for over 24 h, marks them `abandoned`, aborts their multipart upload and deletes the partial object. **Abandoned multipart uploads bill for real** — this is the money job. |
+| `31 * * * *` (hourly) | **stuck-job requeue** | Sends `localchune-analyze` a message for every file that has sat in `received` or `analysing` for over an hour. It filters `state_changed_at`, never `created_at`. This is what makes the analysis pipeline self-healing after a dead-letter or a dropped send. |
 | `40 4 * * *` (nightly) | **reconcile** | Compares what is in R2 against what the database says. Reports drift in both directions: an object with no row, and a row with no object. |
 
 It needs its own secrets — a separate store from the app Worker. Set all five

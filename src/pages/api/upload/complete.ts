@@ -10,6 +10,7 @@ import {
 import {
   R2Error, completeMultipartUpload, deleteObjectQuietly, headObject, listParts, r2ErrorResponse,
 } from '../../../lib/r2'
+import { enqueueAnalysis } from '../../../lib/analyze-queue'
 
 export const POST: APIRoute = async ({ request, locals }) => {
   if (!locals.member) return jsonError(401, 'unauthenticated', 'sign in again')
@@ -23,6 +24,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
   if (job.state === 'received') {
+    // A retried complete after a successful one. Send again rather than
+    // returning early and silently: if the first send was the thing that
+    // failed, this is the only cheap chance to fix it before the hourly
+    // cron notices. analysis_begin() and analysis_persist() are both
+    // idempotent, so a duplicate costs one wasted queue message, not a
+    // second analysis.
+    await enqueueAnalysis(fileId, job.r2Key)
     return Response.json({ file_id: fileId, state: 'received', byte_size: job.byteSize, already: true })
   }
   if (job.state !== 'uploading' && job.state !== 'pending') {
@@ -104,6 +112,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
       p_file_id: fileId, p_verified_byte_size: head.size,
     })
     if (error) return rpcError(error)
+
+    // AFTER ingest_finalize commits, never before: enqueueing a file that is
+    // still 'uploading' would have the consumer claim a row the state
+    // machine will not move, and the message would be acked as
+    // "not claimable" while the real completion sailed past unanalysed.
+    //
+    // The result is deliberately ignored. The bytes are verified and the row
+    // is 'received'; a queue hiccup is the cron's problem, not the browser's.
+    await enqueueAnalysis(fileId, job.r2Key)
 
     return Response.json({ file_id: fileId, state: data, byte_size: head.size })
   } catch (e) {

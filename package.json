@@ -13,11 +13,13 @@
     "test": "vitest run",
     "check": "astro check",
     "deploy": "astro build && wrangler deploy",
-    "deploy:maintenance": "wrangler deploy -c workers/maintenance/wrangler.jsonc"
+    "deploy:maintenance": "wrangler deploy -c workers/maintenance/wrangler.jsonc",
+    "deploy:analysis": "wrangler deploy -c workers/analysis/wrangler.jsonc"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.1.4",
     "@astrojs/solid-js": "^7.0.1",
+    "@cloudflare/containers": "^0.3.7",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.8",
     "astro": "^7.1.3",

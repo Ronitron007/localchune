@@ -36,8 +36,30 @@ export const PRESIGN_TTL_SECONDS = 3600
  * and read back out of Postgres — the client never sends one. This refuses
  * to sign anything of another shape, so a future caller that forgets where
  * keys come from fails loudly instead of signing a traversal.
+ *
+ * This is the WRITE pattern and it stays exactly this tight. Everything the
+ * Worker can PUT, DELETE or complete a multipart upload against must match
+ * it, which is why `objectUrl` — the only URL builder the mutating calls use
+ * — tests this and nothing else.
  */
 const KEY_RE = /^audio\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.[a-z0-9]{2,5}$/
+
+/**
+ * The READ-ONLY pattern, for the artifacts the analysis Durable Object
+ * writes under `derived/<file_id>/<name>` (peaks.json, preview.opus,
+ * artwork.jpg today; a spectrogram later). M5 signs GETs for these to render
+ * the waveform and play the preview.
+ *
+ * Reachable only from `readObjectUrl` below, so a derived key can be signed
+ * for GET and can never reach `presignPut`, `deleteObject`,
+ * `createMultipartUpload` or any other mutating path — those all go through
+ * `objectUrl`, which still accepts audio keys alone.
+ *
+ * The basename allows exactly one dot, because the character class before it
+ * excludes `.`. That is what makes `..` unrepresentable here without a
+ * separate traversal check.
+ */
+const DERIVED_KEY_RE = /^derived\/[0-9a-f-]{36}\/[a-z0-9][a-z0-9-]{0,31}\.[a-z0-9]{2,5}$/
 
 export class R2Error extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -93,8 +115,41 @@ export function objectUrl(key: string): string {
   return `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`
 }
 
+/**
+ * Same URL, but for a key that may also be a derived artifact. Used only by
+ * `presignGet`. Keeping it separate from `objectUrl` is the whole mechanism:
+ * a derived key has no path to a signed PUT or DELETE, because none of those
+ * call this.
+ */
+export function readObjectUrl(key: string): string {
+  if (!KEY_RE.test(key) && !DERIVED_KEY_RE.test(key)) {
+    throw new R2Error(`refusing to sign an implausible object key: ${key}`, 500, 'BadKey')
+  }
+  const { accountId, bucket } = conf()
+  return `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`
+}
+
 export function presignExpiresAt(ttlSeconds: number = PRESIGN_TTL_SECONDS): string {
   return new Date(Date.now() + ttlSeconds * 1000).toISOString()
+}
+
+/**
+ * A presigned GET, for the original audio or for a derived artifact.
+ *
+ * A signed GET is a bearer READ capability to one exact key for its lifetime,
+ * so the same one-hour policy as `presignPut` applies and for the same
+ * reason: it bounds what one leaked URL is worth.
+ */
+export async function presignGet(
+  key: string,
+  opts: { ttlSeconds?: number } = {},
+): Promise<string> {
+  const { accessKeyId, secretAccessKey } = conf()
+  const url = new URL(readObjectUrl(key))
+  url.searchParams.set('X-Amz-Expires', String(opts.ttlSeconds ?? PRESIGN_TTL_SECONDS))
+  const signed = await signer(accessKeyId, secretAccessKey)
+    .sign(url.toString(), { method: 'GET', aws: { signQuery: true } })
+  return signed.url
 }
 
 /**
