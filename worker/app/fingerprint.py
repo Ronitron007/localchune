@@ -1,11 +1,32 @@
 # localchune — MIT licensed. See LICENSE.
 # NOTE: the distributed combination is AGPL-3.0 because the analysis
 # worker includes Essentia. LICENSE explains why.
-import base64, hashlib, struct, subprocess
+import base64, hashlib, struct, subprocess, re
 from .models import Fingerprint
 
 FPCALC = 'fpcalc'
-ALGO_VERSION = 'cp-1.5.1/test2/11025'
+
+def algo_version() -> str:
+    """Derive chromaprint algorithm version from fpcalc at runtime.
+
+    Returns a string like 'cp-1.6.0/test2/11025'. Falls back to
+    'cp-unknown/test2/11025' if fpcalc version cannot be determined.
+    Result is cached at module level (one subprocess call per process).
+    """
+    try:
+        result = subprocess.run([FPCALC, '-version'],
+                                capture_output=True, text=True, check=True)
+        # Parse version from output like "fpcalc version 1.6.0"
+        match = re.search(r'(\d+\.\d+(?:\.\d+)?)', result.stdout)
+        if match:
+            version = match.group(1)
+            return f'cp-{version}/test2/11025'
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    return 'cp-unknown/test2/11025'
+
+# Cache the version at module load time
+_ALGO_VERSION = algo_version()
 
 def make_query_items(raw: list[int], mask: int = 12,
                      windows: list[tuple[int, int]] | None = None) -> list[int]:
@@ -35,7 +56,7 @@ def fingerprint(path: str) -> Fingerprint:
     raw = [int(v) & 0xFFFFFFFF for v in fields['FINGERPRINT'].split(',')]
     packed = struct.pack(f'<{len(raw)}I', *raw)
     return Fingerprint(
-        algo_version=ALGO_VERSION,
+        algo_version=_ALGO_VERSION,
         duration_s=int(float(fields['DURATION'])),
         frame_count=len(raw),
         fp_compressed_b64=base64.b64encode(packed).decode(),
