@@ -248,7 +248,7 @@ export function summarise(r: AnalyzeResponse): string {
     `lufs=${r.loudness ? r.loudness.integrated_lufs.toFixed(2) : 'null'}`,
     `tier=${r.forensics ? r.forensics.tier : 'null'}`,
     `cpu=${r.cpu_seconds}s`,
-    `artifacts=${[r.peaks_key, r.preview_key, r.artwork_key].filter(Boolean).join(',') || 'none'}`,
+    `artifacts=${[r.peaks_key, r.preview_key, r.artwork_key, r.thumb_key].filter(Boolean).join(',') || 'none'}`,
     r.artifact_skipped ? `skipped=${JSON.stringify(r.artifact_skipped)}` : '',
   ].filter(Boolean).join(' ')
 }
