@@ -2,35 +2,14 @@
 # NOTE: the distributed combination is AGPL-3.0 because the analysis
 # worker includes Essentia. LICENSE explains why.
 #
-# `app.beat_runtime` is Task 8's file (real model loading wired into the
-# container) and does not exist yet. This test builds a throwaway shim,
-# backed directly by beat_this's own Audio2Beats, and installs it into
-# sys.modules before calling analyze_beats -- so analyze_beats(pcm, sr) is
-# exercised exactly as it will be called in production, without creating
-# Task 8's file early.
-import sys
-import types
-
+# analyze_beats() is exercised exactly as production calls it: through the
+# real app.beat_runtime, on the real `final0` weights. Task 3 had to stand up
+# a throwaway sys.modules shim here because beat_runtime did not exist yet;
+# Task 8 created it, so the shim is gone.
 import pytest
 import soundfile as sf
 
 from app.beats import analyze_beats
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _install_beat_runtime_shim():
-    from beat_this.inference import Audio2Beats
-
-    a2b = Audio2Beats(checkpoint_path="final0", device="cpu", dbn=False)
-
-    def infer(pcm, sr):
-        return a2b(pcm, sr)
-
-    shim = types.ModuleType("app.beat_runtime")
-    shim.infer = infer
-    sys.modules["app.beat_runtime"] = shim
-    yield
-    del sys.modules["app.beat_runtime"]
 
 
 @pytest.mark.integration
