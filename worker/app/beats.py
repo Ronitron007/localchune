@@ -52,6 +52,19 @@ def analyze_beats(pcm: np.ndarray, sr: int, genre_hint: str | None = None) -> Be
     beat_times, downbeat_times = infer(pcm, sr)
     beats = np.asarray(beat_times, dtype=float)
     ibi = np.diff(beats)
+
+    # Degrade gracefully on beatless input: lsq_bpm requires ≥2 beats
+    if beats.size < 2:
+        return Beats(
+            bpm=0.0,
+            bpm_median_ibi=0.0,
+            beat_count=int(beats.size),
+            ibi_std_ms=0.0,
+            beat_grid=[round(float(t), 4) for t in beats],
+            downbeat_grid=[round(float(t), 4) for t in downbeat_times],
+            confidence=0.0,
+        )
+
     raw = lsq_bpm(beats)
     return Beats(
         bpm=fold_to_genre_range(raw, genre_hint),
