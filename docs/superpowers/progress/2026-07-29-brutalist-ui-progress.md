@@ -1,7 +1,8 @@
 # Brutalist pool UI — progress
 
 Branch: `rohan/brutalist-ui-design-091da9` (worktree). Rebased onto
-`rohan/m3-analysis` @ `f49121f`. Stopped on user request before push/PR.
+`rohan/m3-analysis` @ `85adb19` (the M3 final-review fix batch). Pushed;
+PR not opened yet.
 
 Plan: [`../plans/2026-07-29-06-brutalist-ui.md`](../plans/2026-07-29-06-brutalist-ui.md)
 (includes the post-rebase amendment note). Spec:
@@ -50,14 +51,61 @@ it. Resolutions:
 - **workers/analysis**: `thumb_key` re-applied to M3's new `types.ts` +
   `index.ts` artifact-drain list (kind `'thumb'`).
 
-## Verification done
+## Second rebase — onto `85adb19`
 
-- `npm run check` — 0 errors (1 pre-existing hint in upload-journal.ts).
-- `npm test` — 297/297.
-- `npx supabase test db` — 181/181 across 14 files (incl. M3's analysis.sql).
-- `worker` pytest — 93/93 (bench fixtures symlinked from the main checkout —
-  `worker/bench/fixtures/*.wav` are gitignored 61 MB files).
+M3 then landed four more commits: `739befa` (migration
+`20260729120000_10_close_acls.sql` — revoke-first ACL closure on seven
+tables, plus a 10-minute busy lease in `analysis_begin()`), `1fc488c` (DLQ
+consumer + busy retry), `f52dd89` and `85adb19` (docs). This branch rebased
+onto `85adb19`. `git rebase` reported no conflict on any of the 12 commits.
+
+### Migration audit
+
+- **Order.** No filename or timestamp collision. `…120000_10` sorts before
+  `…130000_11`, and `supabase db reset` applies 09 → 10 → 11 → 12 → 13 → 14
+  in that order.
+- **Migration 14 is still correct.** Migration 10 re-creates
+  `analysis_begin()` only. It does not touch `analysis_persist()`, and M3's
+  edit to migration 09 in that batch is comment-only. A diff of 09's
+  `analysis_persist()` body against 14's shows exactly the three intended
+  `thumb_key` lines and nothing else, so 14 resurrects no older body. 14
+  does not mention `analysis_begin` at all, so 10's busy lease survives.
+  Confirmed in the live local DB after the reset:
+  `pg_get_functiondef` for `analysis_begin` contains `busy`, and for
+  `analysis_persist` contains `thumb_key`.
+- **ACLs.** The pool path is unaffected by migration 10. `pool_tracks` is
+  granted to no role, and `pool_list` / `pool_get` / `pool_uploaders` /
+  `upload_batch_status` are all `security definer`, so they read the
+  narrowed tables as the view owner. The only direct-table reads the UI
+  makes as `authenticated` are `files` and `ingest_jobs`
+  (`src/lib/upload-api.ts`); migration 10 re-grants `select` on both.
+  `pg_class.relacl` after the reset shows `authenticated=r` on `files`,
+  `ingest_jobs`, `upload_batches`, `file_claims`, `members`,
+  `credit_grants`, `audio_analysis`, and no `authenticated` entry at all on
+  `allowlist` or `pool_tracks`. No pgTAP regressed.
+
+### One integration defect found and fixed
+
+`workers/analysis/src/consumer.test.ts` builds an `AnalyzeResponse` fixture.
+M3's DLQ commit rewrote that file; this branch made `thumb_key` a required
+field of `AnalyzeResponse`. The two together break `astro check` with
+ts(2322). Fix: add `thumb_key: null` to the fixture. Vitest never caught it
+because vitest does not type-check.
+
+## Verification done (re-run in full after the second rebase)
+
+- `npx supabase db reset && npx supabase test db` — **189/189** across 14
+  files (181 + migration 10's 8).
+- `npm test` — **303/303** across 20 files.
+- `npm run check` — 0 errors, 0 warnings (1 pre-existing hint in
+  upload-journal.ts).
 - `npm run build` — clean.
+- `worker` pytest — **91 passed, 2 deselected** (`-m "not integration"`).
+  The worktree has no `worker/.venv`, so the run used the main checkout's
+  interpreter: `/Users/rohanmalik/localchune/worker/.venv/bin/python -m
+  pytest tests/ -q -m "not integration"` from the worktree's `worker/`.
+  Bench fixtures are symlinked into the worktree from the main checkout —
+  `worker/bench/fixtures/*.wav` are gitignored 61 MB files.
 - Signed-in HTTP checks against `npm run dev` + local Supabase (before the
   shared DB was reset by the other session): 100 SSR rows in view-source;
   only router+site scripts; one `<audio>`; empty-thumb boxes; `q=`,
@@ -69,16 +117,15 @@ it. Resolutions:
 
 ## Not done yet
 
-1. **Push + PR** — not pushed. When resuming: `git push -u origin
-   rohan/brutalist-ui-design-091da9 && gh pr create --base rohan/m3-analysis …`
-   (base m3-analysis, not main, or the PR shows all of M1–M3).
-2. **Browser visual checklist** (plan Task 10 Step 7): dark-mode inversion,
+1. **Browser visual checklist** (plan Task 10 Step 7): dark-mode inversion,
    player bar visuals, playback-across-navigation click-through, and anything
    needing real R2 objects (streaming, downloads, thumbs as pixels). Local R2
    env vars are not set in dev, so source/download 502 locally — expected.
-3. **Deploy** (plan Task 10 Step 8): `npx supabase db push && npm run deploy` —
+   The signed-in HTTP checks above were not repeated after the second
+   rebase; the automated gates were.
+2. **Deploy** (plan Task 10 Step 8): `npx supabase db push && npm run deploy` —
    deliberately left for a human.
-4. Spec's unresolved questions 1–3 (dark-mode-in-v1, colour thumbs, 64px
+3. Spec's unresolved questions 1–3 (dark-mode-in-v1, colour thumbs, 64px
    format) — plan chose the spec defaults; confirm or amend.
 
 ## Local test-login harness (for resuming verification)
