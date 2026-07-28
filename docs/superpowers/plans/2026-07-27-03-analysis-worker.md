@@ -2,15 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A stateless container that takes one audio file and returns key, BPM + beat grid, loudness, waveform peaks, Chromaprint fingerprint, embedded tags, and quality forensics — deployed on Cloud Run, driven by Cloudflare Queues, writing nothing to the database itself.
+**Goal:** A stateless container that takes one audio file and returns key, BPM + beat grid, loudness, waveform peaks, Chromaprint fingerprint, embedded tags, and quality forensics — deployed on **Cloudflare Containers**, driven by Cloudflare Queues, writing nothing to the database itself.
 
-**Architecture:** One HTTP handler, one file per request, `concurrency=1`, **1 vCPU / 2 GiB**. Each analysis stage runs as a **sequential subprocess** so peak RSS is `max(stage)` ≈ 1 GB rather than the sum — which is also what §7.3 of the PRD requires for Essentia's AGPL arm's-length position. The worker holds **no R2 credentials and no Supabase key**: it receives presigned URLs and returns JSON, so a failed run mutates nothing and retries are trivially safe.
+**Architecture:** One HTTP handler, one file at a time per instance, **1 vCPU / 3 GiB / 6 GB disk** (custom instance type). Each analysis stage runs as a **sequential subprocess** so peak RSS is `max(stage)` ≈ 1 GB rather than the sum — which is also what §7.3 of the PRD requires for Essentia's AGPL arm's-length position. The container is fronted by a **Durable Object**; the queue consumer gets a DO stub and calls it, and the DO reads and writes R2 through a **binding**. The container therefore holds **no R2 credentials, no Supabase key, and no bearer token at all** — it receives bytes and returns JSON, so a failed run mutates nothing and retries are trivially safe.
 
-**Tech Stack:** Python 3.12, FastAPI + uvicorn, ffmpeg (LGPL build), `fpcalc` (Chromaprint), Essentia (subprocess, DSP only), Beat This! via ONNX Runtime, NumPy, `flaccheck`, `mp3guessenc`. Docker → Artifact Registry → Cloud Run.
+**Why Cloudflare and not somewhere else.** The 2,000-track backfill costs **$1.28**; steady state at 200 tracks/month costs **$0.00**, entirely inside the Workers Paid allowances already being paid for. Railway floors at **$5/month** even at zero traffic because the service stays resident — its per-vCPU-second rate is 2.6× better, but the duty cycle here is 0.27%, so idle memory dominates and the cross-over is ~30,000 tracks/month (150× current volume). And the files already live in R2: a container on Cloudflare reaches them through a binding with no credentials, where any external host needs an S3 access key provisioned and rotated. See [Cost](#cost) for the arithmetic. The PRD's original host choice is superseded by owner decision — that vendor is out of scope, and Railway is the distant fallback.
+
+**Tech Stack:** Python 3.12, FastAPI + uvicorn, ffmpeg (LGPL build), `fpcalc` (Chromaprint), Essentia (subprocess, DSP only), Beat This! via ONNX Runtime, NumPy, `flaccheck`, `mp3guessenc`. Docker (`linux/amd64`) → Cloudflare Containers, fronted by a Durable Object, driven by a route-less queue-consumer Worker.
 
 ## Global Constraints
 
-- **`torch.set_num_threads(1)` / `onnxruntime` intra-op threads = 1.** Measured: Beat This! is 13.2 s CPU at 1 thread and **19.5 s CPU at 8 threads** for identical work. Cloud Run bills vCPU-seconds, so threading costs 48% more. This is a background job — nobody is watching the wall clock.
+- **Pin every thread pool to 1, and treat it as mandatory, not tuning.** A cgroup limit of 1 vCPU does **not** stop ONNX Runtime, OpenMP or numpy from reading the host `cpu_count` and spawning 8+ threads that thrash the one core they are allowed. Set `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` in the image, and `intra_op_num_threads=1` / `inter_op_num_threads=1` on the ONNX `SessionOptions`. Measured: Beat This! is 13.2 s CPU at 1 thread and **19.5 s CPU at 8 threads** for identical work. Cloudflare bills CPU on *active* usage per 10 ms, so the extra threads are 48% more billed CPU for the same answer. This is a background job — nobody is watching the wall clock.
+- **Instance type is `1 vCPU / 3 GiB / 6 GB disk`, and it is not negotiable downward.** Peak RSS is 977 MB, which wants ~2 GiB — but custom instance types require a **minimum 3 GiB of memory per vCPU**, so the cheapest legal 1-vCPU box is 3 GiB. Take it: the ~50% memory overpay is $0.30 across the *entire* backfill. **Fractional vCPUs are strictly dominated** and nobody should "optimise" by downsizing: memory is billed on *provisioned* resources for the whole time the instance is awake, so `basic` (1/4 vCPU, 1 GiB) stretches 35 vCPU-s into ~140 s of wall clock = 140 GiB-s, which is *worse* than 3 GiB × 35 s = 105 GiB-s on a full vCPU — and four times slower.
+- **`sleepAfter = "30s"`.** The default is **10 minutes**, and because memory bills for every second the instance is awake, that default alone is the realistic way to blow the included allowance — see [Cost](#cost), where it turns $0.00/month into ~$0.73/month at zero extra work done.
+- **The image is `linux/amd64` only.** That is good for the dependency stack — onnxruntime, numpy and Essentia all ship mature manylinux x86_64 wheels where arm64 is patchy — and bad for the build loop, because the build machine is an M1. Cross-build with `docker buildx build --platform linux/amd64`, and **do not benchmark the built image locally**: QEMU emulation makes the timings worthless.
 - **BPM is a least-squares fit over the beat index, never the median inter-beat interval.** Measured: median-IBI reports 130.43 on a 128.000 track and 176.47 on a 174.000 track; the fit gives both exactly. Beat This! quantises to a ~20 ms frame grid and the median inherits it.
 - **`duration_ms` comes from decoding, never from container metadata.** VBR MP3s without a Xing header report wildly wrong durations, and a wrong duration silently breaks the dedup ±10 s candidate gate in a way that produces no error and no alert.
 - **Ship zero `.pb` files.** No Essentia model-zoo downloads in the Dockerfile — the zoo is CC BY-NC-SA (or -ND; MTG's own pages disagree). Everything needed is DSP.
@@ -19,10 +24,14 @@
 - Build ffmpeg (or select a build) with `--disable-gpl --disable-nonfree`. Distro builds are usually `--enable-gpl`, which makes the *binary* GPL.
 - Every response carries `analysis_version`. Bump it to force reprocessing; never delete rows to force it.
 - The handler must be **idempotent** — Cloudflare Queues is at-least-once.
+- **`max_instances` errors, it does not queue.** Default 20. A request that would exceed it fails rather than waiting, so the queue consumer's `max_concurrency` must be set *below* `max_instances`, not equal to it. Worse: **the limit is not enforced in local dev**, so `wrangler dev` will never reproduce that failure. It is a production-only failure mode and has to be reasoned about, not tested into existence.
+- **The 30 s Worker CPU limit is not a problem here, and nobody should panic about it.** A queue consumer invocation may run 15 minutes of wall clock; the separate 30 s ceiling is *CPU* time (raisable to 5 min via `limits.cpu_ms`). The ~35 s job is entirely I/O-wait from the consumer's point of view — it is waiting on the container — so it costs ~0 ms of Worker CPU. Wide margin on both.
 
 ## Measured budget this plan must hit
 
-Apple M1, 6:00 44.1 kHz stereo. x86 Cloud Run ≈ 1.75×.
+Apple M1, 6:00 44.1 kHz stereo. **x86 derate ≈ 1.75×**, so the ~20 s below is the **~35 s of billed vCPU** every cost figure in this plan is built on.
+
+These numbers were and must continue to be measured **natively on the M1**. Cloudflare Containers is `linux/amd64` only, so the deployed image is cross-built and can only be run locally under QEMU, where timings are meaningless. The M1 numbers are therefore the *relative* truth — stage against stage, one thread against eight, ONNX against PyTorch — and the absolute figures get re-measured once deployed (Task 8, Step 6).
 
 | Stage | CPU | Peak RSS |
 |---|---|---|
@@ -39,6 +48,57 @@ Apple M1, 6:00 44.1 kHz stereo. x86 Cloud Run ≈ 1.75×.
 | **Total** | **~20 s** | **~1 GB** |
 
 **Beat This! is 65% of the budget.** Task 2 exists to attack that before anything else is built on it.
+
+---
+
+## Cost
+
+Cloudflare Containers went GA on **13 April 2026** and is available on the **Workers Paid** plan — $5/month, already being paid for this project. The Free plan gets no Containers at all.
+
+**The billing is asymmetric, and that asymmetry drives every decision in this plan.** CPU is billed on *active* usage, metered per 10 ms. Memory and disk are billed on *provisioned* resources for the whole time the instance is **awake**. Charges begin when a request is sent (or the instance is started by hand) and stop when it sleeps. So: **wall-clock time is the memory meter, CPU-seconds are the CPU meter.**
+
+| Resource | Rate beyond the allowance | Included per month |
+|---|---|---|
+| Memory | $0.0000025 / GiB-s | 25 GiB-hours = 90,000 GiB-s |
+| CPU | $0.000020 / vCPU-s | 375 vCPU-minutes = 22,500 vCPU-s |
+| Disk | $0.00000007 / GB-s | 200 GB-hours = 720,000 GB-s |
+
+Per track, at `1 vCPU / 3 GiB / 6 GB`: **35 vCPU-s** of CPU and **35 s awake**.
+
+### Backfill — 2,000 tracks, once
+
+Fed from the queue back to back, so the instances stay warm and the `sleepAfter` tails are paid once per burst rather than once per track.
+
+| Line | Consumed | Less allowance | Billable | Cost |
+|---|---|---|---|---|
+| CPU | 2,000 × 35 = 70,000 vCPU-s | −22,500 | 47,500 | **$0.95** |
+| Memory | 3 GiB × 70,000 s = 210,000 GiB-s | −90,000 | 120,000 | **$0.30** |
+| Disk | 6 GB × 70,000 s = 420,000 GB-s | −720,000 | 0 | **$0.00** |
+| `sleepAfter` idle tails | ~4,000 s awake × 3 GiB | — | 12,000 GiB-s | **$0.03** |
+| | | | **Total** | **$1.28** |
+
+That $0.30 memory line is the *entire* memory bill for the backfill, ~50% overpay from the 3 GiB-per-vCPU floor included. Arguing the instance down to 2 GiB — which the platform will not allow anyway — would save under twenty cents.
+
+### Steady state — 200 tracks/month
+
+| Line | Consumed | Allowance | Cost |
+|---|---|---|---|
+| CPU | 200 × 35 = 7,000 vCPU-s | 22,500 | **$0.00** |
+| Memory | 3 GiB × 200 × (35 + 30) s = 39,000 GiB-s | 90,000 | **$0.00** |
+| Disk | 6 GB × 13,000 s = 78,000 GB-s | 720,000 | **$0.00** |
+| | | **Total** | **$0.00** |
+
+Worst case assumed: every track arrives alone, wakes an instance on its own and pays a full 30 s `sleepAfter` tail — 13,000 s awake, about 3.6 instance-hours against the 8.3 that 25 GiB-hours buys at 3 GiB. Even then it is 43% of the memory allowance and 31% of the CPU allowance.
+
+**Now leave `sleepAfter` at its 10-minute default and re-run the same month:** 200 × (35 + 600) = 127,000 s awake → 381,000 GiB-s = 106 GiB-hours against 25 included → **$0.73/month for doing exactly the same work**, and the disk line stops being free as well (762,000 GB-s against 720,000). One config line is the difference between free and not.
+
+### Why not Railway
+
+Railway floors at **$5/month at zero traffic**, because the service is resident whether or not anything is happening. Its per-vCPU-second rate is 2.6× better than Cloudflare's, which would matter if the machine were busy — but the duty cycle here is **0.27%** (7,000 s of work in a 2.6 M-second month), so idle memory dominates and the better CPU rate never gets to pay for itself. Cross-over is around **30,000 tracks/month — 150× current volume**. There is a second, non-financial reason: the audio already lives in R2, so a container on Cloudflare reaches it through a binding with no credentials at all, where Railway (or anything else off-network) needs an S3 access key provisioned, stored and rotated.
+
+### Image storage is the one cap that bites
+
+**50 GB total image storage per account.** ONNX (~300 MB/image) gives roughly **160 deploys** before it fills; PyTorch (~2.5 GB/image) gives roughly **20**. Past that you must `wrangler containers images delete`, and deleting an image **breaks Worker rollbacks to any version that used it**. This is an independent second reason to prefer ONNX in Task 2, on top of cold start.
 
 ---
 
@@ -60,8 +120,11 @@ Apple M1, 6:00 44.1 kHz stereo. x86 Cloud Run ≈ 1.75×.
 | `worker/app/tags.py` | embedded tags + cover art |
 | `worker/tests/…` | pytest, one file per module |
 | `worker/bench/benchmark.py` | Task 2's harness — kept, not deleted |
-| `src/workers/analyze-consumer.ts` | Cloudflare Queue consumer: presign, call, persist |
+| `workers/analysis/src/index.ts` | Queue consumer + the `AnalysisContainer` Durable Object: read R2, call the container, persist |
+| `workers/analysis/wrangler.jsonc` | Route-less Worker: container, DO binding + migration, R2 binding, queue consumer |
 | `supabase/migrations/…_analysis.sql` | `audio_analysis`, `fingerprints`, `ingest_jobs` |
+
+> **Where the consumer lives.** M2's Decisions section established `workers/maintenance/` as the home for route-less Workers, and said so about this milestone explicitly: *"M3 Task 9 puts its queue consumer at `src/workers/analyze-consumer.ts` and hits the same wall; `workers/maintenance/` is where it should land too."* The wall is that `@astrojs/cloudflare` owns the main Worker's entrypoint, so a `queue` or `scheduled` export means maintaining a shim around adapter internals. This plan follows that decision: the consumer is a second route-less Worker at **`workers/analysis/`**, a sibling of `workers/maintenance/`, deployed by its own `deploy:analysis` script. It is separate from `workers/maintenance/` rather than folded into it because it carries a container, a Durable Object and a migration, and it should be able to roll back independently of the crons.
 
 ---
 
@@ -82,9 +145,16 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 class AnalyzeRequest(BaseModel):
+    """Metadata only. The audio bytes arrive out of band, via PUT /file/{file_id}.
+
+    There is no `get_url` and no `put_prefix_url`. The Durable Object in front of
+    this container holds the R2 binding and streams the bytes in; derived
+    artifacts are pulled back out over GET /artifact/… and written to R2 by the
+    DO. See Task 9 for why a binding beats a presigned URL now that we are on
+    Cloudflare: the presigned URL was itself a credential, and this design has
+    none anywhere.
+    """
     file_id: str
-    get_url: str                      # presigned R2 GET, short TTL
-    put_prefix_url: Optional[str] = None   # presigned PUT base for derived artifacts
     container_hint: Optional[str] = None
     analysis_version: str
 
@@ -223,6 +293,10 @@ git commit -m "feat(worker): analysis request/response contract"
 
 **This is deliberately the first real task.** 65% of the compute budget and most of the container size ride on the answer. Building the pipeline first and optimising later would mean rebuilding it.
 
+**Run this benchmark natively on the M1.** Cloudflare Containers is `linux/amd64` only, so the shipped image is cross-built and can only run locally under QEMU emulation, where timings are worthless. What this task decides is a *relative* question — is ONNX faster than PyTorch, and does it produce the same beats — and relative answers survive the architecture change. The absolute seconds get re-measured on the deployed container in Task 8, Step 6.
+
+**Image size is a hard decision criterion here, not a footnote.** Cloudflare caps **total image storage at 50 GB per account**. At ~300 MB an ONNX image gives roughly 160 deploys before the cap; at ~2.5 GB a PyTorch image gives roughly 20. Once full you must `wrangler containers images delete`, and deleting an image **breaks Worker rollbacks to every version that used it** — so the cap does not just cost disk, it costs the ability to roll back. That is a second, independent reason to prefer ONNX, on top of cold start.
+
 **Files:**
 - Create: `worker/bench/benchmark.py`, `worker/bench/README.md`, `worker/bench/export_onnx.py`
 
@@ -311,7 +385,7 @@ if __name__ == '__main__':
 
 Run: `cd worker/bench && python make_fixtures.py && python benchmark.py`
 
-Expected, matching the measurements already taken on M1 (x86 will be slower — record what you actually get):
+Expected, matching the measurements already taken on M1 — run it natively, **not** inside the cross-built amd64 image (x86 will be ~1.75× slower in production; record what you actually get here):
 ```
 torch load=0.34s
   fixtures/beat128.wav: cpu=13.26s wall=13.19s rss=944MB beats=769 lsq=128.000 median=130.43
@@ -366,16 +440,24 @@ def bench_onnx(spects):
 
 Run both and record a table in `worker/bench/README.md`:
 
-| Runtime | CPU/track | Peak RSS | Image size | Beat count matches torch? |
-|---|---|---|---|---|
-| PyTorch eager, 1 thread | | | | baseline |
-| ONNX Runtime, 1 thread | | | | must be identical |
+| Runtime | CPU/track (M1) | Peak RSS | amd64 image size | Deploys before the 50 GB cap | Beat count matches torch? |
+|---|---|---|---|---|---|
+| PyTorch eager, 1 thread | | | | | baseline |
+| ONNX Runtime, 1 thread | | | | | must be identical |
+
+Measure the image size on the **cross-built** image (`docker buildx build --platform linux/amd64`), not the native arm64 one — the wheels differ and so does the size. Do not time anything from that image.
 
 - [ ] **Step 6: Decide and record**
 
-Adopt ONNX **only if** the beat arrays are identical to PyTorch's (allow ±1 frame on the boundary) — a faster wrong answer is worthless. Write the decision and the numbers into `worker/bench/README.md` with the date and machine.
+Adopt ONNX **only if** the beat arrays are identical to PyTorch's (allow ±1 frame on the boundary) — a faster wrong answer is worthless. Given identical output, ONNX wins on three counts and the deciding one is not speed:
 
-If ONNX export fails (Beat This! uses rotary embeddings, which occasionally resist `torch.onnx.export`), **do not sink more than a day into it.** Fall back to PyTorch, note it in the README, and record the cost: a ~2.5 GB image, slower Cloud Run cold starts, and ~13 s/track instead of a possible ~5–8 s. The pipeline still fits comfortably inside the free tier either way — this is an optimisation, not a blocker.
+1. **Rollback headroom** — ~160 deploys inside the 50 GB image cap versus ~20, and a full cap means deleting images, which breaks rollback to the versions that used them.
+2. **Cold start** — a 300 MB image pulls and boots far faster than 2.5 GB, and with `sleepAfter = "30s"` cold starts are a routine event, not a rare one.
+3. **CPU** — a possible ~5–8 s/track against ~13 s, which is roughly a third off the whole per-track bill.
+
+Write the decision and the numbers into `worker/bench/README.md` with the date and machine.
+
+If ONNX export fails (Beat This! uses rotary embeddings, which occasionally resist `torch.onnx.export`), **do not sink more than a day into it.** Fall back to PyTorch, note it in the README, and record the cost: a ~2.5 GB image, ~20 deploys before manual image deletion is forced, slower cold starts, and ~13 s/track instead of a possible ~5–8 s. Cost-wise the pipeline still lands near $1.28 for the backfill and $0.00/month steady state either way — this is an optimisation and a rollback-hygiene decision, not a blocker.
 
 - [ ] **Step 7: Commit**
 
@@ -1217,16 +1299,27 @@ git commit -m "feat(worker): quality forensics — cutoff, ancestor, tier, upgra
 
 ---
 
-### Task 8: Container and Cloud Run
+### Task 8: Container image and Cloudflare Containers
 
 **Files:**
-- Create: `worker/Dockerfile`, `worker/.dockerignore`, `worker/app/main.py`, `worker/deploy.sh`
+- Create: `worker/Dockerfile`, `worker/.dockerignore`, `worker/app/main.py`
+- Create: `workers/analysis/wrangler.jsonc`, `workers/analysis/src/index.ts` (the DO wrapper; Task 9 adds the `queue` handler to the same file)
+- Modify: `package.json` (a `deploy:analysis` script — `npm run deploy` deploys the *app* Worker and must not start deploying three Workers by surprise)
+
+**The shape of it.** A Cloudflare container is fronted by a **Durable Object**. The DO is the only thing that can talk to it, the Worker gets to the DO through a binding, and the DO is where the R2 binding lives. Nothing in this task is reachable from the internet: the Worker is route-less, and the container's port is only visible to its own DO.
 
 - [ ] **Step 1: Write the Dockerfile**
 
+Two things change from a normal Dockerfile. The base image is pinned to `linux/amd64` (Cloudflare Containers runs nothing else), and the thread-pool pins are load-bearing for cost, not tuning.
+
 ```dockerfile
 # worker/Dockerfile
-FROM python:3.12-slim AS base
+# amd64 is not a preference — Cloudflare Containers runs linux/amd64 only.
+# Pinning it in the FROM line makes a cross-build on the M1 explicit rather
+# than accidental, and it is also the *lucky* architecture here: onnxruntime,
+# numpy and Essentia all ship mature manylinux x86_64 wheels, where arm64 is
+# patchy.
+FROM --platform=linux/amd64 python:3.12-slim AS base
 
 # ffmpeg: LGPL-only. Distro builds are usually --enable-gpl, which makes the
 # BINARY gpl even though the filters we use are LGPL. chromaprint gives fpcalc.
@@ -1253,39 +1346,93 @@ ENV OMP_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     ORT_INTRA_OP_NUM_THREADS=1
-# Threading costs MORE on Cloud Run: measured 13.2s CPU at 1 thread vs 19.5s at
-# 8 for identical work, and vCPU-seconds are what gets billed.
+# MANDATORY, not tuning. The cgroup gives this container 1 vCPU, but ONNX
+# Runtime, OpenMP and numpy all read the HOST cpu_count and will happily spawn
+# 8+ threads to fight over that one core. Measured: 13.2s CPU at 1 thread vs
+# 19.5s at 8 for identical work — and Cloudflare bills active CPU per 10ms, so
+# the extra threads are 48% more money for the same answer. The env vars alone
+# are not enough; app/beats.py must also set intra_op_num_threads=1 and
+# inter_op_num_threads=1 on the ONNX SessionOptions.
 
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
 ```
 
+`--workers 1` plus the `asyncio.Lock` in Step 2 is what holds peak RSS at `max(stage)`. If two analyses ever ran in one instance the 977 MB peak would double and blow the 3 GiB box.
+
 - [ ] **Step 2: Write the handler**
+
+Four routes instead of one, because the bytes no longer arrive by URL. The DO streams the file in, asks for the analysis, pulls the derived artifacts back out, and cleans up. **The container never holds a credential of any kind** — no presigned URL, no bearer token, no S3 key.
 
 ```python
 # worker/app/main.py
-import os, tempfile, time, httpx
-from fastapi import FastAPI
+import asyncio, os, shutil, time
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from .models import AnalyzeRequest, AnalyzeResponse
 from . import decode, fingerprint, beats, key, loudness, peaks, forensics, tags
 
 app = FastAPI()
 MAX_DURATION_MS = 15 * 60 * 1000
+WORK = '/tmp/work'                # container disk: 6 GB, ephemeral
+
+# One analysis at a time per instance. --workers 1 already serialises uvicorn,
+# but this makes the RSS guarantee explicit: peak is max(stage) ~= 1 GB, and it
+# stays that way only if two files are never in flight together. A second
+# caller waits rather than doubling memory on a 3 GiB box.
+_lock = asyncio.Lock()
+
+def _paths(file_id: str) -> tuple[str, str]:
+    d = os.path.join(WORK, file_id)
+    return d, os.path.join(d, 'in.audio')
 
 @app.get('/healthz')
 def healthz() -> dict:
     return {'ok': True, 'version': os.environ.get('ANALYSIS_VERSION', 'dev')}
 
+@app.put('/file/{file_id}')
+async def put_file(file_id: str, request: Request) -> dict:
+    """Raw audio bytes, streamed in by the Durable Object from its R2 binding.
+
+    Streamed, not read into memory: a 15-minute FLAC is ~150 MB and buffering it
+    would eat a sixth of the instance before analysis even starts.
+    """
+    d, src = _paths(file_id)
+    os.makedirs(d, exist_ok=True)
+    n = 0
+    with open(src, 'wb') as fh:
+        async for chunk in request.stream():
+            fh.write(chunk)
+            n += len(chunk)
+    return {'ok': True, 'bytes': n}
+
+@app.delete('/file/{file_id}')
+def delete_file(file_id: str) -> dict:
+    shutil.rmtree(_paths(file_id)[0], ignore_errors=True)
+    return {'ok': True}
+
+@app.get('/artifact/{file_id}/{name}')
+def get_artifact(file_id: str, name: str) -> FileResponse:
+    """Derived artifacts — peaks, opus preview, artwork, spectrogram.
+
+    The DO pulls these and writes them to R2 through its binding. There is no
+    presigned PUT and no upload credential inside the container.
+    """
+    d, _ = _paths(file_id)
+    p = os.path.join(d, os.path.basename(name))
+    if not os.path.isfile(p):
+        raise HTTPException(404, 'no such artifact')
+    return FileResponse(p)
+
 @app.post('/analyze', response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     t0 = time.process_time()
-    with tempfile.TemporaryDirectory() as td:
-        src = os.path.join(td, 'in.audio')
-        async with httpx.AsyncClient(timeout=300) as c:
-            r = await c.get(req.get_url)
-            r.raise_for_status()
-            with open(src, 'wb') as fh:
-                fh.write(r.content)
+    async with _lock:
+        d, src = _paths(req.file_id)
+        if not os.path.isfile(src):
+            return AnalyzeResponse(
+                file_id=req.file_id, analysis_version=req.analysis_version,
+                ok=False, error='no_file: PUT /file/{id} first')
 
         try:
             info = decode.probe(src)
@@ -1323,58 +1470,171 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
                 cpu_seconds=round(time.process_time() - t0, 2))
 ```
 
-Note the handler **never raises to the caller** — it returns `ok=False` with the reason. The Cloudflare Worker decides whether that is retryable, because only the Worker knows the retry budget.
+Note the handler **never raises to the caller** — it returns `ok=False` with the reason. The queue consumer decides whether that is retryable, because only the consumer knows the retry budget.
 
-- [ ] **Step 3: Build and test locally**
+Any derived artifact (peaks JSON, opus preview, artwork, spectrogram) is written into the per-file working directory and named in the response as `peaks_key` / `preview_key` / `artwork_key` / `spectrogram_key`. The DO fetches each named artifact over `GET /artifact/…` and puts it in R2. Nothing is uploaded from inside the container.
+
+- [ ] **Step 3: Write the Durable Object wrapper**
+
+```ts
+// workers/analysis/src/index.ts
+import { Container } from '@cloudflare/containers'
+
+export class AnalysisContainer extends Container<Env> {
+  defaultPort = 8080
+
+  // 30s, NOT the 10-minute default. Memory bills for every second the instance
+  // is awake, so the default is the single easiest way to turn a $0.00 month
+  // into a ~$0.73 one for doing exactly the same work. See the Cost section.
+  sleepAfter = '30s'
+
+  envVars = { ANALYSIS_VERSION: 'v1' }
+
+  onError(e: unknown) { console.error('container error', e) }
+
+  /** Stream R2 -> container, analyse, drain artifacts back to R2, clean up.
+   *
+   * Everything credential-bearing stays on this side of the boundary. The
+   * container gets bytes and gives back JSON.
+   */
+  async analyse(fileId: string, r2Key: string, version: string): Promise<AnalyzeResponse> {
+    const obj = await this.env.AUDIO.get(r2Key)
+    if (!obj) throw new Error(`r2 miss: ${r2Key}`)
+
+    // Streamed, never buffered — a 15-minute FLAC is ~150 MB.
+    await this.containerFetch(`http://c/file/${fileId}`, {
+      method: 'PUT', body: obj.body,
+    })
+
+    try {
+      const res = await this.containerFetch(`http://c/analyze`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ file_id: fileId, analysis_version: version }),
+      })
+      if (!res.ok) throw new Error(`analyze ${res.status}`)
+      const out = await res.json<AnalyzeResponse>()
+
+      for (const key of [out.peaks_key, out.preview_key,
+                         out.artwork_key, out.forensics?.spectrogram_key]) {
+        if (!key) continue
+        const a = await this.containerFetch(`http://c/artifact/${fileId}/${key}`)
+        if (a.ok) await this.env.AUDIO.put(`derived/${fileId}/${key}`, a.body)
+      }
+      return out
+    } finally {
+      // Disk is ephemeral but the instance is reused across tracks, so a leak
+      // here fills 6 GB after ~40 files and every later run fails on write.
+      await this.containerFetch(`http://c/file/${fileId}`, { method: 'DELETE' })
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Write `workers/analysis/wrangler.jsonc`**
+
+```jsonc
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "localchune-analysis",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  // No "routes" and no "workers_dev". Nothing here is reachable from the
+  // internet — it is driven only by the queue.
+  "workers_dev": false,
+  "observability": { "enabled": true },
+
+  "containers": [{
+    "class_name": "AnalysisContainer",
+    "image": "../../worker/Dockerfile",
+    "image_build_context": "../../worker",
+    // Peak RSS is 977 MB, which wants ~2 GiB. Custom instance types enforce a
+    // MINIMUM of 3 GiB per vCPU, so 3 GiB is the cheapest legal 1-vCPU box.
+    // Do NOT "save money" by dropping to `basic` (1/4 vCPU, 1 GiB): memory is
+    // billed on PROVISIONED resources for the whole time the instance is awake,
+    // so 1/4 vCPU stretches 35 vCPU-s into ~140 s wall = 140 GiB-s, worse than
+    // 3 GiB x 35 s = 105 GiB-s here, and four times slower. Fractional vCPUs
+    // are strictly dominated for this workload.
+    "instance_type": { "vcpu": 1, "memory_mib": 3072, "disk_mb": 6000 },
+    // max_instances ERRORS when exceeded, it does not queue. Kept above the
+    // consumer's max_concurrency (4, Task 9) so a burst never trips it, and low
+    // enough that a runaway loop is bounded. NOT enforced in local dev — see
+    // Step 5.
+    "max_instances": 8
+  }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "ANALYSIS", "class_name": "AnalysisContainer" }]
+  },
+  // Container-backed DOs must use new_sqlite_classes, not new_classes.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AnalysisContainer"] }],
+
+  // The whole reason this beats an external host: no S3 access key anywhere.
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "localchune-audio" }]
+}
+```
+
+`disk_mb` is 6000 because the custom-instance rule is a **maximum of 2 GB disk per 1 GiB of memory** — 3 GiB buys at most 6 GB, and we take all of it. The working set is one audio file plus its derived artifacts, so it is never close to full; the headroom exists so a leaked working directory shows up as a slow drift rather than an immediate failure.
+
+- [ ] **Step 5: Build and smoke-test locally — and know what local dev cannot tell you**
 
 ```bash
 cd worker
-docker build -t localchune-analysis .
-docker run --rm -p 8080:8080 localchune-analysis &
-curl -s localhost:8080/healthz
-```
-Expected: `{"ok":true,"version":"dev"}`
-
-- [ ] **Step 4: Verify the measured budget holds in the container**
-
-```bash
-python -m http.server 9000 --directory bench/fixtures &
-curl -s -X POST localhost:8080/analyze -H 'content-type: application/json' \
-  -d '{"file_id":"t1","get_url":"http://host.docker.internal:9000/beat128.wav","analysis_version":"v1"}' \
-  | python -m json.tool | grep -E 'cpu_seconds|bpm|duration_ms|camelot'
+docker buildx build --platform linux/amd64 -t localchune-analysis .
 ```
 
-Expected: `bpm` ≈ 128, `duration_ms` ≈ 360000, `cpu_seconds` in the 15–40 s band. **If `cpu_seconds` exceeds 60, stop and investigate before deploying** — the whole free-tier cost model assumes ~35 s.
-
-- [ ] **Step 5: Deploy**
+The M1 builds an amd64 image under emulation. That is fine for *correctness* and for measuring image size. It is useless for *timing*: QEMU makes the numbers meaningless, so do not record a `cpu_seconds` figure from a locally run image and do not compare it to the budget. The budget check happens in Step 6, on real hardware.
 
 ```bash
-# worker/deploy.sh
-gcloud artifacts repositories create localchune --repository-format=docker --location=us-central1 || true
-gcloud builds submit --tag us-central1-docker.pkg.dev/$PROJECT/localchune/analysis:$(git rev-parse --short HEAD)
-gcloud run deploy localchune-analysis \
-  --image us-central1-docker.pkg.dev/$PROJECT/localchune/analysis:$(git rev-parse --short HEAD) \
-  --region us-central1 \
-  --cpu 1 --memory 2Gi \
-  --concurrency 1 \
-  --max-instances 8 \
-  --min-instances 0 \
-  --timeout 900 \
-  --no-allow-unauthenticated \
-  --set-env-vars ANALYSIS_VERSION=v1
+cd workers/analysis
+npx wrangler dev
 ```
 
-`--cpu 1 --concurrency 1` is deliberate and cost-driven, not conservatism. `--max-instances 8` bounds a runaway loop; without it a bug is unbounded spend.
+**Two things `wrangler dev` will not reproduce:**
+- `max_instances` **is not enforced in local dev**, so the "too many concurrent containers" error is a production-only failure. It cannot be tested here; it has to be designed around (`max_concurrency` < `max_instances`, Task 9).
+- Container code is not hot-reloaded the way Worker code is — a Python change needs the image rebuilt.
 
-- [ ] **Step 6: Set a budget alert**
-
-Cloud Run has no free-tier spend cap by default. In the GCP console set a billing budget alert at $5 before sending real traffic.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Deploy, then verify the measured budget on real hardware**
 
 ```bash
-git add worker/Dockerfile worker/app/main.py worker/deploy.sh
-git commit -m "feat(worker): container + cloud run deploy, 1vcpu/2gib/concurrency1"
+cd workers/analysis
+npx wrangler containers build --platform linux/amd64 --push   # optional pre-check
+npx wrangler deploy                                            # builds, pushes, deploys
+npx wrangler containers list                                   # deployment status
+```
+
+`wrangler deploy` builds the image, pushes it, and deploys the Worker in one step; the explicit `containers build` is only worth running when you want the build to fail fast before touching production. **After the first deploy, wait several minutes** — unlike Workers, containers take time to provision, and until they do, calls to the container error while the Worker itself is up.
+
+Add to `package.json` so `npm run deploy` keeps meaning "deploy the app Worker":
+
+```json
+"deploy:analysis": "wrangler deploy --config workers/analysis/wrangler.jsonc"
+```
+
+Then send one fixture through the deployed container and read the real numbers:
+
+```bash
+npx wrangler tail localchune-analysis --format pretty
+# in another shell: enqueue one message for a known fixture (Task 9, Step 5)
+```
+
+Expected: `bpm` ≈ 128, `duration_ms` ≈ 360000, and `cpu_seconds` **in the 15–40 s band**. This is the first honest absolute measurement in the whole plan — everything before it was M1-native or QEMU. **If `cpu_seconds` exceeds 60, stop and revisit the Cost section before starting the backfill**; every figure there assumes ~35 s.
+
+- [ ] **Step 7: Set the spend alert**
+
+There is no per-service spend cap. In the Cloudflare dashboard, go to **Manage Account → Billing → Notifications** and add a **billing usage / spend alert at $5** before sending real traffic. Then set up the two container-side alerts that actually catch the failure modes:
+
+- **Workers & Pages → localchune-analysis → Metrics** — watch container **instance-hours**. At 3 GiB the 25 GiB-hour allowance is **8.3 instance-hours/month**. The backfill should total ~20.5 instance-hours (one-off); steady state should sit near 3.6 hours/month. If a normal month approaches 8 hours, `sleepAfter` is not doing its job — check it is `"30s"` and not the 10-minute default.
+- A notification on Worker **error rate**, which is where `max_instances` exhaustion surfaces — it errors rather than queuing, and local dev never showed it to you.
+
+`max_instances: 8` is what bounds a runaway loop. Without it a bug is unbounded spend, exactly as it would be anywhere else.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add worker/Dockerfile worker/.dockerignore worker/app/main.py \
+        workers/analysis package.json
+git commit -m "feat(worker): amd64 image + cloudflare container, 1vcpu/3gib/sleepafter-30s"
 ```
 
 ---
@@ -1382,12 +1642,34 @@ git commit -m "feat(worker): container + cloud run deploy, 1vcpu/2gib/concurrenc
 ### Task 9: Queue consumer
 
 **Files:**
-- Create: `src/workers/analyze-consumer.ts`, `supabase/migrations/…_analysis.sql`
-- Modify: `wrangler.jsonc`
+- Create: `supabase/migrations/…_analysis.sql`
+- Modify: `workers/analysis/src/index.ts` (add the `queue` and `scheduled` handlers next to the DO class from Task 8)
+- Modify: `workers/analysis/wrangler.jsonc` (queue consumer + cron), `wrangler.jsonc` (the app Worker keeps only the queue *producer*)
 
 **Interfaces:**
-- Consumes: `AnalyzeResponse` from Task 1.
+- Consumes: `AnalyzeResponse` from Task 1; the `AnalysisContainer` DO from Task 8.
 - Produces: rows in `audio_analysis` and `fingerprints`; `files.state` transitions.
+
+#### Where this lives, and why not `src/workers/`
+
+M2's Decisions section already settled this: `@astrojs/cloudflare` owns the main Worker's entrypoint, so a `queue` export on the app Worker means maintaining a shim around adapter internals. M2 created `workers/maintenance/` as the home for route-less Workers and named this task specifically — *"M3 Task 9 puts its queue consumer at `src/workers/analyze-consumer.ts` and hits the same wall; `workers/maintenance/` is where it should land too."* So the consumer goes in **`workers/analysis/`**, alongside `workers/maintenance/` rather than at `src/workers/`. It is its own Worker rather than a third handler inside `workers/maintenance/` because it owns a container, a Durable Object and a DO migration, and must be able to roll back without dragging the crons with it.
+
+#### R2: binding, not presigned URL
+
+The original design handed the analysis container a **presigned GET URL** and gave it no long-lived credentials. That was a deliberate property and it is worth being precise about what it bought: a failed or hostile run could not mutate anything, and the blast radius of a leaked container was one file for thirty minutes.
+
+On Cloudflare that property gets **strictly better**, not merely preserved:
+
+| | Presigned URL | R2 binding |
+|---|---|---|
+| Credential inside the container | a scoped, time-limited one | **none** |
+| Credential inside the Worker | `R2_ACCESS_KEY_ID` + secret, to sign with | **none** — the binding is the grant |
+| Secrets to provision and rotate | 2 | **0** |
+| Egress | R2 public endpoint, over the internet | in-network |
+
+A presigned URL *is* a credential; it is just a short one. Signing it requires an R2 access key living in the Worker's secret store forever, which is exactly the thing that has to be rotated and audited. With a binding there is no key at either end — the DO reads the object and streams the bytes into the container, and writes derived artifacts back the same way. **Use the binding.** The `AnalyzeRequest` fields `get_url` and `put_prefix_url` are deleted from the contract in Task 1.
+
+Two alternatives were considered and rejected. Mounting the R2 bucket into the container as a FUSE volume works, but it means adding an s3fs-class dependency to an image whose licensing we have to audit line by line (PRD §7.3), to solve a problem the DO already solves in four lines. And keeping the presigned URL "because it already works" re-imports an S3 access key for no benefit now that the files and the compute are on the same network. If the DO streaming path ever proves unworkable, the presigned URL is the fallback — and the cost of that fallback is precisely one more secret to rotate.
 
 - [ ] **Step 1: Write the migration**
 
@@ -1427,41 +1709,32 @@ create index audio_analysis_track_idx on public.audio_analysis (quality_score de
 
 - [ ] **Step 2: Write the consumer**
 
+No `fetch` to an external host, no bearer token, no `aws4fetch`. The consumer gets a **DO stub** and calls a method on it.
+
 ```ts
-// src/workers/analyze-consumer.ts
-import { AwsClient } from 'aws4fetch'
+// workers/analysis/src/index.ts  (alongside the AnalysisContainer class)
+import { getRandom } from '@cloudflare/containers'
 
 interface Msg { file_id: string; r2_key: string; analysis_version: string }
 
+// Spread work over a small pool rather than one instance per file. Per-file
+// instances would be cleaner to reason about but would pay a cold start AND a
+// full 30s sleepAfter tail on every single track — which is the difference
+// between $1.28 and ~$1.70 on the backfill. Idempotency does not depend on
+// instance affinity: it is enforced by the (file_id, analysis_version) unique
+// key in Postgres. The container's own asyncio.Lock (Task 8) means a pool
+// collision serialises instead of doubling RSS.
+const POOL = 4
+
 export default {
   async queue(batch: MessageBatch<Msg>, env: Env): Promise<void> {
-    const aws = new AwsClient({
-      accessKeyId: env.R2_ACCESS_KEY_ID,
-      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-      service: 's3', region: 'auto',
-    })
-
     for (const m of batch.messages) {
       try {
-        const url = `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${env.R2_BUCKET}/${m.body.r2_key}?X-Amz-Expires=1800`
-        const signed = await aws.sign(new Request(url, { method: 'GET' }), {
-          aws: { signQuery: true },
-        })
+        const stub = await getRandom(env.ANALYSIS, POOL)
+        const r = await stub.analyse(
+          m.body.file_id, m.body.r2_key, m.body.analysis_version)
 
-        const res = await fetch(`${env.ANALYSIS_URL}/analyze`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${await mintGoogleIdToken(env)}`,
-          },
-          body: JSON.stringify({
-            file_id: m.body.file_id,
-            get_url: signed.url,
-            analysis_version: m.body.analysis_version,
-          }),
-        })
-        if (!res.ok) throw new Error(`analysis ${res.status}`)
-        const r = await res.json<AnalyzeResponse>()
+        if (!r.ok) throw new Error(r.error ?? 'analysis failed')
 
         // Idempotent by (file_id, analysis_version). Queues is at-least-once.
         await persist(env, r)
@@ -1474,17 +1747,32 @@ export default {
 }
 ```
 
-- [ ] **Step 3: Wire the queue into `wrangler.jsonc`**
+**The 30 s CPU limit is not the constraint people assume it is.** A queue consumer invocation gets 15 minutes of wall clock; the 30 s figure is *CPU* time. From this consumer's point of view the ~35 s job is entirely I/O-wait on the DO, which costs ~0 ms of Worker CPU, so both limits have wide margin. Do not raise `limits.cpu_ms` to "be safe" — if this Worker is ever near 30 s of CPU, something is deserialising audio in the Worker and that is the bug.
+
+- [ ] **Step 3: Wire the queues**
+
+In `workers/analysis/wrangler.jsonc`, the **consumer**:
 
 ```jsonc
 "queues": {
-  "producers": [{ "queue": "localchune-analyze", "binding": "ANALYZE_QUEUE" }],
   "consumers": [{
     "queue": "localchune-analyze",
     "max_batch_size": 1,
+    // Below max_instances (8, Task 8). max_instances ERRORS rather than
+    // queueing, and the limit is NOT enforced in local dev — so `wrangler dev`
+    // will never show you this failure. The margin is the design.
+    "max_concurrency": 4,
     "max_retries": 5,
     "dead_letter_queue": "localchune-analyze-dlq"
   }]
+}
+```
+
+In the app's root `wrangler.jsonc`, only the **producer** — the Astro Worker enqueues, it does not consume:
+
+```jsonc
+"queues": {
+  "producers": [{ "queue": "localchune-analyze", "binding": "ANALYZE_QUEUE" }]
 }
 ```
 
@@ -1492,7 +1780,7 @@ export default {
 
 - [ ] **Step 4: Add the stuck-job cron**
 
-Free-plan Queues retention is **24 hours and non-configurable**, so the queue cannot be the system of record. `files.state` is. This cron makes the pipeline self-healing and turns the retention limit into a non-issue.
+The queue is not the system of record and must never become one — its retention is finite whatever the plan says, and a message that dies in the DLQ leaves a file stranded in `analysing` forever. `files.state` is the record. This cron makes the pipeline self-healing and turns queue retention into a non-issue. It lives in the same `workers/analysis/` Worker, so add a `triggers.crons` entry to `workers/analysis/wrangler.jsonc`.
 
 ```ts
 export async function scheduled(_ev: ScheduledController, env: Env) {
@@ -1512,12 +1800,15 @@ export async function scheduled(_ev: ScheduledController, env: Env) {
 2. Confirm an `audio_analysis` row appears within ~2 minutes
 3. **Send the same queue message twice by hand and confirm exactly one row exists** — this is the at-least-once assertion
 4. Point a message at a deleted R2 key and confirm it lands in the DLQ after 5 attempts rather than looping
+5. Confirm the derived artifacts landed under `derived/<file_id>/…` in R2 — that is the proof the DO wrote them through the binding and the container uploaded nothing itself
+6. Read `cpu_seconds` off the deployed run and check it against the 15–40 s band (Task 8, Step 6). This is the first absolute timing the plan has; every earlier number was M1-native
+7. Wait ~2 minutes after the last message and confirm in **Metrics** that container instances have gone to sleep. If they have not, `sleepAfter` is wrong and the steady-state cost is not $0.00
 
 - [ ] **Step 6: Commit and PR**
 
 ```bash
-git add src/workers supabase/migrations wrangler.jsonc
-git commit -m "feat: queue consumer, analysis persistence, stuck-job cron"
+git add workers/analysis supabase/migrations wrangler.jsonc package.json
+git commit -m "feat: queue consumer via container DO, analysis persistence, stuck-job cron"
 git push -u origin rohan/m3-analysis
 gh pr create --title "M3: analysis worker" --fill
 gh pr list --state open
@@ -1528,8 +1819,14 @@ gh pr list --state open
 ## Done when
 
 - One uploaded file produces a complete `audio_analysis` row.
-- `cpu_seconds` is in the 15–40 s band on Cloud Run. If not, the cost model is wrong and needs revisiting before backfill.
+- `cpu_seconds` is in the 15–40 s band **measured on the deployed container**, not on the M1 and not under QEMU. If not, the Cost section is wrong and needs revisiting before the backfill.
 - BPM on the fixtures is exact via least-squares, and demonstrably better than median-IBI.
 - A fake FLAC (a 128 kbps MP3 re-encoded to FLAC) gets `tier = 1`, not 5.
 - Replaying a queue message creates no second row.
-- A budget alert exists in GCP.
+- The container's instance type is `1 vCPU / 3072 MiB / 6000 MB` and `sleepAfter` is `"30s"`, not the 10-minute default.
+- Container instances are observably asleep within ~1 minute of the queue draining, and a normal month's instance-hours sit well under the 8.3 h that the 25 GiB-hour allowance buys at 3 GiB.
+- No `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` or bearer token exists anywhere in M3 — R2 is reached only through the `AUDIO` binding, and the container holds no credential at all.
+- The queue consumer's `max_concurrency` is strictly below the container's `max_instances`. (This cannot be verified in local dev; `max_instances` is not enforced there.)
+- The consumer lives at `workers/analysis/`, next to `workers/maintenance/` — not at `src/workers/`.
+- A $5 spend alert exists in the Cloudflare dashboard, plus an error-rate notification on `localchune-analysis`.
+- The image is under ~300 MB (ONNX) so the 50 GB account image cap leaves room for ~160 deploys and rollbacks stay intact. If PyTorch was kept, the ~20-deploy ceiling is written down in `worker/bench/README.md` as a known operational cost.

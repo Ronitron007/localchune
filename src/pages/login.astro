@@ -1,0 +1,26 @@
+---
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+const error = Astro.url.searchParams.get('error_description')
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>localchune</title>
+</head>
+<body>
+  <h1>localchune</h1>
+  {error && <p role="alert" style="color:#c00">{error}</p>}
+  <button id="in">Sign in with Google</button>
+  <script>
+    import { browserClient } from '../lib/supabase'
+    document.getElementById('in')!.addEventListener('click', () => {
+      browserClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: `${location.origin}/auth/callback` },
+      })
+    })
+  </script>
+</body></html>

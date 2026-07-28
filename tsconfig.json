@@ -1,0 +1,12 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types"],
+    // AllowlistForm.tsx (Task 6) is the project's first .tsx file. Without
+    // this, tsc/astro check cannot resolve JSX.IntrinsicElements for Solid
+    // components ("no interface 'JSX.IntrinsicElements' exists").
+    "jsxImportSource": "solid-js"
+  },
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist"]
+}

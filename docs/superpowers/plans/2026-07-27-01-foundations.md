@@ -249,6 +249,18 @@ git commit -m "feat: email normalisation — gmail dot/plus folding"
 **Interfaces:**
 - Produces: tables `allowlist`, `members`, `credit_grants`; function `public.grant_days(uuid, int, text, text) returns timestamptz`. Task 4's trigger calls `grant_days`. Task 6's admin API inserts into `allowlist`.
 
+- [ ] **Step 0: Enable pgTAP**
+
+Tasks 3, 4 and 6 all write pgTAP assertions (`plan()`, `is()`, `ok()`, `throws_ok()`). Nothing enables the extension by default, and `supabase test db` fails with `function plan(integer) does not exist` without it.
+
+Create `supabase/migrations/20260727115900_00_pgtap.sql`:
+
+```sql
+create extension if not exists pgtap with schema extensions;
+```
+
+Keep it in its own migration ordered before the schema, so a `db reset` always has the test harness available before any test runs.
+
 - [ ] **Step 1: Write the migration**
 
 ```sql
@@ -358,6 +370,27 @@ end $$;
 
 revoke execute on function public.grant_days(uuid,int,text,text) from public, anon, authenticated;
 grant  execute on function public.grant_days(uuid,int,text,text) to service_role;
+
+-- ============================================================
+-- BASE TABLE GRANTS — without these, every RLS policy above is
+-- dead code.
+-- ============================================================
+-- RLS filters rows only AFTER Postgres' table-level ACL check passes.
+-- Supabase's current default (`auto_expose_new_tables` unset, matching the
+-- cloud default) gives anon/authenticated/service_role only Dxtm on new
+-- tables — no SELECT/INSERT/UPDATE/DELETE. So a policy without a matching
+-- GRANT never runs: the query fails with "permission denied for table".
+--
+-- And service_role's BYPASSRLS does NOT rescue this. BYPASSRLS skips row
+-- filtering; it does not skip the ACL. A service-role write to a table with
+-- no INSERT grant fails outright.
+grant select on public.members, public.credit_grants to authenticated;
+grant select, insert, update, delete
+   on public.allowlist, public.members, public.credit_grants to service_role;
+
+-- allowlist is deliberately NOT granted to authenticated: it has zero
+-- policies for that role, so it stays invisible to clients. Owners reach it
+-- only through the security definer functions in Task 6.
 ```
 
 - [ ] **Step 2: Apply it locally**
@@ -402,6 +435,57 @@ rollback;
 
 Run: `npx supabase test db`
 Expected: 4 tests pass. **The second and third assertions are the point** — they prove a double-fire cannot double-grant.
+
+- [ ] **Step 4b: Prove the RLS policies are actually reachable**
+
+Every assertion above calls `grant_days()`, which is `security definer` and therefore immune to the base-ACL problem. That means the suite above would still pass with every table grant missing and all three read policies dead. Test the role-based paths explicitly.
+
+Create `supabase/tests/rls_reachable.sql`:
+
+```sql
+begin;
+select plan(6);
+
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
+  ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
+insert into public.members (user_id, email) values
+  ('00000000-0000-0000-0000-0000000000c1','m1@gmail.com'),
+  ('00000000-0000-0000-0000-0000000000c2','m2@gmail.com');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000c1"}';
+
+-- If the base GRANT is missing these raise 42501 "permission denied for
+-- table", NOT an empty result. lives_ok distinguishes the two.
+select lives_ok( $$ select 1 from public.members limit 1 $$,
+                 'authenticated can reach members at all (base grant present)' );
+select is( (select count(*)::int from public.members), 1,
+           'members RLS returns exactly the caller''s own row' );
+select lives_ok( $$ select 1 from public.credit_grants limit 1 $$,
+                 'authenticated can reach credit_grants' );
+
+-- allowlist stays invisible. Note this is NOT "returns zero rows" — it has no
+-- base grant to authenticated at all, so the query is refused at the ACL
+-- before RLS runs. throws_ok is the accurate assertion; a count(*) = 0 check
+-- would never even evaluate.
+select throws_ok( $$ select 1 from public.allowlist $$, '42501',
+                  'allowlist is refused to authenticated at the ACL' );
+
+reset role;
+set local role service_role;
+select lives_ok( $$ insert into public.allowlist (email) values ('svc@gmail.com') $$,
+                 'service_role can write allowlist (BYPASSRLS does not grant ACL)' );
+select lives_ok( $$ update public.members set role = 'member'
+                     where user_id = '00000000-0000-0000-0000-0000000000c1' $$,
+                 'service_role can update members' );
+
+select * from finish();
+rollback;
+```
+
+Run: `npx supabase test db`
+Expected: 10 assertions pass across both files. **If any `lives_ok` fails with `42501 permission denied for table`, the base grants are missing** — that is the exact failure this step exists to catch, and it is invisible to a suite that only calls definer functions.
 
 - [ ] **Step 5: Commit**
 
@@ -577,7 +661,16 @@ git commit -m "feat: allowlist gate — before-user-created hook + provisioning 
 - Create: `src/pages/login.astro`, `src/pages/auth/callback.ts`, `src/pages/auth/signout.ts`, `src/pages/index.astro`
 
 **Interfaces:**
-- Produces: `type Member = { user_id: string; email: string; role: 'member'|'owner'; access_expires_at: string }`; `creditsRemaining(expiresAt: string, now?: Date): number`; `isActive(m: Member, now?: Date): boolean`; `App.Locals.member: Member | null`.
+- Produces: `type Member = { user_id: string; email: string; role: 'member'|'owner'; access_expires_at: string }`; `creditsRemaining(expiresAt: string, now?: Date): number`; `isActive(m: Member, now?: Date): boolean`; `serverClient(cookies: AstroCookies, request: Request)`; `browserClient()`; `App.Locals.member: Member | null`.
+
+> ⚠️ **The client/callback code blocks below are SUPERSEDED. As shipped, this task uses `@supabase/ssr`.** Two things in the original draft were wrong and are kept here only as a record:
+>
+> 1. **`Astro.locals.runtime.env` does not exist.** It was removed in Astro v6; the getter now throws unconditionally and the adapter's `Runtime` type no longer declares `env`. Use `import.meta.env` for `PUBLIC_` values.
+> 2. **A server-side PKCE exchange cannot work.** The `code_verifier` is generated by the browser client and stored in *localStorage*, so a server client has nothing to exchange and throws `AuthPKCECodeVerifierMissingError` before any network call — meaning **no one could ever sign in**. The fix is `@supabase/ssr`'s `createServerClient`/`createBrowserClient`, which keep the verifier and session in cookies that both sides can read. `flowType: 'implicit'` is not an alternative: tokens then arrive in the URL fragment, which the server never sees.
+>
+> There is also **no `serviceClient`** — deleted, because Vite's `envPrefix` means `import.meta.env` cannot carry a non-`PUBLIC_` secret into the bundle at all, and because admin authorisation belongs in the database (`is_owner()` inside `security definer` RPCs), not in a Worker route.
+>
+> Read `src/lib/supabase.server.ts`, `src/lib/supabase.ts` and `src/middleware.ts` for the real implementation.
 
 - [ ] **Step 1: Write the failing test for the derived-credits logic**
 
@@ -843,7 +936,7 @@ git commit -m "feat: google oauth session, middleware guard, derived credits"
 - Create: `supabase/migrations/20260727120200_03_admin_rpc.sql`
 
 **Interfaces:**
-- Consumes: `normalizeEmail` (Task 2), `serviceClient` (Task 5), `Member` (Task 5).
+- Consumes: `normalizeEmail` (Task 2), `Astro.locals.supabase` (Task 5 — the cookie-bound client middleware already built for this request; do not call `serverClient(cookies, request)` again here, see the note below), `Member` (Task 5).
 - Produces: `POST /api/admin/allowlist {email, note?}` → `201 {email}`; `DELETE /api/admin/allowlist {email}` → `200 {revoked: true}`.
 
 - [ ] **Step 1: Write the admin overview RPC**
@@ -915,15 +1008,9 @@ The `public.is_owner()` guard inside each function body is what makes `security 
 // src/pages/api/admin/allowlist.ts
 import type { APIRoute } from 'astro'
 import { normalizeEmail } from '../../../lib/email'
-import { userClient } from '../../../lib/supabase.server'
 
 /** 404, not 403 — do not confirm the route exists to a non-owner. */
 const guard = (locals: App.Locals) => locals.member?.role === 'owner'
-
-function client(locals: App.Locals) {
-  const env = (locals.runtime?.env ?? import.meta.env) as Record<string, string>
-  return userClient(env, locals.accessToken!)
-}
 
 async function readEmail(request: Request): Promise<string | null> {
   const body = (await request.json().catch(() => ({}))) as { email?: string }
@@ -938,9 +1025,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  // The caller's own token, NOT the service key: admin_invite re-checks
+  // locals.supabase — the cookie-bound client middleware already built for
+  // this request — NOT a second serverClient(cookies, request) and NOT a
+  // service key. A second client's getAll reads the original Cookie request
+  // header, so if middleware just rotated the token via a refresh, the
+  // second client sees a stale refresh token and can hit "Already Used",
+  // making this RPC run unauthenticated and silently return 0 rows. Reusing
+  // locals.supabase avoids that race. admin_invite also re-checks
   // is_owner() in the database, so authorisation is enforced in one place.
-  const { data, error } = await client(locals).rpc('admin_invite', { p_email: email })
+  const { data, error } = await locals.supabase.rpc('admin_invite', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ email: data }, { status: 201 })
 }
@@ -949,11 +1042,13 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
   if (!guard(locals)) return new Response('Not found', { status: 404 })
   const email = await readEmail(request)
   if (!email) return Response.json({ error: 'invalid email' }, { status: 400 })
-  const { error } = await client(locals).rpc('admin_revoke', { p_email: email })
+  const { error } = await locals.supabase.rpc('admin_revoke', { p_email: email })
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ revoked: true })
 }
 ```
+
+> **API note.** `locals.supabase` is the cookie-bound client middleware already built for this request — reuse it instead of calling `serverClient(cookies, request)` again (see src/middleware.ts, src/env.d.ts). There is **no `serviceClient`** — it was deleted in Task 5 because `import.meta.env` cannot deliver a non-`PUBLIC_` secret to the bundle, and because admin authorisation belongs in the database, not in a Worker route. Do not reintroduce it. `Astro.locals.runtime.env` also does not exist — it was removed in Astro v6.
 
 Revoking sets `revoked_at`; it does not delete. The member keeps their data and their uploads keep their attribution (PRD §11).
 
@@ -1005,11 +1100,12 @@ export default function AllowlistForm() {
 ---
 // src/pages/admin/index.astro
 import AllowlistForm from '../../components/AllowlistForm'
-import { userClient } from '../../lib/supabase.server'
 
-const env = (Astro.locals.runtime?.env ?? import.meta.env) as Record<string, string>
-const sb = userClient(env, Astro.locals.accessToken!)
-const { data: rows } = await sb.rpc('admin_members')
+// Astro.locals.supabase — reuse the cookie-bound client middleware already
+// built for this request, not a second serverClient(cookies, request); see
+// the API note in the allowlist API route above for why that matters.
+const { data: rows, error } = await Astro.locals.supabase.rpc('admin_members')
+if (error) console.error('admin_members failed:', error.message)
 ---
 <html><body>
   <h1>Members</h1>

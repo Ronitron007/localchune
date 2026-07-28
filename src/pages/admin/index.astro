@@ -1,0 +1,47 @@
+---
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+
+import AllowlistForm from '../../components/AllowlistForm'
+import RevokeButton from '../../components/RevokeButton'
+
+// Astro.locals.supabase — reuse the cookie-bound client middleware already
+// built for this request, not a second serverClient(cookies, request); see
+// the API note in the allowlist API route above for why that matters.
+const { data: rows, error } = await Astro.locals.supabase.rpc('admin_members')
+if (error) console.error('admin_members failed:', error.message)
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>localchune — admin</title>
+</head>
+<body>
+  <h1>Members</h1>
+  <AllowlistForm client:load />
+  <table>
+    <thead><tr><th>Email</th><th>Role</th><th>Credits</th><th>Signed up</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+      {(rows ?? []).map((r: any) => (
+        <tr>
+          <td>{r.email}</td><td>{r.role}</td>
+          <td>{r.signed_up ? r.credits : '—'}</td>
+          <td>{r.signed_up ? 'yes' : 'pending'}</td>
+          <td>{r.revoked_at ? 'revoked' : 'active'}</td>
+          <td>
+            {r.role === 'owner' ? (
+              '—'
+            ) : r.revoked_at ? (
+              'revoked'
+            ) : (
+              <RevokeButton email={r.email} client:load />
+            )}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+  <p><a href="/">← pool</a></p>
+</body></html>
