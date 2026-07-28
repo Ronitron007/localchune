@@ -3,7 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { AwsClient } from 'aws4fetch'
-import { reconcile, type DbFile, type R2ObjectRow } from './reconcile'
+import { deletablePendingObjects, reconcile, type DbFile, type R2ObjectRow } from './reconcile'
 
 /**
  * The maintenance Worker. Two crons, no fetch handler, no route, no
@@ -32,6 +32,13 @@ export interface Env {
   SUPABASE_URL: string
   SUPABASE_SERVICE_KEY: string
   RECONCILE_DELETE_ORPHANS: string
+  /** Belt-and-braces for Critical #1: delete a terminal row's surviving
+   *  object when its state is failed or abandoned — never a rejected_
+   *  state or quarantined; see reconcile.ts's STATES_SAFE_TO_AUTO_DELETE.
+   *  Off by default for the same reason RECONCILE_DELETE_ORPHANS is: a
+   *  human should see the first report or two before a cron starts
+   *  erasing evidence. */
+  RECONCILE_DELETE_PENDING: string
   /** Optional override, for manual verification runs only. e.g. "5 minutes". */
   SWEEP_OLDER_THAN?: string
 }
@@ -115,6 +122,10 @@ async function abortMultipart(env: Env, key: string, uploadId: string): Promise<
   }
 }
 
+/** The one production bucket name. Matches wrangler.jsonc's top-level
+ *  `vars.R2_BUCKET` — env.dev overrides it to `localchune-audio-dev`. */
+const PRODUCTION_BUCKET = 'localchune-audio'
+
 /**
  * The stale-upload sweeper.
  *
@@ -133,8 +144,27 @@ async function abortMultipart(env: Env, key: string, uploadId: string): Promise<
  *     tab closed leaves a complete object whose row will never be finalised.
  *     DeleteObject on a key that does not exist is a no-op, so the
  *     unconditional call costs one free request and closes that leak.
+ *
+ * Exported for a unit test on the production-bucket guard only (Important
+ * #1) — everything past that guard needs a real Supabase/R2 round trip and
+ * stays covered by the manual verification run instead.
  */
-async function sweep(env: Env): Promise<void> {
+export async function sweep(env: Env): Promise<void> {
+  // SWEEP_OLDER_THAN exists ONLY for a manual verification run (shorten the
+  // threshold, watch a handful of rows get swept). Important #1: with no
+  // env.dev block, `wrangler dev` used to default straight to the
+  // production bucket and the production Supabase project, so a "quick 5
+  // minute test" would mark every row genuinely mid-upload as abandoned and
+  // delete its object. Refuse outright rather than trust the caller to
+  // remember `--env dev`.
+  if (env.SWEEP_OLDER_THAN && env.R2_BUCKET === PRODUCTION_BUCKET) {
+    throw new Error(
+      `refusing to run: SWEEP_OLDER_THAN="${env.SWEEP_OLDER_THAN}" is set (a manual-` +
+        `verification override) but R2_BUCKET is "${PRODUCTION_BUCKET}" (production). ` +
+        'Run with --env dev against localchune-audio-dev instead.',
+    )
+  }
+
   const args: Record<string, unknown> = {}
   // Default is interval '24 hours', from the function signature. Only a
   // manual verification run overrides it.
@@ -248,9 +278,15 @@ function sample<T>(items: T[], n = 20): string {
  *     when M4 owns deletion.
  *
  *   pendingDeletion  -- a terminal row (quarantined, rejected_*, failed,
- *     abandoned) whose object is still present. Expected for a few minutes
- *     after M3 rejects a file. A count that stays high night after night
- *     means M3's delete path is broken.
+ *     abandoned) whose object is still present. complete.ts and abort.ts
+ *     reclaim failed|abandoned objects themselves on the request path (see
+ *     r2.ts's deleteObjectQuietly), so most of these should never even reach
+ *     here -- this is the safety net for whatever that delete missed.
+ *     REPORTED always; auto-DELETED, but only the failed|abandoned subset,
+ *     behind RECONCILE_DELETE_PENDING (see STATES_SAFE_TO_AUTO_DELETE).
+ *     quarantined and rejected_* are M3-owned states and are never
+ *     auto-deleted -- a count that stays high night after night there means
+ *     M3's delete path is broken.
  */
 async function reconcileBucket(env: Env): Promise<void> {
   const [rows, objects] = await Promise.all([selectFiles(env), listBucket(env)])
@@ -275,6 +311,19 @@ async function reconcileBucket(env: Env): Promise<void> {
     for (const o of drift.orphanObjects) {
       await env.AUDIO.delete(o.key)
       console.log(`reconcile: deleted orphan ${o.key} (${o.size} bytes)`)
+    }
+  }
+
+  // Critical #1's belt-and-braces: complete.ts and abort.ts now reclaim a
+  // doomed object themselves, on the request path. This is the second
+  // chance for whatever they missed (the delete itself failed, or the row
+  // went `failed`/`abandoned` some other way) — restricted to the two
+  // states nothing else in this milestone can ever revive, never
+  // rejected_*/quarantined (see STATES_SAFE_TO_AUTO_DELETE).
+  if (env.RECONCILE_DELETE_PENDING === 'true') {
+    for (const p of deletablePendingObjects(drift)) {
+      await env.AUDIO.delete(p.key)
+      console.log(`reconcile: deleted pending-deletion object ${p.key} (state=${p.state})`)
     }
   }
 }

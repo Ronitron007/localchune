@@ -88,8 +88,11 @@ grant  execute on function public.member_storage() to authenticated;
 -- per-member numbers.
 
 -- ------------------------------------------------------------
--- The one-row convenience wrapper the upload page uses. For the owner,
--- member_storage() returns everyone, so the filter matters here too.
+-- The one-row convenience wrapper /upload uses (src/pages/upload.astro).
+-- /admin renders member_storage() directly instead — the owner sees every
+-- row there, so the one-row filter would throw the rest away. For the
+-- owner, member_storage() itself still returns everyone, so the `where`
+-- filter above matters even though this wrapper only ever narrows to one.
 -- ------------------------------------------------------------
 create or replace function public.my_storage()
 returns table (

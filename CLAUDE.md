@@ -21,6 +21,31 @@
   `https://localchune.butternutcrack.com/auth/callback`, or sign-in silently
   falls back to `site_url`.
 
+## R2 bucket config
+
+Neither of these is deploy-time config — nothing in `wrangler deploy` applies
+them. They live in the repo only so they can be replayed and diffed; the
+owner runs the commands by hand against the real buckets.
+
+- CORS (`r2-cors.dev.json` / `r2-cors.prod.json`, one rule set per bucket —
+  the allowed origin differs):
+  ```
+  npx wrangler r2 bucket cors set localchune-audio      --file r2-cors.prod.json
+  npx wrangler r2 bucket cors set localchune-audio-dev  --file r2-cors.dev.json
+  npx wrangler r2 bucket cors list localchune-audio
+  npx wrangler r2 bucket cors list localchune-audio-dev
+  ```
+- Lifecycle (`r2-lifecycle.json` — one file for both buckets, the 1-day
+  `AbortIncompleteMultipartUpload` backstop is identical either way; see the
+  maintenance Worker's hourly sweeper for the primary mechanism):
+  ```
+  npx wrangler r2 bucket lifecycle set localchune-audio      --file r2-lifecycle.json
+  npx wrangler r2 bucket lifecycle set localchune-audio-dev  --file r2-lifecycle.json
+  npx wrangler r2 bucket lifecycle list localchune-audio
+  ```
+  Expected: one rule, `abortMultipartUploadsTransition` after 1 day, on
+  every prefix.
+
 ## Supabase
 
 - Changes to `auth`/`supabase/config.toml` (e.g. auth hooks) require `npx supabase stop && npx supabase start` to take effect. `npx supabase db reset` only restarts containers — it does NOT reload GoTrue's auth config.

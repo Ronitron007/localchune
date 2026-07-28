@@ -5,12 +5,19 @@
 
 import AllowlistForm from '../../components/AllowlistForm'
 import RevokeButton from '../../components/RevokeButton'
+import { formatBytes } from '../../lib/format'
 
 // Astro.locals.supabase — reuse the cookie-bound client middleware already
 // built for this request, not a second serverClient(cookies, request); see
 // the API note in the allowlist API route above for why that matters.
 const { data: rows, error } = await Astro.locals.supabase.rpc('admin_members')
 if (error) console.error('admin_members failed:', error.message)
+
+// member_storage() (migration 08) returns every member's row for the owner,
+// and only the caller's own row for anyone else — the RLS-equivalent filter
+// lives inside the function itself, not here.
+const { data: storageRows, error: storageErr } = await Astro.locals.supabase.rpc('member_storage')
+if (storageErr) console.error('member_storage failed:', storageErr.message)
 ---
 <html lang="en">
 <head>
@@ -43,5 +50,20 @@ if (error) console.error('admin_members failed:', error.message)
       ))}
     </tbody>
   </table>
+
+  <h1>Storage</h1>
+  <table>
+    <thead><tr><th>Email</th><th>Occupying</th><th>Contributed</th></tr></thead>
+    <tbody>
+      {(storageRows ?? []).map((s: any) => (
+        <tr>
+          <td>{s.member_email}</td>
+          <td>{formatBytes(s.occupying_bytes)} ({s.occupying_files} files)</td>
+          <td>{formatBytes(s.contributed_bytes)} ({s.contributed_files} files)</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+
   <p><a href="/">← pool</a></p>
 </body></html>

@@ -217,13 +217,37 @@ export async function headObject(key: string): Promise<{ size: number; etag: str
   return { size: Number(len), etag: (res.headers.get('etag') ?? '').replace(/"/g, '') }
 }
 
-/** Unused within the app Worker's routes in M2 — no route deletes an object.
- *  Exported for completeness. Task 8's maintenance Worker deletes orphans
- *  through its own R2 binding (`env.AUDIO.delete()`), not through this
- *  function — see this module's "Produces" note above for why. */
+/**
+ * Called from /api/upload/complete (size_mismatch, object_missing) and
+ * /api/upload/abort — both reclaim a key whose row is about to become
+ * `failed`. Task 8's maintenance Worker deletes orphans through its own R2
+ * binding (`env.AUDIO.delete()`) instead of this function; that is a
+ * different Worker with no access to this one's SigV4 credentials.
+ *
+ * S3 DeleteObject is idempotent — deleting a key that is not there returns
+ * 204, not 404 — so callers never need to special-case "already gone".
+ */
 export async function deleteObject(key: string): Promise<void> {
   const res = await signedFetch(objectUrl(key), { method: 'DELETE' })
   throwIfS3Error(res.status, res.status === 204 ? '' : await res.text(), 'DeleteObject')
+}
+
+/**
+ * `deleteObject`, but a failure is logged and swallowed rather than thrown.
+ *
+ * Every caller of this function is already on a failure path: the ingest row
+ * is about to move to `failed`, and the HTTP response describing that has
+ * already been decided. A DeleteObject that itself fails (R2 hiccup, expired
+ * credentials) must never change what the client sees — the object becomes
+ * tonight's `pendingDeletion` in the reconcile report instead, which is
+ * exactly the belt-and-braces path Critical #1 describes.
+ */
+export async function deleteObjectQuietly(key: string): Promise<void> {
+  try {
+    await deleteObject(key)
+  } catch (e) {
+    console.error(`deleteObjectQuietly: ${key}:`, e instanceof Error ? e.message : String(e))
+  }
 }
 
 /**

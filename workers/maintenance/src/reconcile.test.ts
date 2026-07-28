@@ -3,7 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { describe, expect, it } from 'vitest'
-import { reconcile, type DbFile, type R2ObjectRow } from './reconcile'
+import { deletablePendingObjects, reconcile, type DbFile, type R2ObjectRow } from './reconcile'
 
 const row = (key: string, state: string, size: number): DbFile => ({
   r2_key: key,
@@ -60,5 +60,39 @@ describe('reconcile', () => {
     expect(d.pendingDeletion).toEqual([{ key: 'audio/u/q.flac', state: 'quarantined' }])
     expect(d.orphanObjects).toEqual([])
     expect(d.missingObjects).toEqual([])
+  })
+})
+
+describe('deletablePendingObjects', () => {
+  it('includes failed and abandoned rows whose object still exists', () => {
+    const d = reconcile(
+      [row('audio/u/a.mp3', 'failed', 10), row('audio/u/b.mp3', 'abandoned', 10)],
+      [obj('audio/u/a.mp3', 10), obj('audio/u/b.mp3', 10)],
+    )
+    expect(deletablePendingObjects(d)).toEqual([
+      { key: 'audio/u/a.mp3', state: 'failed' },
+      { key: 'audio/u/b.mp3', state: 'abandoned' },
+    ])
+  })
+
+  // Critical #1's belt-and-braces flag must never touch these — they are
+  // M3-owned states where a human, not a cron, decides what happens to the
+  // object (e.g. keeping a quarantined file as evidence).
+  it('excludes quarantined and rejected_* even though they are pendingDeletion too', () => {
+    const d = reconcile(
+      [
+        row('audio/u/c.mp3', 'quarantined', 10),
+        row('audio/u/d.mp3', 'rejected_duration', 10),
+        row('audio/u/e.mp3', 'rejected_redundant', 10),
+      ],
+      [obj('audio/u/c.mp3', 10), obj('audio/u/d.mp3', 10), obj('audio/u/e.mp3', 10)],
+    )
+    expect(d.pendingDeletion).toHaveLength(3)
+    expect(deletablePendingObjects(d)).toEqual([])
+  })
+
+  it('is empty when there is nothing pending deletion', () => {
+    const d = reconcile([row('audio/u/f.mp3', 'stored', 10)], [obj('audio/u/f.mp3', 10)])
+    expect(deletablePendingObjects(d)).toEqual([])
   })
 })

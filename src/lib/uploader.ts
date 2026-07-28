@@ -107,6 +107,47 @@ function describeError(err: unknown): string {
   return String(err)
 }
 
+/**
+ * Tracks consecutive status-0 PUT failures across ONE file's whole transfer
+ * — every attempt, every part, single-PUT or multipart alike.
+ *
+ * XHR reports a network drop, a DNS failure and a CORS rejection identically
+ * as status 0 (see xhrPut below and classifyStatus's own comment), so a
+ * single status-0 result never tells them apart. A CORS misconfiguration
+ * does not, though: it is bucket-wide, so every PUT to it fails the same
+ * way. Two status-0 results in a row is the signal — an ordinary flaky link
+ * usually succeeds, times out with a real status, or gets a different error
+ * somewhere in between.
+ */
+export interface ZeroStatusTracker { consecutive: number; hinted: boolean }
+
+export function newZeroStatusTracker(): ZeroStatusTracker {
+  return { consecutive: 0, hinted: false }
+}
+
+export const CORS_HINT =
+  "two uploads in a row failed with no HTTP status at all — that usually means the bucket's " +
+  'CORS rule is missing or does not allow this origin, not a dropped connection'
+
+/**
+ * Updates `tracker` for one PUT attempt's outcome. Returns true exactly
+ * once per file — on the second consecutive status-0 failure — so callers
+ * fire the hint once and then stay quiet instead of repeating it on every
+ * remaining retry.
+ */
+export function noteAttemptStatus(tracker: ZeroStatusTracker, status: number): boolean {
+  if (status !== 0) {
+    tracker.consecutive = 0
+    return false
+  }
+  tracker.consecutive += 1
+  if (tracker.consecutive >= 2 && !tracker.hinted) {
+    tracker.hinted = true
+    return true
+  }
+  return false
+}
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>
@@ -194,12 +235,20 @@ async function withRetry<T>(
   signal: AbortSignal,
   attemptFn: () => Promise<T>,
   represign: () => Promise<void>,
+  zeroStatus: ZeroStatusTracker,
+  cb: UploadCallbacks,
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await attemptFn()
+      const result = await attemptFn()
+      // A successful attempt breaks any status-0 streak this file was
+      // building — it proves this PUT, at least, reached R2 and back.
+      zeroStatus.consecutive = 0
+      return result
     } catch (err) {
       if (signal.aborted || isAbortError(err)) throw err
+      const status = err instanceof TransferError ? err.status : -1
+      if (noteAttemptStatus(zeroStatus, status)) cb.onStatus(CORS_HINT)
       const disposition = err instanceof TransferError ? err.disposition : 'fatal'
       if (disposition === 'fatal' || disposition === 'restart') throw err
       if (attempt + 1 >= MAX_ATTEMPTS) throw err
@@ -395,6 +444,11 @@ export async function uploadFile(
   signal: AbortSignal,
   cb: UploadCallbacks,
 ): Promise<UploadOutcome> {
+  // One tracker for this file's whole transfer — shared across every part,
+  // concurrent or not, so a CORS misconfiguration is caught regardless of
+  // whether the file is a single PUT or a hundred-part multipart. See
+  // ZeroStatusTracker's doc comment above.
+  const zeroStatus = newZeroStatusTracker()
   try {
     const presigned = await api.presign({
       batchId,
@@ -421,13 +475,13 @@ export async function uploadFile(
     }
 
     if (!presigned.multipart) {
-      await transferSingle(item, presigned, api, batchId, signal, cb)
+      await transferSingle(item, presigned, api, batchId, signal, cb, zeroStatus)
       await api.complete(item.fileId, null)
       cb.onProgress(item.file.size)
       return 'received'
     }
 
-    const parts = await transferMultipart(item, presigned, api, signal, cb)
+    const parts = await transferMultipart(item, presigned, api, signal, cb, zeroStatus)
     await api.complete(item.fileId, parts)
     cb.onProgress(item.file.size)
     return 'received'
@@ -447,7 +501,12 @@ export async function uploadFile(
       // in `uploading` and the parts in R2, so Retry resumes.
       await api.abort(item.fileId, describeError(err)).catch(() => undefined)
     }
-    throw new UploadFailure(describeError(err), discard, { cause: err })
+    // Minor 3: once two consecutive status-0 PUTs were seen anywhere in this
+    // transfer, the eventual "network error" is exactly the message that
+    // sends someone hunting the wrong problem — append the hint so the
+    // final failure the UI shows points at CORS, not just a dead connection.
+    const message = zeroStatus.hinted ? `${describeError(err)} (${CORS_HINT})` : describeError(err)
+    throw new UploadFailure(message, discard, { cause: err })
   }
 }
 
@@ -458,6 +517,7 @@ async function transferSingle(
   batchId: string,
   signal: AbortSignal,
   cb: UploadCallbacks,
+  zeroStatus: ZeroStatusTracker,
 ): Promise<void> {
   let url = presigned.url
   cb.onStatus('uploading')
@@ -485,6 +545,8 @@ async function transferSingle(
       if (again.resumable && !again.multipart) url = again.url
       cb.onProgress(0)
     },
+    zeroStatus,
+    cb,
   )
 }
 
@@ -514,6 +576,7 @@ async function transferMultipart(
   api: UploadApi,
   signal: AbortSignal,
   cb: UploadCallbacks,
+  zeroStatus: ZeroStatusTracker,
 ): Promise<{ partNumber: number; etag: string }[]> {
   const { partSize, partCount, contentType } = presigned
 
@@ -606,6 +669,8 @@ async function transferMultipart(
             inFlight.set(partNumber, 0)
             report()
           },
+          zeroStatus,
+          cb,
         )
 
         inFlight.delete(partNumber)

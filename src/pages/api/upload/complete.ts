@@ -8,7 +8,7 @@ import {
   dbErrorResponse, jsonError, loadOwnedJob, parseCompleteBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
 import {
-  R2Error, completeMultipartUpload, headObject, listParts, r2ErrorResponse,
+  R2Error, completeMultipartUpload, deleteObjectQuietly, headObject, listParts, r2ErrorResponse,
 } from '../../../lib/r2'
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -60,6 +60,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const head = await headObject(job.r2Key)
 
     if (!head) {
+      // Nothing is at the key, so there is nothing to reclaim — the delete
+      // below is a defensive no-op (S3 DeleteObject on a missing key is a
+      // success), kept unconditional so this branch and size_mismatch below
+      // share one code path rather than one of them silently relying on
+      // "there was probably nothing there".
+      await deleteObjectQuietly(job.r2Key)
+
       // Result checked so a failed bookkeeping RPC doesn't leave the row
       // silently stuck in 'uploading' until the 24h sweeper — see Task 5
       // review. The response to the client is unchanged either way: the
@@ -74,9 +81,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     if (head.size !== job.byteSize) {
       // Any difference is a client bug or an attempt to declare a small file
-      // and complete a large one. Same answer to both. The object is left
-      // where it is — Task 8's nightly reconcile deletes orphans; no request
-      // handler in this milestone deletes anything.
+      // and complete a large one. Same answer to both. The row is about to
+      // become `failed`, and ingest_finalize only ever accepts uploading|
+      // received as a source state, so no browser can race this delete and
+      // reclaim the key afterwards — reclaim it now rather than leaving it
+      // billed forever with no path back (Critical #1: neither the sweeper
+      // nor an un-flagged reconcile ever touches a `failed` row's object).
+      await deleteObjectQuietly(job.r2Key)
+
       const { error: failErr } = await locals.supabase.rpc('ingest_fail', {
         p_file_id: fileId,
         p_reason: `complete: size mismatch — declared ${job.byteSize}, object ${head.size}`,

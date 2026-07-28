@@ -42,6 +42,19 @@ export const STATES_HOLDING_BYTES: readonly string[] = [
 export const STATES_IN_FLIGHT: readonly string[] = ['pending', 'uploading']
 
 /**
+ * Terminal states whose surviving object is safe for THIS job to delete on
+ * its own say-so, if the operator opts in (index.ts's RECONCILE_DELETE_PENDING).
+ *
+ * `failed` and `abandoned` are both states in which no route or RPC in this
+ * milestone will ever again mint a write capability for the key — see
+ * ingest_finalize()'s source-state check. `rejected_duration`,
+ * `rejected_redundant` and `quarantined` are deliberately excluded: those
+ * are M3-owned states where a human — not a cron — decides what happens to
+ * the object (e.g. keeping a quarantined file as evidence).
+ */
+export const STATES_SAFE_TO_AUTO_DELETE: readonly string[] = ['failed', 'abandoned']
+
+/**
  * Compare the table against the bucket. Pure: no I/O, no clock, no env.
  *
  * files.r2_key is UNIQUE, so a key maps to at most one row and the two maps
@@ -89,4 +102,14 @@ export function reconcile(rows: DbFile[], objects: R2ObjectRow[]): Drift {
   }
 
   return drift
+}
+
+/**
+ * The subset of `drift.pendingDeletion` this job is allowed to delete
+ * automatically. Pure and separate from `reconcile()` so it stays testable
+ * without an env or a binding — index.ts calls this and then decides,
+ * behind its own flag, whether to actually issue the deletes.
+ */
+export function deletablePendingObjects(drift: Drift): { key: string; state: string }[] {
+  return drift.pendingDeletion.filter((p) => STATES_SAFE_TO_AUTO_DELETE.includes(p.state))
 }

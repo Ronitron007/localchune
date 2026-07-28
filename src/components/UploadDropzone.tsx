@@ -21,6 +21,7 @@ import {
   type UploadItem,
 } from '../lib/uploader'
 import { pump, FILE_CONCURRENCY, PREFLIGHT_CONCURRENCY } from '../lib/upload-queue'
+import { formatBytes } from '../lib/format'
 
 type RowStatus =
   | 'checking' | 'skipped' | 'queued' | 'uploading'
@@ -45,15 +46,6 @@ interface Row {
 }
 
 const ACCEPT = '.mp3,.flac,.wav,.wave,.aiff,.aif,.aifc,.m4a,.mp4,.ogg,.oga,.opus,audio/*'
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = n / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`
-}
 
 /**
  * A DJ drags a FOLDER of 200 tracks, not 200 selected files. dataTransfer.files

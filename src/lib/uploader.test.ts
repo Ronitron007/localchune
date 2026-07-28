@@ -7,7 +7,9 @@ import { describe, it, expect } from 'vitest'
 import {
   classifyStatus, backoffDelayMs, normaliseEtag, contiguousRanges,
   MAX_ATTEMPTS, BACKOFF_BASE_MS, BACKOFF_CAP_MS, PART_PRESIGN_CHUNK,
+  newZeroStatusTracker, noteAttemptStatus,
 } from './uploader'
+import { MAX_PART_URLS_PER_CALL } from './upload-api'
 
 describe('classifyStatus', () => {
   it('treats 200, 201 and 204 as success', () => {
@@ -16,8 +18,9 @@ describe('classifyStatus', () => {
 
   it('retries a status of 0', () => {
     // XHR reports a network drop, a DNS failure and a CORS rejection
-    // identically as status 0. Retrying costs one round trip; the CORS case
-    // is caught by the manual checklist, not by guessing here.
+    // identically as status 0. Retrying costs one round trip; classifyStatus
+    // itself does not try to tell them apart — noteAttemptStatus below is
+    // where two consecutive 0s start pointing at CORS specifically.
     expect(classifyStatus(0)).toBe('retry')
   })
 
@@ -111,5 +114,59 @@ describe('contiguousRanges', () => {
     for (const [from, to] of contiguousRanges(all, PART_PRESIGN_CHUNK)) {
       expect(to - from + 1).toBeLessThanOrEqual(PART_PRESIGN_CHUNK)
     }
+  })
+})
+
+describe('noteAttemptStatus (Minor 3: the CORS hint tracker)', () => {
+  it('does nothing on the first zero-status failure', () => {
+    const t = newZeroStatusTracker()
+    expect(noteAttemptStatus(t, 0)).toBe(false)
+    expect(t.consecutive).toBe(1)
+    expect(t.hinted).toBe(false)
+  })
+
+  it('fires exactly once, on the second consecutive zero-status failure', () => {
+    const t = newZeroStatusTracker()
+    expect(noteAttemptStatus(t, 0)).toBe(false)
+    expect(noteAttemptStatus(t, 0)).toBe(true)
+    expect(t.hinted).toBe(true)
+    // A third, fourth, ... zero-status failure must not fire again — the
+    // hint should not repeat on every remaining retry.
+    expect(noteAttemptStatus(t, 0)).toBe(false)
+    expect(noteAttemptStatus(t, 0)).toBe(false)
+  })
+
+  it('resets the streak on any real HTTP status, even a failure', () => {
+    const t = newZeroStatusTracker()
+    noteAttemptStatus(t, 0)
+    expect(noteAttemptStatus(t, 500)).toBe(false) // a real 500 is not a CORS symptom
+    expect(t.consecutive).toBe(0)
+    // Back to needing two in a row again.
+    expect(noteAttemptStatus(t, 0)).toBe(false)
+  })
+
+  it('resets on success (any non-zero status) between two isolated status-0 blips', () => {
+    const t = newZeroStatusTracker()
+    noteAttemptStatus(t, 0)
+    noteAttemptStatus(t, 200) // one flaky attempt, then it worked
+    expect(noteAttemptStatus(t, 0)).toBe(false) // an unrelated later blip does not carry over
+    expect(t.consecutive).toBe(1)
+  })
+})
+
+describe('PART_PRESIGN_CHUNK vs MAX_PART_URLS_PER_CALL (Minor 2)', () => {
+  it('stays equal to the server-side cap /api/upload/parts enforces', () => {
+    // These are two independent constants — this file's PART_PRESIGN_CHUNK
+    // (client) and upload-api.ts's MAX_PART_URLS_PER_CALL (server) — with
+    // nothing at the type level binding them together. uploader.ts cannot
+    // import upload-api.ts directly (see upload-api.ts's header: it is kept
+    // free of r2.ts so it stays testable, and pulling server-side RPC/
+    // ownership helpers into the client bundle for one constant would be a
+    // worse trade than this test). If PART_PRESIGN_CHUNK is ever raised
+    // without raising MAX_PART_URLS_PER_CALL to match, the client starts
+    // asking for more part URLs per call than the server will sign, and
+    // /api/upload/parts 400s mid-batch on any file over 1.6 GiB (100 parts
+    // x 16 MiB). This assertion is the tripwire.
+    expect(PART_PRESIGN_CHUNK).toBe(MAX_PART_URLS_PER_CALL)
   })
 })

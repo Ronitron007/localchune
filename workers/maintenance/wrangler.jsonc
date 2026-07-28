@@ -38,13 +38,16 @@
 
   // R2_BUCKET must name the SAME bucket as the binding below. The binding
   // does the listing and the deletes; R2_BUCKET only builds the SigV4 URL
-  // for AbortMultipartUpload, which the binding does not expose.
-  // RECONCILE_DELETE_ORPHANS is a string, not a boolean: wrangler vars are
-  // strings, and "false" is truthy in JS -- src/index.ts compares to the
-  // literal "true" for that reason.
+  // for AbortMultipartUpload, which the binding does not expose. It also
+  // doubles as sweep()'s production guard (src/index.ts) -- see env.dev
+  // below for why that matters.
+  // RECONCILE_DELETE_ORPHANS / RECONCILE_DELETE_PENDING are strings, not
+  // booleans: wrangler vars are strings, and "false" is truthy in JS --
+  // src/index.ts compares both to the literal "true" for that reason.
   "vars": {
     "R2_BUCKET": "localchune-audio",
-    "RECONCILE_DELETE_ORPHANS": "false"
+    "RECONCILE_DELETE_ORPHANS": "false",
+    "RECONCILE_DELETE_PENDING": "false"
   },
 
   // "remote": true for the same reason Task 1 gives on the app Worker: in
@@ -53,5 +56,32 @@
   // useful failure, it is a misleading one.
   "r2_buckets": [
     { "binding": "AUDIO", "bucket_name": "localchune-audio", "remote": true }
-  ]
+  ],
+
+  // Important #1 (M2 final review): without this block, `wrangler dev`
+  // against this config defaulted straight to the PRODUCTION bucket and
+  // (via .dev.vars) whatever Supabase project SUPABASE_URL pointed at --
+  // there was no way to run a manual SWEEP_OLDER_THAN verification without
+  // aiming at production. `vars` and `r2_buckets` are both non-inheritable
+  // Wrangler config keys (see the config reference), so overriding either
+  // one for an environment means BOTH must be fully redeclared here, not
+  // just the values that differ from the top level.
+  //
+  // Run a manual sweep test with:
+  //   npx wrangler dev -c workers/maintenance/wrangler.jsonc --env dev --test-scheduled
+  // src/index.ts's sweep() additionally refuses to run at all when
+  // SWEEP_OLDER_THAN is set and R2_BUCKET is still "localchune-audio", so a
+  // forgotten --env dev fails loudly instead of touching production.
+  "env": {
+    "dev": {
+      "vars": {
+        "R2_BUCKET": "localchune-audio-dev",
+        "RECONCILE_DELETE_ORPHANS": "false",
+        "RECONCILE_DELETE_PENDING": "false"
+      },
+      "r2_buckets": [
+        { "binding": "AUDIO", "bucket_name": "localchune-audio-dev", "remote": true }
+      ]
+    }
+  }
 }

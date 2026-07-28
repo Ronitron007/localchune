@@ -7,7 +7,9 @@ import type { APIRoute } from 'astro'
 import {
   dbErrorResponse, jsonError, loadOwnedJob, parseAbortBody, readJsonBody, rpcError,
 } from '../../../lib/upload-api'
-import { R2Error, abortMultipartUpload, r2ErrorResponse } from '../../../lib/r2'
+import {
+  R2Error, abortMultipartUpload, deleteObjectQuietly, r2ErrorResponse,
+} from '../../../lib/r2'
 
 export const POST: APIRoute = async ({ request, locals }) => {
   if (!locals.member) return jsonError(401, 'unauthenticated', 'sign in again')
@@ -21,8 +23,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const job = jobResult.value
   if (!job) return jsonError(404, 'not_found', 'no ingest job for that file')
 
-  // A single PUT has nothing to abort — S3 PUT is atomic, so there is never
-  // a partial object to clean up. Only a multipart upload bills for parts.
+  // A single PUT has nothing to ABORT — S3 PUT is atomic, so there is never
+  // a partial object mid-flight. Only a multipart upload bills for parts.
   if (job.uploadId) {
     try {
       await abortMultipartUpload(job.r2Key, job.uploadId)
@@ -31,6 +33,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
       if (!(e instanceof R2Error) || e.code !== 'NoSuchUpload') return r2ErrorResponse(e)
     }
   }
+
+  // Unconditional and separate from the multipart abort above: a single PUT
+  // that already landed leaves a complete object behind, and multipart's own
+  // abort only tears down the upload session, never a since-completed
+  // object. The row is seconds from becoming `failed`, after which nothing
+  // else in this milestone ever revisits this key (Critical #1) — reclaim it
+  // here. DeleteObject on a key that was never written is a harmless no-op,
+  // so this runs whether or not job.uploadId was set above. A delete failure
+  // must not change the response the client sees: log it and carry on.
+  await deleteObjectQuietly(job.r2Key)
 
   const { data, error } = await locals.supabase.rpc('ingest_fail', {
     p_file_id: fileId, p_reason: reason,

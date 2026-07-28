@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "id": "abort-stale-multipart",
+      "enabled": true,
+      "conditions": {},
+      "abortMultipartUploadsTransition": {
+        "condition": { "type": "Age", "maxAge": 86400 }
+      }
+    }
+  ]
+}
