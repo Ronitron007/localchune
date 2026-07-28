@@ -1,0 +1,16 @@
+# localchune — MIT licensed. See LICENSE.
+# NOTE: the distributed combination is AGPL-3.0 because the analysis
+# worker includes Essentia. LICENSE explains why.
+#
+# PLACEHOLDER. Task 5 only needs analyze_key() to build the right argv
+# (`streaming_extractor_music <in> <out> --profile /etc/essentia/edmm.yaml`)
+# and parse the JSON that comes back — verified with a mocked subprocess,
+# since the streaming_extractor_music binary is not installed on this
+# machine (it ships in the Task 8 Docker image). This file's actual content
+# is Task 8's concern: it must be a valid streaming_extractor_music profile
+# YAML that selects KeyExtractor's `edmm` profileType (PRD 7.3 / the Key row
+# in the pipeline table — edmm ranks first on GiantSteps, ~70-72 weighted).
+# Task 8 should confirm the correct top-level key for this against Essentia's
+# actual profile-YAML schema (likely under `tonal:`) before relying on it.
+tonal:
+  keyProfile: edmm
