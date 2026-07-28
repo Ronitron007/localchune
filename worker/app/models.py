@@ -53,7 +53,7 @@ class Loudness(BaseModel):
     lra_lu: float
     true_peak_dbtp: float
     replaygain_db: float
-    clipped_pct: float
+    clipped_pct: float = Field(description="Proxy for clipping suspicion based on Abs Peak count recurrence, not a literal clipped-sample count. Use as a threshold signal; do not report as an exact percentage.")
 
 
 class Forensics(BaseModel):

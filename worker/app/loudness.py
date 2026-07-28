@@ -42,6 +42,13 @@ def _clipped_pct(astats_stderr: str) -> float:
     return round(float(m.group(1)) / float(n.group(1)) * 100, 4)
 
 def analyze_loudness(path: str) -> Loudness:
+    """Measure loudness, dynamic range, and clipping suspicion.
+
+    clipped_pct is a heuristic proxy: ffmpeg 8 astats has no clipped-sample field,
+    so it uses Abs Peak count recurrence as a suspicion signal. Verified to separate
+    clean (~1%) from clipped (~33%) material. Treat as a threshold indicator, not a
+    literal percentage.
+    """
     # NOTE: '-v info', not '-v error'. ebur128's Summary block and astats'
     # measurements are both logged at AV_LOG_INFO -- '-v error' silences
     # them entirely (verified: 0 bytes of stderr on real ffmpeg 8.0.1),
