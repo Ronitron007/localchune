@@ -16,6 +16,36 @@
   `.env`: `astro build` copies `.env` into `dist/server/.dev.vars`.
 - The maintenance Worker deploys separately: `npm run deploy:maintenance`.
   `npm run deploy` deploys the app Worker only.
+
+### Maintenance Worker — what it is and how to deploy it
+
+`localchune-maintenance` is a second Worker with **no routes**, so nothing on
+the internet can reach it. It exists only to run two scheduled jobs:
+
+| Cron | Job | What it does |
+|---|---|---|
+| `17 * * * *` (hourly) | **sweeper** | Finds uploads stuck in `pending`/`uploading` for over 24 h, marks them `abandoned`, aborts their multipart upload and deletes the partial object. **Abandoned multipart uploads bill for real** — this is the money job. |
+| `40 4 * * *` (nightly) | **reconcile** | Compares what is in R2 against what the database says. Reports drift in both directions: an object with no row, and a row with no object. |
+
+It needs its own secrets — a separate store from the app Worker. Set all five
+against **its** config file, not the app's:
+
+```
+npx wrangler secret put SUPABASE_URL          -c workers/maintenance/wrangler.jsonc
+npx wrangler secret put SUPABASE_SERVICE_KEY  -c workers/maintenance/wrangler.jsonc
+npx wrangler secret put R2_ACCOUNT_ID         -c workers/maintenance/wrangler.jsonc
+npx wrangler secret put R2_ACCESS_KEY_ID      -c workers/maintenance/wrangler.jsonc
+npx wrangler secret put R2_SECRET_ACCESS_KEY  -c workers/maintenance/wrangler.jsonc
+```
+
+Then `npm run deploy:maintenance`, and watch the first run with
+`npx wrangler tail localchune-maintenance --format pretty`.
+
+**Never set `SWEEP_OLDER_THAN` against production.** It exists for manual
+verification and shortens the 24 h window; pointed at production it would mark
+every in-flight upload abandoned and delete it. `sweep()` refuses to run when
+that variable is set and the bucket is `localchune-audio`, but do not rely on
+the guard — use `--env dev`.
 - The Supabase redirect allow-list (`additional_redirect_urls` in
   `supabase/config.toml`) must contain the production callback
   `https://localchune.butternutcrack.com/auth/callback`, or sign-in silently
