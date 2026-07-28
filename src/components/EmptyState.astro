@@ -1,0 +1,32 @@
+---
+// src/components/EmptyState.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// Three situations, three messages, three next actions — collapsing them
+// into one "No results" is how an empty pool gets mistaken for a broken
+// filter. The server decides the variant; nothing here is interactive.
+interface Props { variant: 'pool-empty' | 'no-search-match' | 'no-filter-match'; term?: string }
+const { variant, term = '' } = Astro.props
+---
+<div class="empty" role="status">
+  {variant === 'pool-empty' && (
+    <>
+      <p>Nothing in the pool yet.</p>
+      <p>Tracks appear here once they have been analysed. <a href="/upload">Upload some</a>.</p>
+    </>
+  )}
+  {variant === 'no-search-match' && (
+    <>
+      <p>No track matches “{term}”.</p>
+      <p>Search covers artist, title and filename. <a href="/">Clear filters</a></p>
+    </>
+  )}
+  {variant === 'no-filter-match' && (
+    <>
+      <p>No track matches these filters.</p>
+      <p>Try widening the BPM range, or turning on half/double time. <a href="/">Clear filters</a></p>
+    </>
+  )}
+</div>

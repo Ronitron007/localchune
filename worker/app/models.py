@@ -92,4 +92,5 @@ class AnalyzeResponse(BaseModel):
     peaks_key: Optional[str] = None
     preview_key: Optional[str] = None
     artwork_key: Optional[str] = None
+    thumb_key: Optional[str] = None
     cpu_seconds: float = 0.0

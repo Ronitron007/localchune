@@ -1,34 +1,15 @@
 ---
+// src/pages/upload.astro
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+import Shell from '../layouts/Shell.astro'
 import UploadDropzone from '../components/UploadDropzone'
-import { formatBytes } from '../lib/format'
+import FileStateTicker from '../components/FileStateTicker'
 const m = Astro.locals.member!
-
-// my_storage() (migration 08) is the one-row wrapper over member_storage()
-// filtered to the caller. Astro.locals.supabase is the cookie-bound client
-// middleware already built for this request — reused here rather than a
-// second server client, same rule the admin page follows.
-const { data: storageRows, error: storageErr } = await Astro.locals.supabase.rpc('my_storage')
-if (storageErr) console.error('my_storage failed:', storageErr.message)
-const storage = storageRows?.[0] ?? null
 ---
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>localchune — upload</title>
-</head>
-<body>
+<Shell title="localchune — upload">
   <h1>Upload</h1>
-  <p>{m.email}</p>
-  {storage && (
-    <p>
-      Occupying {formatBytes(storage.occupying_bytes)} ({storage.occupying_files} file{storage.occupying_files === 1 ? '' : 's'})
-      — contributed {formatBytes(storage.contributed_bytes)} ({storage.contributed_files} file{storage.contributed_files === 1 ? '' : 's'})
-    </p>
-  )}
   <UploadDropzone userId={m.user_id} client:load />
-  <p><a href="/">← pool</a></p>
-</body></html>
+  <FileStateTicker client:load />
+</Shell>

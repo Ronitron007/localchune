@@ -22,6 +22,8 @@ import {
 } from '../lib/uploader'
 import { pump, FILE_CONCURRENCY, PREFLIGHT_CONCURRENCY } from '../lib/upload-queue'
 import { formatBytes } from '../lib/format'
+import { setCurrentBatchId } from '../lib/upload-batch'
+import StatusRegion from './StatusRegion'
 
 type RowStatus =
   | 'checking' | 'skipped' | 'queued' | 'uploading'
@@ -255,6 +257,9 @@ export default function UploadDropzone(props: { userId: string }) {
     try {
       if (batchId === null) {
         batchId = (await httpApi.createBatch(label().trim() || null)).batchId
+        // Publish to FileStateTicker, which is a sibling island and cannot
+        // read this closure.
+        setCurrentBatchId(batchId)
       }
       await pump(
         keys.map((key) => (signal: AbortSignal) => runOne(key, signal)),
@@ -351,9 +356,7 @@ export default function UploadDropzone(props: { userId: string }) {
         <progress value={sentBytes()} max={Math.max(1, totalBytes())} />
       </Show>
 
-      <Show when={notice() !== ''}>
-        <p class="notice" role="alert">{notice()}</p>
-      </Show>
+      <StatusRegion message={notice()} tone="error" />
 
       <ul class="rows">
         <For each={rows}>{(row) => (

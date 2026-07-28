@@ -243,8 +243,14 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
                 log.warning("preview failed for %s: %s", req.file_id, e)
 
         artwork_key = None
+        thumb_key = None
         if tags.extract_artwork(src, os.path.join(d, "artwork.jpg")):
             artwork_key = "artwork.jpg"
+            # 64px cover-cropped JPEG so the pool table never loads
+            # full-size art. Spec: 2026-07-29-ui-brutalist-design.md §4.
+            if tags.make_thumb(os.path.join(d, "artwork.jpg"),
+                               os.path.join(d, "thumb.jpg")):
+                thumb_key = "thumb.jpg"
 
         return AnalyzeResponse(
             file_id=req.file_id, analysis_version=req.analysis_version, ok=True,
@@ -263,6 +269,7 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             peaks_key=peaks_key,
             preview_key=preview_key,
             artwork_key=artwork_key,
+            thumb_key=thumb_key,
             cpu_seconds=round(_cpu_now() - t0, 2),
         )
     except Exception as e:  # noqa: BLE001

@@ -44,6 +44,7 @@ function response(over: Partial<AnalyzeResponse> = {}): AnalyzeResponse {
     peaks_key: 'peaks.json',
     preview_key: null,
     artwork_key: null,
+    thumb_key: null,
     cpu_seconds: 53.8,
     ...over,
   }

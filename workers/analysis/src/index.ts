@@ -175,6 +175,10 @@ export class AnalysisContainer extends Container<Env> {
           clear: () => { out.preview_key = null } },
         { kind: 'artwork', name: out.artwork_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
           clear: () => { out.artwork_key = null } },
+        // The 64px cover thumb the pool table renders (brutalist spec §4).
+        // A 64px q~70 JPEG is a few KB; the artwork ceiling is generous.
+        { kind: 'thumb', name: out.thumb_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
+          clear: () => { out.thumb_key = null } },
         // spectrogram_key is always null today — see the Forensics field
         // comment in types.ts; nothing in app/ produces one yet — but the
         // ceiling is wired up now so whoever adds a producer does not

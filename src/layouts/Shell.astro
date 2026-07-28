@@ -1,0 +1,41 @@
+---
+// src/layouts/Shell.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The shell owns three things beyond the frame: the <ClientRouter />, the
+// persisted player div, and the one site script. The router swaps page
+// bodies AROUND the transition:persist div, which is what lets playback
+// survive filter submits, sort clicks, pagination and detail navigation —
+// butternutcrack needed 345 lines and a store for the same property.
+import { ClientRouter } from 'astro:transitions'
+import AppNav from '../components/AppNav.astro'
+import SourceLink from '../components/SourceLink.astro'
+import StorageChip from '../components/StorageChip.astro'
+import '../styles/global.css'
+
+interface Props { title: string }
+const { title } = Astro.props
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <ClientRouter />
+</head>
+<body>
+  <AppNav />
+  <main><slot /></main>
+  <footer class="appfoot">
+    <StorageChip />
+    <SourceLink />
+  </footer>
+  <div class="playerbar" transition:persist="player">
+    <span id="player-label" class="nowplaying" aria-live="polite"></span>
+    <audio id="player-audio" controls preload="none"></audio>
+  </div>
+  <script src="../scripts/site.ts"></script>
+</body>
+</html>

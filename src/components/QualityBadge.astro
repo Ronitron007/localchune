@@ -1,0 +1,16 @@
+---
+// src/components/QualityBadge.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The tooltip says MEASURED and names the measurement, because the claim
+// being made is "this file is not what its container says it is". PRD §7.2:
+// `abstain` renders neutral, never accusatory.
+import { qualityLabel, qualityTooltip } from '../lib/track-format'
+interface Props { tier: number | null; lossyAncestor: string | null; measCutoffHz: number | null }
+const { tier, lossyAncestor, measCutoffHz } = Astro.props
+---
+<span class="qualitybadge num" title={qualityTooltip(tier, lossyAncestor, measCutoffHz)}>
+  {qualityLabel(tier)}
+</span>

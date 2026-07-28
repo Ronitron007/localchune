@@ -6,7 +6,11 @@ import { defineMiddleware } from 'astro:middleware'
 import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
 import { isActive } from './lib/session'
 
-const PUBLIC_PATHS = new Set(['/login', '/auth/callback', '/auth/signout'])
+const PUBLIC_PATHS = new Set([
+  '/login', '/auth/callback', '/auth/signout',
+  // AGPL §13: the source offer must be reachable without an account.
+  '/api/build-info',
+])
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   ctx.locals.member = null

@@ -1,0 +1,79 @@
+---
+// src/components/FilterBar.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The filter state IS the URL. Submitting reloads the page; the Filter
+// button is the no-JS path and the search box auto-submits after a typing
+// pause via the site script (data-autosubmit). Sort is NOT a form field —
+// it is the column headers — but the current sort persists across a filter
+// submit through the hidden input. `cursor` is deliberately absent: a new
+// filter starts at page one.
+import GenreFacet from './GenreFacet.astro'
+import { DEFAULT_SORT, type PoolQuery } from '../lib/pool-api'
+
+interface Props { query: PoolQuery; uploaders: { member_id: string; uploader_name: string; track_count: number }[] }
+const { query, uploaders } = Astro.props
+const ALL_KEYS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap((n) => [`${n}A`, `${n}B`])
+---
+<form class="filterbar" method="get" action="/" role="search" data-autosubmit>
+  {query.sort !== DEFAULT_SORT && <input type="hidden" name="sort" value={query.sort} />}
+
+  <label class="f-search">
+    <span>Search</span>
+    <input type="search" name="q" value={query.q} placeholder="artist, title or filename" />
+  </label>
+
+  <fieldset class="f-bpm">
+    <legend>BPM</legend>
+    <input type="number" name="bpm_min" min="0" max="1000" inputmode="numeric"
+      aria-label="Minimum BPM" value={query.bpmMin ?? ''} />
+    <span>–</span>
+    <input type="number" name="bpm_max" min="0" max="1000" inputmode="numeric"
+      aria-label="Maximum BPM" value={query.bpmMax ?? ''} />
+    <label title="A 174 bpm drum & bass track is an 87 bpm track to a DJ. With this on, either query finds it.">
+      <input type="checkbox" name="half_double" value="1" checked={query.halfDouble} />
+      <span>half / double</span>
+    </label>
+  </fieldset>
+
+  <fieldset class="f-key">
+    <legend>Key</legend>
+    <select name="key" aria-label="Camelot key">
+      <option value="">any</option>
+      {ALL_KEYS.map((k) => <option value={k} selected={query.key === k}>{k}</option>)}
+    </select>
+    <label title="Also matches one step either way around the wheel and the relative major or minor.">
+      <input type="checkbox" name="harmonic" value="1" checked={query.harmonic} />
+      <span>harmonic</span>
+    </label>
+  </fieldset>
+
+  <label class="f-tier">
+    <span>Min quality</span>
+    <select name="tier_min">
+      <option value="">any</option>
+      {[1, 2, 3, 4, 5].map((t) => (
+        <option value={t} selected={query.tierMin === t}>Tier {t}+</option>
+      ))}
+    </select>
+  </label>
+
+  <label class="f-uploader">
+    <span>Uploader</span>
+    <select name="uploader">
+      <option value="">anyone</option>
+      {uploaders.map((u) => (
+        <option value={u.member_id} selected={query.uploader === u.member_id}>
+          {u.uploader_name} ({u.track_count})
+        </option>
+      ))}
+    </select>
+  </label>
+
+  <GenreFacet families={[]} />
+
+  <button type="submit">Filter</button>
+  <a class="f-reset" href="/">Clear</a>
+</form>

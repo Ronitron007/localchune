@@ -1,0 +1,67 @@
+---
+// src/components/TrackTable.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// THE table. Pool, crate view (M6), "my uploads" — all of them are this
+// template with different rows. Sort is column-header links that rewrite
+// ?sort= (dropping any cursor — a keyset cursor is only valid within the
+// sort that minted it). Pagination is ONE next link carrying the cursor;
+// previous is the browser back button, and a keyset cursor cannot seek to
+// page N anyway. TRIP-WIRE (M5 decision): if a view ever renders more than
+// 1,000 rows at once, revisit.
+import EmptyState from './EmptyState.astro'
+import TrackRow from './TrackRow.astro'
+import { isDefaultQuery, poolHref, type PoolQuery, type PoolSort, type PoolTrack } from '../lib/pool-api'
+
+interface Props { tracks: PoolTrack[]; query: PoolQuery; nextCursor: string | null; poolEmpty: boolean }
+const { tracks, query, nextCursor, poolEmpty } = Astro.props
+
+const HEADERS: { label: string; sort: PoolSort | null; sr?: string }[] = [
+  { label: '', sort: null, sr: 'Play' },
+  { label: '', sort: null, sr: 'Artwork' },
+  { label: 'Track', sort: 'artist_asc' },
+  { label: 'BPM', sort: 'bpm_asc' },
+  { label: 'Key', sort: 'key_asc' },
+  { label: 'Length', sort: 'duration_asc' },
+  { label: 'Quality', sort: 'tier_desc' },
+  { label: 'Uploader', sort: null },
+  { label: 'Added', sort: 'added_desc' },
+  { label: '', sort: null, sr: 'Download' },
+]
+
+const emptyVariant = poolEmpty ? 'pool-empty' : query.q !== '' ? 'no-search-match' : 'no-filter-match'
+---
+<section class="tracktable">
+  {tracks.length === 0 ? (
+    <EmptyState variant={emptyVariant} term={query.q} />
+  ) : (
+    <table>
+      <thead>
+        <tr>
+          {HEADERS.map((h) =>
+            h.sort === null ? (
+              <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
+            ) : (
+              <th scope="col">
+                <a href={poolHref(query, { sort: h.sort })}
+                   aria-current={query.sort === h.sort ? 'true' : undefined}>{h.label}</a>
+              </th>
+            ),
+          )}
+        </tr>
+      </thead>
+      <tbody>
+        {tracks.map((track) => <TrackRow track={track} />)}
+      </tbody>
+    </table>
+  )}
+
+  <p class="pager">
+    <span class="counts">{tracks.length} track{tracks.length === 1 ? '' : 's'} on this page{isDefaultQuery(query) ? '' : ' (filtered)'}</span>
+    {nextCursor !== null && (
+      <> · <a rel="next" href={poolHref(query, { cursor: nextCursor })}>next ›</a></>
+    )}
+  </p>
+</section>

@@ -3,6 +3,7 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 
+import Shell from '../../layouts/Shell.astro'
 import AllowlistForm from '../../components/AllowlistForm'
 import RevokeButton from '../../components/RevokeButton'
 import { formatBytes } from '../../lib/format'
@@ -19,13 +20,7 @@ if (error) console.error('admin_members failed:', error.message)
 const { data: storageRows, error: storageErr } = await Astro.locals.supabase.rpc('member_storage')
 if (storageErr) console.error('member_storage failed:', storageErr.message)
 ---
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>localchune — admin</title>
-</head>
-<body>
+<Shell title="localchune — members">
   <h1>Members</h1>
   <AllowlistForm client:load />
   <table>
@@ -64,6 +59,4 @@ if (storageErr) console.error('member_storage failed:', storageErr.message)
       ))}
     </tbody>
   </table>
-
-  <p><a href="/">← pool</a></p>
-</body></html>
+</Shell>

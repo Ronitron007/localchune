@@ -95,13 +95,14 @@ export interface AnalyzeResponse {
   peaks_key: string | null
   preview_key: string | null
   artwork_key: string | null
+  thumb_key: string | null
   cpu_seconds: number
   /**
    * DO-side only — app/models.py has no such field, so this is never present
    * in the container's JSON. Populated after the fact, when `putArtifact`
    * skips a derived artifact because its Content-Length was missing or over
    * the per-artifact ceiling. Keyed by artifact kind ('peaks' | 'preview' |
-   * 'artwork' | 'spectrogram'), valued by the skip reason. The corresponding
+   * 'artwork' | 'thumb' | 'spectrogram'), valued by the skip reason. The corresponding
    * `*_key` is nulled out in the same pass, so a skipped artifact never
    * points at an R2 object that was never written.
    */

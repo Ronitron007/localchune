@@ -5,7 +5,7 @@ import os
 import subprocess
 
 from app import tags
-from app.tags import parse_tags, read_tags, extract_artwork
+from app.tags import parse_tags, read_tags, extract_artwork, make_thumb
 
 
 # --- parse_tags: canned ffprobe JSON documents. ---
@@ -152,3 +152,24 @@ def test_extract_artwork_drops_and_returns_false_when_over_cap(tmp_path, monkeyp
 
     assert extract_artwork(mp3, out) is False
     assert not os.path.exists(out)
+
+def test_make_thumb_produces_a_small_square_jpeg(tmp_path):
+    mp3 = str(tmp_path / 'tagged.mp3')
+    cover = str(tmp_path / 'cover.png')
+    art = str(tmp_path / 'artwork.jpg')
+    thumb = str(tmp_path / 'thumb.jpg')
+    _cover_png(cover)
+    _tagged_mp3_with_art(mp3, cover)
+
+    assert extract_artwork(mp3, art) is True
+    assert make_thumb(art, thumb) is True
+    out = subprocess.run(
+        ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+         '-show_entries', 'stream=width,height', '-of', 'csv=p=0', thumb],
+        capture_output=True, text=True, check=True).stdout.strip()
+    w, h = (int(x) for x in out.split(','))
+    assert (w, h) == (64, 64)
+    assert 0 < os.path.getsize(thumb) < 20_000   # a 64px q~70 jpeg is a few KB
+
+def test_make_thumb_returns_false_for_a_missing_source(tmp_path):
+    assert make_thumb(str(tmp_path / 'absent.jpg'), str(tmp_path / 'out.jpg')) is False

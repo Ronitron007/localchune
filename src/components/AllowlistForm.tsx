@@ -3,6 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { createSignal } from 'solid-js'
+import StatusRegion from './StatusRegion'
 
 export default function AllowlistForm() {
   const [email, setEmail] = createSignal('')
@@ -32,7 +33,7 @@ export default function AllowlistForm() {
       <input type="email" required placeholder="dj@gmail.com"
              value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
       <button type="submit">Invite</button>
-      <span aria-live="polite">{status()}</span>
+      <StatusRegion message={status()} />
     </form>
   )
 }

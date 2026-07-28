@@ -1,0 +1,13 @@
+---
+// src/components/SourceLink.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// AGPL §13 (PRD §7.3 rule 5). The distributed combination is AGPL-3.0
+// because the analysis worker links Essentia, so anyone interacting with
+// this instance over a network is owed the corresponding source of the
+// version they are interacting with — which is why the link names a commit.
+import { shortSha, sourceUrl } from '../lib/build-info'
+---
+<a class="source" href={sourceUrl()} rel="noopener">Source ({shortSha()})</a>
