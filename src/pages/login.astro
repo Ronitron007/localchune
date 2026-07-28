@@ -13,7 +13,7 @@ const error = Astro.url.searchParams.get('error_description')
 </head>
 <body>
   <h1>localchune</h1>
-  {error && <p role="alert" style="color:#c00">{error}</p>}
+  {error && <p role="alert"><strong>{error}</strong></p>}
   <button id="in">Sign in with Google</button>
   <script>
     import { browserClient } from '../lib/supabase'

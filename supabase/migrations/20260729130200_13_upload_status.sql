@@ -1,4 +1,4 @@
--- supabase/migrations/20260728120200_12_upload_status.sql
+-- supabase/migrations/20260729130200_13_upload_status.sql
 -- localchune — MIT licensed. See LICENSE.
 -- NOTE: the distributed combination is AGPL-3.0 because the analysis
 -- worker includes Essentia. LICENSE explains why.

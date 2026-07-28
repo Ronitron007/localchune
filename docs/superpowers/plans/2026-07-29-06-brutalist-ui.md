@@ -30,6 +30,19 @@ And the architectural rules from the spec:
 
 ---
 
+> **Post-rebase amendment (2026-07-29):** M3 Task 9 landed on `rohan/m3-analysis`
+> mid-execution with its own richer `20260728110000_09_analysis.sql` (including
+> `analysis_persist()` and the fingerprints table) and took the migration-10 slot
+> with `20260729120000_10_close_acls.sql`. This branch rebased onto it: Task 1's
+> minimal migration 09 was dropped in favour of M3's; the three M5 migrations
+> below landed renumbered as `20260729130000_11_pool_view.sql`,
+> `20260729130100_12_pool_rpc.sql`, `20260729130200_13_upload_status.sql`; and a
+> new `20260729130300_14_analysis_persist_thumb.sql` re-creates
+> `analysis_persist()` with the `thumb_key` write (closing Unresolved question 4).
+> `r2.ts` merged onto M3's signed-GET implementation (`readObjectUrl`, stricter
+> `DERIVED_KEY_RE`), extended with the response-header overrides and
+> `GET_TTL_SECONDS` the routes here need.
+
 ## File Structure
 
 | Path | Responsibility |

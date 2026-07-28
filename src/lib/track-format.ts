@@ -36,7 +36,7 @@ export function parseCamelot(key: string | null | undefined): Camelot | null {
 /**
  * The cue-tracks composite-sort trick (`FileList.tsx:120-125`). Camelot keys
  * sort wrong lexicographically — '10A' lands before '2A' — in every naive
- * implementation. Mirrored by `camelot_sort` in migration 10 so the client
+ * implementation. Mirrored by `camelot_sort` in migration 11 so the client
  * and the server agree on the order.
  */
 export function camelotSortKey(key: string | null | undefined): number {

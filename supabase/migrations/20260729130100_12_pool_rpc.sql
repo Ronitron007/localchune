@@ -1,4 +1,4 @@
--- supabase/migrations/20260728120100_11_pool_rpc.sql
+-- supabase/migrations/20260729130100_12_pool_rpc.sql
 -- localchune — MIT licensed. See LICENSE.
 -- NOTE: the distributed combination is AGPL-3.0 because the analysis
 -- worker includes Essentia. LICENSE explains why.
@@ -7,7 +7,7 @@
 -- The one list endpoint, server-side in full.
 --
 -- SECURITY DEFINER because it reads public.pool_tracks, which bypasses RLS
--- (see migration 10). The gate is therefore the first statement in the body
+-- (see migration 11). The gate is therefore the first statement in the body
 -- plus `t.state = 'stored'` -- there is no second path in.
 --
 -- Numeric parameters are int / double precision rather than smallint / real

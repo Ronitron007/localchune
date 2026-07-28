@@ -1,4 +1,4 @@
--- supabase/migrations/20260728120000_10_pool_view.sql
+-- supabase/migrations/20260729130000_11_pool_view.sql
 -- localchune — MIT licensed. See LICENSE.
 -- NOTE: the distributed combination is AGPL-3.0 because the analysis
 -- worker includes Essentia. LICENSE explains why.
@@ -259,5 +259,5 @@ revoke all on public.pool_tracks from public, anon, authenticated;
 
 comment on view public.pool_tracks is
   'Ungranted composition unit. Reachable only from the SECURITY DEFINER
-   functions in migration 11, which own the visibility gate. Do NOT grant
+   functions in migration 12, which own the visibility gate. Do NOT grant
    this to authenticated: it runs as its owner and bypasses RLS.';

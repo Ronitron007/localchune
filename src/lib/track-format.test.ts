@@ -29,7 +29,7 @@ describe('parseCamelot', () => {
 describe('camelotSortKey', () => {
   it('is num*10 + (letter === B), so 2A sorts before 10A', () => {
     // The cue-tracks trick. Lexicographic sorting puts '10A' before '2A';
-    // this is the three-line fix, mirrored by the SQL in migration 10.
+    // this is the three-line fix, mirrored by the SQL in migration 11.
     expect(camelotSortKey('2A')).toBe(20)
     expect(camelotSortKey('10A')).toBe(100)
     expect(camelotSortKey('8B')).toBe(81)
