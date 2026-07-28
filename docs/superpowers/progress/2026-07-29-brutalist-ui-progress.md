@@ -2,7 +2,7 @@
 
 Branch: `rohan/brutalist-ui-design-091da9` (worktree). Rebased onto
 `rohan/m3-analysis` @ `85adb19` (the M3 final-review fix batch). Pushed;
-PR not opened yet.
+PR #7 open. **Deployed to production 2026-07-28** — see below.
 
 Plan: [`../plans/2026-07-29-06-brutalist-ui.md`](../plans/2026-07-29-06-brutalist-ui.md)
 (includes the post-rebase amendment note). Spec:
@@ -115,6 +115,40 @@ because vitest does not type-check.
   islands), art route JSON 404 `no_art`, source/download JSON error shapes.
   `/api/build-info` answers signed out; `/` 302s to /login signed out.
 
+## Deployed to production — 2026-07-28 23:15–23:33 UTC
+
+Plan Task 10 Step 8 is **done**. Deployed from this worktree at `f2ac561`.
+
+- **Migrations 11–14** applied to hosted (`espiyvmjpmjobovmtslx`) by direct
+  `psql`, each `--single-transaction` with `ON_ERROR_STOP=1`, and recorded
+  in `supabase_migrations.schema_migrations`. `thumb_key` was the only new
+  column; `preview_key`/`peaks_key`/`artwork_key` already existed.
+  Verified: `analysis_persist` contains `thumb_key`; `pool_list`,
+  `pool_get`, `upload_batch_status` exist; `pool_tracks` grants nothing to
+  `authenticated`/`anon`/`public`.
+- **Analysis container** rebuilt and deployed with
+  `--containers-rollout=immediate`; image moved `dc32b3dc` → `27e61ddc`,
+  all 7 instances healthy on the new digest, 0 failed.
+- **App Worker** deployed; output names `localchune.butternutcrack.com`.
+  `/api/build-info` returns SHA `f2ac5617…` with no `-dirty` suffix.
+- **Both original tracks re-analysed** through the system's own self-heal
+  path — the rows were set back to `received` and the maintenance Worker's
+  `31 * * * *` cron did the rest: `requeue: stuck=2 sent=2 failed=0` at
+  23:31:49 UTC. **First live proof of the stuck-job cron.** bpm/key came
+  back bit-identical (147.809/8A, 133.774/5B); the FLAC gained
+  `thumb_key='thumb.jpg'` and a real 64x64 JPEG at
+  `derived/<id>/thumb.jpg`; the m4a, which has no artwork, correctly kept
+  `thumb_key` NULL.
+
+Full evidence: `.superpowers/sdd/deploy-report.md` (gitignored).
+
+**Watch out — the `.env` trap.** This worktree's `.env` pointed at the local
+stack, and `astro build` bakes `PUBLIC_SUPABASE_URL` into the *client*
+bundle. The `dist/` present before this deploy had `http://127.0.0.1:54321`
+baked in; shipping it would have pointed production at localhost. `.env` is
+now the hosted config; the local values moved to `.env.local.bak`. Swap back
+before resuming local verification.
+
 ## Not done yet
 
 1. **Browser visual checklist** (plan Task 10 Step 7): dark-mode inversion,
@@ -122,10 +156,9 @@ because vitest does not type-check.
    needing real R2 objects (streaming, downloads, thumbs as pixels). Local R2
    env vars are not set in dev, so source/download 502 locally — expected.
    The signed-in HTTP checks above were not repeated after the second
-   rebase; the automated gates were.
-2. **Deploy** (plan Task 10 Step 8): `npx supabase db push && npm run deploy` —
-   deliberately left for a human.
-3. Spec's unresolved questions 1–3 (dark-mode-in-v1, colour thumbs, 64px
+   rebase; the automated gates were. Production now has four analysed
+   tracks with real thumbs, so this checklist can be run against prod.
+2. Spec's unresolved questions 1–3 (dark-mode-in-v1, colour thumbs, 64px
    format) — plan chose the spec defaults; confirm or amend.
 
 ## Local test-login harness (for resuming verification)
