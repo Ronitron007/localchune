@@ -5,6 +5,33 @@
 
 import type { APIRoute } from 'astro'
 import { dbErrorResponse, jsonError, rpcError } from '../../lib/upload-api'
+import type { CrateCard } from '../../lib/org-api'
+
+/**
+ * The `+` picker's own crate list. GET /api/crates?mine=1 — the query
+ * string is a documentation convention, not a branch: this route only
+ * ever returns the caller's own crates, since that is the only list
+ * TrackRow.astro's picker ever needs (you can only add a track to a crate
+ * you own — crate_add's own 42501 check would reject anything else
+ * anyway). crate_list() (migration 20) already computes is_mine; this
+ * handler just filters to it and trims the row down to what the menu
+ * renders — {id, name}, nothing else.
+ */
+export const GET: APIRoute = async ({ locals }) => {
+  if (!locals.member) return jsonError(401, 'unauthenticated', 'sign in again')
+
+  let cards: CrateCard[]
+  try {
+    const result = await locals.supabase.rpc('crate_list')
+    if (result.error) return rpcError(result.error)
+    cards = (result.data ?? []) as CrateCard[]
+  } catch (e) {
+    return dbErrorResponse(e instanceof Error ? e.message : String(e))
+  }
+
+  const crates = cards.filter((c) => c.is_mine).map((c) => ({ id: c.id, name: c.name }))
+  return Response.json({ crates }, { headers: { 'cache-control': 'private, no-store' } })
+}
 
 /**
  * Crate creation. /crates.astro's "+ new crate" is a plain

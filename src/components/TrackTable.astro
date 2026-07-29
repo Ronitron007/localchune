@@ -36,6 +36,8 @@ const HEADERS: { label: string; sort: PoolSort | null; sr?: string }[] = [
   { label: '♥', sort: 'likes_desc' },
   { label: 'Plays', sort: 'plays_desc' },
   { label: '', sort: null, sr: 'Download' },
+  // Task 8: TrackRow's add-to-crate picker cell — see that component.
+  { label: '', sort: null, sr: 'Add to crate' },
 ]
 
 const emptyVariant = poolEmpty ? 'pool-empty' : query.q !== '' ? 'no-search-match' : 'no-filter-match'

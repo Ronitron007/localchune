@@ -5,7 +5,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  crateHref, crateItemToPoolTrack, formatCrateMeta, moveInList, sameOriginRedirectTarget,
+  addToCrate, crateHref, crateItemToPoolTrack, createCrate, DuplicateCrateItemError,
+  formatCrateMeta, moveInList, sameOriginRedirectTarget,
   SessionExpiredError, toggleLike, type CrateCard, type CrateItem,
 } from './org-api'
 
@@ -72,6 +73,83 @@ describe('toggleLike', () => {
     ))
 
     await expect(toggleLike(FILE_ID)).rejects.toThrow('forbidden')
+  })
+})
+
+describe('addToCrate', () => {
+  it('POSTs file_id as JSON to /api/crate/:id/add', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(addToCrate(CRATE_ID, FILE_ID)).resolves.toBeUndefined()
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`/api/crate/${CRATE_ID}/add`)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ file_id: FILE_ID })
+  })
+
+  it('throws SessionExpiredError when the response is not JSON — middleware redirected to /login', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ))
+
+    await expect(addToCrate(CRATE_ID, FILE_ID)).rejects.toBeInstanceOf(SessionExpiredError)
+  })
+
+  it('throws DuplicateCrateItemError on the route’s 409 duplicate response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ error: 'already in crate', message: 'already in crate' }, 409),
+    ))
+
+    await expect(addToCrate(CRATE_ID, FILE_ID)).rejects.toBeInstanceOf(DuplicateCrateItemError)
+  })
+
+  it('throws a plain Error carrying the server message on any other {error} body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ error: 'forbidden', message: 'not your crate' }, 403),
+    ))
+
+    await expect(addToCrate(CRATE_ID, FILE_ID)).rejects.toThrow('not your crate')
+  })
+
+  it('a non-409 error is not mistaken for a duplicate', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ error: 'forbidden', message: 'not your crate' }, 403),
+    ))
+
+    await expect(addToCrate(CRATE_ID, FILE_ID)).rejects.not.toBeInstanceOf(DuplicateCrateItemError)
+  })
+})
+
+describe('createCrate', () => {
+  it('POSTs name as a form body to /api/crates and resolves the new id', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(jsonResponse({ id: CRATE_ID }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await expect(createCrate('warehouse')).resolves.toBe(CRATE_ID)
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/crates')
+    expect(init.method).toBe('POST')
+  })
+
+  it('throws SessionExpiredError when the response is not JSON — middleware redirected to /login', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    ))
+
+    await expect(createCrate('warehouse')).rejects.toBeInstanceOf(SessionExpiredError)
+  })
+
+  it('throws with the server message on an {error} body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({ error: 'invalid', message: 'crate name must not be empty' }, 422),
+    ))
+
+    await expect(createCrate('')).rejects.toThrow('crate name must not be empty')
   })
 })
 

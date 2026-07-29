@@ -25,6 +25,10 @@
  * crateItemToPoolTrack (the CrateItem -> PoolTrack adapter that lets
  * /crate/[id].astro render crate_get() rows through the pool's existing
  * TrackRow.astro unchanged).
+ *
+ * M6a Task 8 adds addToCrate/createCrate — the two fetch wrappers behind
+ * TrackRow.astro's `+` picker (site.ts builds the menu and calls both; see
+ * that file's cratepick delegation for the DOM side).
  */
 import { formatDuration } from './format'
 import type { PoolTrack } from './pool-api'
@@ -81,6 +85,66 @@ export async function toggleLike(fileId: string): Promise<ToggleLikeResult> {
   const body = (await res.json()) as Partial<ToggleLikeResult> & { error?: string; message?: string }
   if (!res.ok) throw new Error(body.message ?? body.error ?? `request failed (${res.status})`)
   return { like_count: body.like_count ?? 0, liked: body.liked ?? false }
+}
+
+/**
+ * /api/crate/[id]/add.ts's one distinguishable failure: crate_items' PK is
+ * (crate_id, file_id) (migration 20), so re-adding a track already in the
+ * crate raises Postgres 23505, which the route maps to 409
+ * `{error: 'already in crate'}` BEFORE its generic rpcError table. Callers
+ * that only care about generic failure (a disabled/re-enabled button) can
+ * still catch plain Error; site.ts's picker catches this one specifically
+ * to render "already in <name>" instead of a generic failure message.
+ */
+export class DuplicateCrateItemError extends Error {
+  constructor(message = 'already in crate') {
+    super(message)
+    this.name = 'DuplicateCrateItemError'
+  }
+}
+
+/**
+ * POST /api/crate/:crateId/add. Resolves on the route's `{ok: true}`;
+ * throws SessionExpiredError on a non-JSON response (middleware redirect to
+ * /login, same convention as toggleLike above), DuplicateCrateItemError on
+ * the route's 409 duplicate, and a plain Error carrying the server message
+ * for anything else.
+ */
+export async function addToCrate(crateId: string, fileId: string): Promise<void> {
+  const res = await fetch(`/api/crate/${crateId}/add`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  })
+  const type = res.headers.get('content-type') ?? ''
+  if (!type.includes('application/json')) throw new SessionExpiredError()
+
+  const body = (await res.json()) as { ok?: boolean; error?: string; message?: string }
+  if (res.ok) return
+  if (res.status === 409) throw new DuplicateCrateItemError(body.message ?? body.error)
+  throw new Error(body.message ?? body.error ?? `request failed (${res.status})`)
+}
+
+/**
+ * POST /api/crates (the same route /crates.astro's "+ new crate" form
+ * posts to) with `Accept: application/json`, which gets `{id}` back instead
+ * of the plain-form 303 — see that route's header comment. The body is
+ * still `application/x-www-form-urlencoded`: crate_create only ever reads
+ * a form there, and this wrapper has no reason to be the first caller to
+ * send it JSON. Same SessionExpiredError/Error convention as addToCrate.
+ */
+export async function createCrate(name: string): Promise<string> {
+  const res = await fetch('/api/crates', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: new URLSearchParams({ name }).toString(),
+  })
+  const type = res.headers.get('content-type') ?? ''
+  if (!type.includes('application/json')) throw new SessionExpiredError()
+
+  const body = (await res.json()) as { id?: string; error?: string; message?: string }
+  if (!res.ok || !body.id) throw new Error(body.message ?? body.error ?? `request failed (${res.status})`)
+  return body.id
 }
 
 /** Mirrors crate_list()'s (migration 20) row shape, column for column. */

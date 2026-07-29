@@ -5,7 +5,9 @@
 
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
-import { SessionExpiredError, toggleLike } from '../lib/org-api'
+import {
+  addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
+} from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
 
 /**
@@ -325,6 +327,182 @@ async function submitCrateOrder(container: HTMLElement) {
     window.location.reload()
   }
 }
+
+/**
+ * M6a Task 8 — the `+` add-to-crate picker. TrackRow.astro renders one
+ * `<details class="cratepick" data-file-id="...">` per row, server-side
+ * contents a single no-JS fallback link to the track page. With JS, the
+ * first `toggle` any picker on the page ever fires (native `<details>`
+ * open, captured below — `toggle` does not bubble, so this listens on the
+ * CAPTURE phase, the one way to delegate a non-bubbling event from the
+ * document) fetches the caller's own crates exactly once
+ * (GET /api/crates?mine=1) and then rebuilds EVERY picker's menu on the
+ * page — not just the one that was opened — so opening any other picker
+ * afterwards needs no further round trip. `crateListPromise` itself is the
+ * cache; a picker already carrying `data-populated` is left alone on a
+ * later open, so mid-typed "new crate…" text or a disabled button from an
+ * in-flight request never gets clobbered by a redundant re-render.
+ */
+type CrateOption = { id: string; name: string }
+let crateListPromise: Promise<CrateOption[]> | null = null
+
+function loadCrateList(): Promise<CrateOption[]> {
+  if (crateListPromise === null) {
+    crateListPromise = fetch('/api/crates?mine=1', { headers: { accept: 'application/json' } })
+      .then((res) => {
+        const type = res.headers.get('content-type') ?? ''
+        if (!res.ok || !type.includes('application/json')) return { crates: [] as CrateOption[] }
+        return res.json() as Promise<{ crates?: CrateOption[] }>
+      })
+      .then((body) => body.crates ?? [])
+      .catch(() => [])
+  }
+  return crateListPromise
+}
+
+/** Replaces one picker's `.cratepick-menu` with real crate buttons plus an inline "new crate…" form. */
+function renderCratePickMenu(details: HTMLElement, crates: CrateOption[]) {
+  const menu = details.querySelector('.cratepick-menu')
+  if (!menu) return
+  menu.textContent = ''
+
+  if (crates.length === 0) {
+    const p = document.createElement('p')
+    p.className = 'explain'
+    p.textContent = 'No crates yet.'
+    menu.appendChild(p)
+  } else {
+    const list = document.createElement('ul')
+    list.className = 'cratepick-list'
+    for (const crate of crates) {
+      const li = document.createElement('li')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'cratepick-option'
+      button.textContent = crate.name
+      button.dataset.crateId = crate.id
+      li.appendChild(button)
+      list.appendChild(li)
+    }
+    menu.appendChild(list)
+  }
+
+  const form = document.createElement('form')
+  form.className = 'cratepick-new'
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.name = 'name'
+  input.placeholder = 'new crate…'
+  input.maxLength = 80
+  const submit = document.createElement('button')
+  submit.type = 'submit'
+  submit.className = 'btn-secondary'
+  submit.textContent = 'Create'
+  form.appendChild(input)
+  form.appendChild(submit)
+  menu.appendChild(form)
+}
+
+function populateCratePickers(crates: CrateOption[]) {
+  document.querySelectorAll<HTMLElement>('details.cratepick:not([data-populated])').forEach((details) => {
+    renderCratePickMenu(details, crates)
+    details.dataset.populated = 'true'
+  })
+}
+
+document.addEventListener('toggle', (e) => {
+  const details = e.target
+  if (!(details instanceof HTMLDetailsElement) || !details.classList.contains('cratepick')) return
+  if (!details.open) return
+  void loadCrateList().then(populateCratePickers)
+}, true)
+
+/**
+ * A crate button inside an already-populated picker menu. Optimistic UX
+ * would need a like-toggle-style rollback with nothing to roll back to (a
+ * fresh add has no prior state) — disable-while-in-flight is enough here.
+ * Feedback goes to the same `#player-label` status region the play/like
+ * handlers already report through: "added to <name>" on success,
+ * "already in <name>" on org-api.ts's DuplicateCrateItemError specifically,
+ * so a stale menu (crate deleted mid-session, session expired) reads
+ * distinctly from an ordinary failure.
+ */
+document.addEventListener('click', (e) => {
+  const button = (e.target as Element).closest?.('button.cratepick-option')
+  if (!(button instanceof HTMLButtonElement)) return
+  const details = button.closest('details.cratepick')
+  const fileId = details instanceof HTMLElement ? details.dataset.fileId : undefined
+  const crateId = button.dataset.crateId
+  const crateName = button.textContent ?? 'crate'
+  if (!fileId || !crateId) return
+  e.preventDefault()
+
+  button.disabled = true
+  void (async () => {
+    try {
+      await addToCrate(crateId, fileId)
+      if (label) label.textContent = `added to ${crateName}`
+      if (details instanceof HTMLDetailsElement) details.open = false
+    } catch (err) {
+      if (label) {
+        label.textContent = err instanceof DuplicateCrateItemError
+          ? `already in ${crateName}`
+          : err instanceof SessionExpiredError
+            ? 'Session ended — reload to sign in.'
+            : err instanceof Error ? err.message : 'Could not add to crate.'
+      }
+    } finally {
+      button.disabled = false
+    }
+  })()
+})
+
+/**
+ * The picker's inline "new crate…" input — createCrate() then addToCrate()
+ * chained, same two-step the brief describes. A fresh crate can never
+ * already contain this file, so there is no duplicate branch to handle
+ * here the way the button handler above needs one. On success every picker
+ * on the page is invalidated and re-populated (not just this one) so the
+ * new crate shows up as an option everywhere, not only in the row it was
+ * created from.
+ */
+document.addEventListener('submit', (e) => {
+  const form = (e.target as Element).closest?.('form.cratepick-new')
+  if (!(form instanceof HTMLFormElement)) return
+  const details = form.closest('details.cratepick')
+  const fileId = details instanceof HTMLElement ? details.dataset.fileId : undefined
+  const input = form.querySelector('input[name="name"]')
+  if (!fileId || !(input instanceof HTMLInputElement)) return
+  e.preventDefault()
+
+  const name = input.value.trim()
+  if (name === '') return
+  const submit = form.querySelector('button[type="submit"]')
+  if (submit instanceof HTMLButtonElement) submit.disabled = true
+
+  void (async () => {
+    try {
+      const crateId = await createCrate(name)
+      await addToCrate(crateId, fileId)
+      if (label) label.textContent = `added to ${name}`
+      input.value = ''
+      if (details instanceof HTMLDetailsElement) details.open = false
+      crateListPromise = null
+      document.querySelectorAll<HTMLElement>('details.cratepick').forEach((d) => {
+        delete d.dataset.populated
+      })
+      void loadCrateList().then(populateCratePickers)
+    } catch (err) {
+      if (label) {
+        label.textContent = err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : err instanceof Error ? err.message : 'Could not create crate.'
+      }
+    } finally {
+      if (submit instanceof HTMLButtonElement) submit.disabled = false
+    }
+  })()
+})
 
 const autosubmit = debounce((form: HTMLFormElement) => form.requestSubmit(), 300)
 document.addEventListener('input', (e) => {

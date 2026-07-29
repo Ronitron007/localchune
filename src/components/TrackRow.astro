@@ -4,9 +4,9 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// One row. No crates column (M6 — omit, don't disable). Artist and title
-// come from the server (migration 11's display_* fallbacks) and are never
-// re-derived here — search matches the server's strings.
+// One row. Artist and title come from the server (migration 11's
+// display_* fallbacks) and are never re-derived here — search matches the
+// server's strings.
 //
 // The play control is a LINK whose href is the track page: with JS the
 // site script intercepts it and streams; without JS it navigates, which
@@ -101,6 +101,28 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="plays num">{track.play_count}</td>
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
+  </td>
+  {/* Task 8: add-to-crate picker, every row, pool table and crate page
+      alike — you can only add to a crate you OWN (crate_add's 42501
+      check), never the one you might currently be viewing, so this is not
+      slotted the way the crate page's owner-only move/remove controls are.
+      Server-rendered contents are the no-JS fallback ONLY: a disclosure
+      with one link to the track page, where the real no-JS `<select>` +
+      submit form lives (see track/[id].astro). With JS, site.ts's
+      document-level `toggle` delegation fetches the caller's own crates
+      ONCE (GET /api/crates?mine=1) on first open of ANY picker on the
+      page, then replaces `.cratepick-menu`'s contents in every picker —
+      this one included — with real crate buttons plus an inline
+      "new crate…" form. `data-file-id` on the <details> itself (not the
+      row) is what lets that delegation work whether or not this row is
+      also `reorderable`. */}
+  <td class="addcrate">
+    <details class="cratepick" data-file-id={track.file_id}>
+      <summary class="btn-secondary" aria-label={`Add ${track.display_title} to a crate`}>+</summary>
+      <div class="cratepick-menu">
+        <a href={`/track/${track.file_id}`}>manage on track page →</a>
+      </div>
+    </details>
   </td>
   <slot name="controls" />
 </tr>

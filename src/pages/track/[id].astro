@@ -10,6 +10,7 @@ import { formatBytes, formatDuration } from '../../lib/format'
 import { formatBpm } from '../../lib/track-format'
 import { isUuid } from '../../lib/upload-api'
 import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../../lib/file-state'
+import type { CrateCard } from '../../lib/org-api'
 
 const { id } = Astro.params
 // Guard before the RPC: a non-uuid path segment would otherwise reach
@@ -54,6 +55,17 @@ if (isUploader && TERMINAL_FAILED_STATES.has(t.state)) {
 }
 
 const tagsAction = `/api/track/${t.file_id}/tags`
+
+// Task 8's no-JS add-to-crate fallback: TrackRow.astro's picker degrades
+// to a link straight to THIS page (rendered without JS, opening the
+// <details> just shows that link), and this is where the real form lives —
+// a <select> cannot pick its own form's action, so the form always posts
+// to add-dispatch.ts with crate_id as a second field. Every member reaching
+// this page (middleware requires one) can see it; only crate_list's is_mine
+// rows are offered, since crate_add rejects anything else with 42501 anyway.
+const { data: cardsData, error: cardsError } = await Astro.locals.supabase.rpc('crate_list')
+if (cardsError) console.error('crate_list failed:', cardsError.message)
+const myCrates = ((cardsData ?? []) as CrateCard[]).filter((c) => c.is_mine)
 ---
 <Shell title={`localchune — ${title}`}>
   <article class="trackdetail">
@@ -175,6 +187,37 @@ const tagsAction = `/api/track/${t.file_id}/tags`
         </form>
       )}
     </section>
+
+    {/* Task 8's no-JS add-to-crate fallback — every member, not just the
+        uploader (crate_add's own ownership check is on the CRATE, not the
+        file). Gated the same as the transport/signals block above: a
+        non-stored file has nothing worth crating yet. A plain <select> +
+        submit form cannot put the chosen crate id into its own action
+        attribute, so this always posts to the fixed add-dispatch.ts
+        endpoint with crate_id as a second field — see that route's header
+        comment. With JS, this section is never reached: TrackRow.astro's
+        picker on THIS row (rendered as part of the pool table/crate page
+        elsewhere) or the track page's own `.cratepick` handles it inline
+        instead, and site.ts's picker never touches this form. */}
+    {t.state === 'stored' && (
+      <section class="addcrate">
+        <h2>Add to a crate</h2>
+        {myCrates.length === 0 ? (
+          <p class="explain">You have no crates yet. <a href="/crates">Create one</a>.</p>
+        ) : (
+          <form method="post" action="/api/crate/add-dispatch" class="addcrateform">
+            <input type="hidden" name="file_id" value={t.file_id} />
+            <label>
+              <span class="sr-only">Choose a crate</span>
+              <select name="crate_id" required>
+                {myCrates.map((c) => <option value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+            <button type="submit" class="btn">Add to crate</button>
+          </form>
+        )}
+      </section>
+    )}
 
     <section class="identity">
       <h2>Identity</h2>

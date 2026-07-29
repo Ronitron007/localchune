@@ -396,6 +396,67 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 tr[draggable='true'] { cursor: grab; }
 tr[draggable='true']:active { cursor: grabbing; }
 
+/* --- TrackRow's `+` add-to-crate picker (M6a Task 8) — every row, pool
+   table and crate page alike. `<details>` gets no extra chrome of its own
+   (no border/background) — the `<summary>` reuses .btn-secondary so it
+   reads exactly like any other row-level control, and the menu popping
+   open below it is enough of an affordance without a native marker glyph.
+   `.cratepick-menu` is deliberately narrow (a picker, not a form page) and
+   positioned to sit just under the summary rather than push the row's own
+   height around when it opens. --- */
+.addcrate { white-space: nowrap; }
+.cratepick { position: relative; display: inline-block; }
+.cratepick > summary {
+  list-style: none;
+  width: 1.6em;
+  text-align: center;
+}
+.cratepick > summary::-webkit-details-marker { display: none; }
+.cratepick-menu {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  top: 100%;
+  margin-top: 2px;
+  min-width: 10rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: var(--pad-1);
+}
+.cratepick-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cratepick-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  padding: calc(var(--pad-1) / 2) 0;
+  cursor: pointer;
+}
+.cratepick-option:hover, .cratepick-option:focus { text-decoration: underline; }
+.cratepick-option:disabled { cursor: wait; opacity: 0.6; }
+.cratepick-new {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  margin-top: var(--pad-1);
+  padding-top: var(--pad-1);
+  border-top: 1px solid var(--faint);
+}
+.cratepick-new input[type='text'] { width: 100%; min-width: 0; }
+
+/* --- /track/[id]: the no-JS add-to-crate fallback form (M6a Task 8) —
+   same inline shape as .tagform/.claimform above. --- */
+.addcrateform { display: flex; align-items: center; gap: var(--pad-1); margin-top: var(--pad-1); }
+
 /* --- upload dropzone + rows: the owner's own screenshot, "text flush
    against its dashed border" — pad-3 on the box that draws the border,
    and vertical rhythm between the box/label/button groups below it. */
