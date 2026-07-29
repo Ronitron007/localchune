@@ -6,6 +6,10 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show } from 'solid-js'
 import { createStore } from 'solid-js/store'
 import { planUpload } from '../lib/upload-policy'
+import {
+  walkEntries, filterFlatFiles, MAX_FILES,
+  type FileSystemEntryLike, type FileEntryLike,
+} from '../lib/dir-walk'
 // readDurationMs resolves to a DurationRead ({ durationMs, source, note? }),
 // never a bare number — a bare number cannot say "this is an estimate", and
 // that distinction is the entire point of Task 6. preflightFile wraps
@@ -52,39 +56,50 @@ const ACCEPT = '.mp3,.flac,.wav,.wave,.aiff,.aif,.aifc,.m4a,.mp4,.ogg,.oga,.opus
 /**
  * A DJ drags a FOLDER of 200 tracks, not 200 selected files. dataTransfer.files
  * is empty for a directory drop, so the entry API is the only way to read it.
+ * The actual recursive walk — including the readEntries() pagination loop
+ * and the extension/dotfile/__MACOSX/zero-byte/depth/count filtering — is
+ * dir-walk.ts, pure and unit-tested in node. This function is only the DOM
+ * boundary: pulling entries out of a DataTransfer and narrowing them to
+ * dir-walk's minimal FileSystemEntryLike shape.
  *
- * readEntries() returns at most 100 children per call and an empty array when
- * exhausted — the loop is mandatory, and omitting it is the classic bug that
- * silently drops track 101 onwards.
+ * A loose file dropped alongside (or instead of) a folder is NOT run
+ * through dir-walk's filter — it is handed straight to enqueue(), same as
+ * before, so preflightFile still reports a visible, specific reason
+ * ("skipped — not an audio file…") instead of the file silently
+ * vanishing. The filter exists to declutter a folder's worth of
+ * .DS_Store/cover-art/__MACOSX junk, not to police a file the user picked
+ * on purpose.
  */
-async function collectFiles(transfer: DataTransfer): Promise<File[]> {
+async function collectFiles(transfer: DataTransfer): Promise<{ files: File[]; truncated: boolean }> {
   const items = [...transfer.items]
   const entries = items.map((item) =>
     typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null)
-  if (entries.every((entry) => entry === null)) return [...transfer.files]
-
-  const out: File[] = []
-  const walk = async (entry: FileSystemEntry | null): Promise<void> => {
-    if (entry === null) return
-    if (entry.isFile) {
-      const file = await new Promise<File | null>((resolve) => {
-        (entry as FileSystemFileEntry).file(resolve, () => resolve(null))
-      })
-      if (file !== null) out.push(file)
-      return
-    }
-    if (!entry.isDirectory) return
-    const reader = (entry as FileSystemDirectoryEntry).createReader()
-    for (;;) {
-      const batch = await new Promise<FileSystemEntry[]>((resolve) => {
-        reader.readEntries(resolve, () => resolve([]))
-      })
-      if (batch.length === 0) return
-      for (const child of batch) await walk(child)
-    }
+  if (entries.every((entry) => entry === null)) {
+    // No File and Directory Entries API support at all. Degrade to the flat
+    // list DataTransfer gives directly — folder contents may simply be
+    // absent in that case, which is the browser's limitation, not this
+    // module's.
+    return { files: [...transfer.files], truncated: false }
   }
-  for (const entry of entries) await walk(entry)
-  return out
+
+  const files: File[] = []
+  let truncated = false
+  for (const entry of entries) {
+    if (entry === null) continue
+    if (entry.isDirectory) {
+      const remaining = MAX_FILES - files.length
+      const result = await walkEntries([entry as unknown as FileSystemEntryLike], { maxFiles: remaining })
+      files.push(...result.files)
+      if (!result.ok) truncated = true
+    } else {
+      const file = await new Promise<File | null>((resolve) => {
+        (entry as unknown as FileEntryLike).file(resolve, () => resolve(null))
+      })
+      if (file !== null) files.push(file)
+    }
+    if (truncated) break
+  }
+  return { files, truncated }
 }
 
 export default function UploadDropzone(props: { userId: string }) {
@@ -169,12 +184,32 @@ export default function UploadDropzone(props: { userId: string }) {
     event.preventDefault()
     setOver(false)
     if (event.dataTransfer === null) return
-    await enqueue(await collectFiles(event.dataTransfer))
+    const { files, truncated } = await collectFiles(event.dataTransfer)
+    if (truncated) setNotice(`Only the first ${MAX_FILES} files in that folder were used.`)
+    await enqueue(files)
   }
 
   const onPick = async (event: Event & { currentTarget: HTMLInputElement }) => {
     const list = event.currentTarget.files
     if (list !== null) await enqueue([...list])
+    event.currentTarget.value = ''
+  }
+
+  /**
+   * The picker's folder path: a second `<input type="file" webkitdirectory>`
+   * next to the plain file input — a single `<input>` cannot be BOTH a file
+   * picker and a folder picker at once, hence two inputs. The browser has
+   * already done the recursion by the time `files` lands here; only the
+   * shared dir-walk filter (extension allowlist, dotfiles, __MACOSX,
+   * zero-byte, the same 2,000-file cap) needs applying.
+   */
+  const onPickFolder = async (event: Event & { currentTarget: HTMLInputElement }) => {
+    const list = event.currentTarget.files
+    if (list !== null) {
+      const result = filterFlatFiles(list)
+      if (!result.ok) setNotice(`Only the first ${MAX_FILES} files in that folder were used.`)
+      await enqueue(result.files)
+    }
     event.currentTarget.value = ''
   }
 
@@ -315,7 +350,25 @@ export default function UploadDropzone(props: { userId: string }) {
       >
         <p>Drop audio files or a folder here.</p>
         <p>mp3, flac, wav, aiff, m4a, ogg, opus — up to 15 minutes each.</p>
-        <input type="file" multiple accept={ACCEPT} onInput={onPick} />
+        <p>
+          <input type="file" multiple accept={ACCEPT} onInput={onPick} />
+          {' '}or{' '}
+          {/* webkitdirectory is not in Solid's InputHTMLAttributes typings
+              (it is a non-standard, unratified attribute), so it is set
+              imperatively via ref rather than as a JSX prop. A folder
+              picker and a file picker cannot share one <input> — selecting
+              webkitdirectory turns the OS dialog into a folder chooser and
+              silently disables multi-file selection. */}
+          <input
+            type="file"
+            aria-label="Select a folder"
+            ref={(el) => {
+              el.setAttribute('webkitdirectory', '')
+              el.setAttribute('directory', '')
+            }}
+            onInput={onPickFolder}
+          />
+        </p>
       </div>
 
       <p>
