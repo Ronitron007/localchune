@@ -16,7 +16,7 @@ import { sameOriginRedirectTarget } from '../../../../lib/org-api'
  * One thing remove.ts/move.ts never need: crate_items' primary key is
  * (crate_id, file_id) (migration 20), so re-adding a track already in the
  * crate raises Postgres 23505 (unique_violation) rather than a silent
- * no-op. That is mapped to 409 `{error: 'already in crate'}` BEFORE the
+ * no-op. That is mapped to 409 `{error: 'already_in_crate'}` BEFORE the
  * generic rpcError table — upload-api.ts's RPC_STATUS has no 23505 entry,
  * since no other route in this family ever inserts. org-api.ts's
  * addToCrate() turns that 409 into a distinguishable DuplicateCrateItemError
@@ -58,7 +58,7 @@ export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
   try {
     const { error } = await locals.supabase.rpc('crate_add', { p_crate: id, p_file: fileId })
     if (error) {
-      if (error.code === '23505') return jsonError(409, 'already in crate', 'already in crate')
+      if (error.code === '23505') return jsonError(409, 'already_in_crate', 'already in crate')
       return rpcError(error)
     }
   } catch (e) {

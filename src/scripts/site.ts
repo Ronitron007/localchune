@@ -403,10 +403,39 @@ function renderCratePickMenu(details: HTMLElement, crates: CrateOption[]) {
   menu.appendChild(form)
 }
 
+/**
+ * True when `details` is open with unsent text in its "new crate…" input —
+ * the one case `populateCratePickers` must leave alone rather than clobber
+ * with a fresh `renderCratePickMenu` (which blows away the input's value by
+ * rebuilding the form from scratch). Left un-populated, it picks back up
+ * next time it is toggled shut and open again.
+ */
+function hasUnsentDraft(details: HTMLElement): boolean {
+  if (!(details instanceof HTMLDetailsElement) || !details.open) return false
+  const input = details.querySelector<HTMLInputElement>('form.cratepick-new input[name="name"]')
+  return input !== null && input.value.trim() !== ''
+}
+
 function populateCratePickers(crates: CrateOption[]) {
   document.querySelectorAll<HTMLElement>('details.cratepick:not([data-populated])').forEach((details) => {
+    if (hasUnsentDraft(details)) return
     renderCratePickMenu(details, crates)
     details.dataset.populated = 'true'
+  })
+}
+
+/**
+ * Nulls the cache and every picker's `data-populated` flag so the next
+ * `toggle`/create refetches and rebuilds from scratch. Does NOT itself
+ * re-render — callers that want an immediate rebuild chain
+ * `loadCrateList().then(populateCratePickers)` after this; callers that
+ * only need the next OPEN to see fresh data (e.g. a failed add after a
+ * successful create) call this alone.
+ */
+function invalidateCratePickerCache() {
+  crateListPromise = null
+  document.querySelectorAll<HTMLElement>('details.cratepick').forEach((d) => {
+    delete d.dataset.populated
   })
 }
 
@@ -416,6 +445,18 @@ document.addEventListener('toggle', (e) => {
   if (!details.open) return
   void loadCrateList().then(populateCratePickers)
 }, true)
+
+/**
+ * Invariant: `crateListPromise` is fetched at most once per DOCUMENT, not
+ * once per session — a ClientRouter soft navigation swaps in a new page
+ * body (fresh, un-populated pickers) without a full reload, so a crate
+ * created via another page's own form (e.g. /crates.astro) would otherwise
+ * stay invisible in every picker until a hard reload. Null the cache on
+ * every swap so the next picker open refetches.
+ */
+document.addEventListener('astro:after-swap', () => {
+  crateListPromise = null
+})
 
 /**
  * A crate button inside an already-populated picker menu. Optimistic UX
@@ -464,7 +505,21 @@ document.addEventListener('click', (e) => {
  * here the way the button handler above needs one. On success every picker
  * on the page is invalidated and re-populated (not just this one) so the
  * new crate shows up as an option everywhere, not only in the row it was
- * created from.
+ * created from — except one currently open with its own unsent "new
+ * crate…" text, which `populateCratePickers`'s `hasUnsentDraft` check
+ * leaves alone rather than clobbers; it re-populates on that picker's next
+ * toggle instead.
+ *
+ * The two awaits are in separate try/catches on purpose: if createCrate
+ * throws, nothing was created server-side, so the generic message below is
+ * accurate. If it succeeds but addToCrate then throws, the crate DOES exist
+ * server-side even though this file was never added to it — the cache is
+ * already stale at that point, so it is invalidated here too (lazily; the
+ * next open refetches), and the status message says so explicitly. A user
+ * who only sees "could not add" and retries by re-typing the same name
+ * would mint a second crate via createCrate's own auto-suffix ("name (2)")
+ * instead of reusing the one that already exists — the message steers them
+ * to the picker list instead.
  */
 document.addEventListener('submit', (e) => {
   const form = (e.target as Element).closest?.('form.cratepick-new')
@@ -481,22 +536,32 @@ document.addEventListener('submit', (e) => {
   if (submit instanceof HTMLButtonElement) submit.disabled = true
 
   void (async () => {
+    let crateId: string
     try {
-      const crateId = await createCrate(name)
-      await addToCrate(crateId, fileId)
-      if (label) label.textContent = `added to ${name}`
-      input.value = ''
-      if (details instanceof HTMLDetailsElement) details.open = false
-      crateListPromise = null
-      document.querySelectorAll<HTMLElement>('details.cratepick').forEach((d) => {
-        delete d.dataset.populated
-      })
-      void loadCrateList().then(populateCratePickers)
+      crateId = await createCrate(name)
     } catch (err) {
       if (label) {
         label.textContent = err instanceof SessionExpiredError
           ? 'Session ended — reload to sign in.'
           : err instanceof Error ? err.message : 'Could not create crate.'
+      }
+      if (submit instanceof HTMLButtonElement) submit.disabled = false
+      return
+    }
+
+    try {
+      await addToCrate(crateId, fileId)
+      if (label) label.textContent = `added to ${name}`
+      input.value = ''
+      if (details instanceof HTMLDetailsElement) details.open = false
+      invalidateCratePickerCache()
+      void loadCrateList().then(populateCratePickers)
+    } catch (err) {
+      invalidateCratePickerCache()
+      if (label) {
+        label.textContent = err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : `"${name}" was created, but adding the track failed — pick it from the list to retry`
       }
     } finally {
       if (submit instanceof HTMLButtonElement) submit.disabled = false

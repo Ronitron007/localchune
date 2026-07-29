@@ -15,7 +15,7 @@ import { sameOriginRedirectTarget } from '../../../lib/org-api'
  * `crate_id` carried as a second form field alongside `file_id`, and this
  * route does exactly what /api/crate/[id]/add.ts does with the crate id
  * read from the body instead of the path: same member gate, same crate_add
- * call, same 23505 -> 409 `{error: 'already in crate'}` mapping, same
+ * call, same 23505 -> 409 `{error: 'already_in_crate'}` mapping, same
  * 303-to-Referer round trip.
  *
  * The JS picker (site.ts, org-api.ts's addToCrate) never calls this route —
@@ -41,7 +41,7 @@ export const POST: APIRoute = async ({ request, locals, redirect }) => {
   try {
     const { error } = await locals.supabase.rpc('crate_add', { p_crate: crateId, p_file: fileId })
     if (error) {
-      if (error.code === '23505') return jsonError(409, 'already in crate', 'already in crate')
+      if (error.code === '23505') return jsonError(409, 'already_in_crate', 'already in crate')
       return rpcError(error)
     }
   } catch (e) {
