@@ -479,3 +479,151 @@ def test_the_widened_verdict_keeps_the_bitrate_floor_out_of_reach():
     assert forensics.quality_tier(
         container='mp3', ancestor=verdict, cutoff_hz=15811, eff_bits=0,
         codec='mp3', cliff_db=38.03, declared_kbps=320) == 1
+
+
+# --- A soft rolloff is a dark master ABOVE the 20800 Hz bar as well as below.
+#
+# Production, 2026-07-29, owner-reported: file d468ee5c, "Paul Kalkbrenner —
+# Altes Kamuffel (Special Berlin Calling Edit).flac" — 24,094,350 bytes over
+# 256.2 s (752 kbps), flac/flac, 16-bit, ancestor 'none', cutoff 20090 Hz,
+# cliff 4.25 dB — graded TIER 3, the same as a 256 kbps AAC. 20090 misses the
+# 20800 bar, so a real lossless master was demoted by 710 Hz of missing
+# ultrasonics that its own 4.25 dB rolloff already explained.
+#
+# The two integration tests below are the ones that matter. They differ by
+# EXACTLY one step — a real 320 kbps LAME round trip — from the same soft-EQ'd
+# source, so anything that let the fake through would have to let it through
+# on that step alone.
+
+
+def _soft_rolloff_wav(tmp_path, name: str = 'softmaster.wav') -> str:
+    """White noise with a gentle 20 dB/kHz shelf above 18 kHz.
+
+    A real firequalizer curve, not a digital brickwall: this is what a dark
+    master looks like to measure_cutoff — the music fades out rather than
+    hitting a wall. It puts the measured cutoff just under the 20800 Hz bar
+    with a single-digit cliff, i.e. the d468ee5c shape.
+    """
+    dst = str(tmp_path / name)
+    _run('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi',
+         '-i', 'anoisesrc=color=white:duration=60:sample_rate=44100:seed=11',
+         '-ac', '2', '-af',
+         "firequalizer=gain='if(lt(f,18000), 0, -20*(f-18000)/1000)'", dst)
+    return dst
+
+
+def _grade(path: str) -> tuple[int, dict]:
+    """Run the REAL production path over a real file and return its tier.
+
+    Uses app.main._declared_kbps rather than a reimplementation, so the
+    bitrate the test feeds quality_tier is the one production would feed it.
+    """
+    import json
+    from app.main import _declared_kbps
+
+    info = json.loads(subprocess.run(
+        ['ffprobe', '-v', 'quiet', '-print_format', 'json',
+         '-show_format', '-show_streams', path],
+        capture_output=True, text=True, check=True).stdout)
+    stream = next(s for s in info['streams'] if s['codec_type'] == 'audio')
+    container = info['format']['format_name'].split(',')[0]
+    codec = stream['codec_name']
+    duration_ms = int(float(info['format']['duration']) * 1000)
+
+    w = decode_windows(path, count=8, secs=10, duration_s=duration_ms / 1000)
+    spec = forensics.measure_spectrum(w, 44100)
+    cutoff, cliff = forensics.cutoff_from_spectrum(spec)
+    hf = forensics.hf_ref_delta_db(spec)
+    bits = forensics.effective_bit_depth(path)
+    kbps = _declared_kbps(info, stream, duration_ms)
+    ancestor = forensics.classify_ancestor(cutoff, cliff, None, len(w), hf)
+    tier = forensics.quality_tier(container, ancestor, cutoff, bits,
+                                  codec, cliff, kbps)
+    return tier, dict(cutoff=cutoff, cliff=cliff, bits=bits, kbps=kbps,
+                      ancestor=ancestor, container=container, codec=codec)
+
+
+def test_a_real_soft_rolloff_flac_below_20800_still_reaches_tier_five(tmp_path):
+    """THE d468ee5c CASE, end to end through real ffmpeg and real flac.
+
+    A soft-EQ'd full-band source encoded by the real FLAC encoder must be
+    graded a lossless master even though its measured cutoff sits under the
+    20800 Hz bar.
+    """
+    src = _soft_rolloff_wav(tmp_path)
+    dst = str(tmp_path / 'softmaster.flac')
+    _run('ffmpeg', '-y', '-v', 'error', '-i', src, '-c:a', 'flac', dst)
+
+    tier, m = _grade(dst)
+    # The fixture has to actually reproduce the production shape, or the test
+    # proves nothing about the production file.
+    assert m['codec'] == 'flac'
+    assert m['cutoff'] < 20800, f"fixture is not below the bar: {m}"
+    assert m['cliff'] < forensics.ENCODER_CLIFF_DB, f"fixture rolloff is not soft: {m}"
+    assert m['ancestor'] == 'none', m
+    assert m['bits'] >= 16 and m['kbps'] >= forensics.LOSSLESS_KBPS_FLOOR, m
+    assert tier == 5, f'real lossless soft-rolloff master graded {tier}: {m}'
+
+
+def test_the_same_source_via_a_real_320k_mp3_never_reaches_tier_five(tmp_path):
+    """THE ANTI-CHEAT, on the one file that could break it.
+
+    Identical source, identical FLAC encoder, one extra step: a real
+    320 kbps libmp3lame round trip. The wall that round trip leaves must
+    still decide the grade, and the ~1000 kbps the FLAC then declares must
+    buy nothing.
+    """
+    src = _soft_rolloff_wav(tmp_path, 'transcode_src.wav')
+    mp3 = str(tmp_path / 'lossy320.mp3')
+    dst = str(tmp_path / 'fake320.flac')
+    _run('ffmpeg', '-y', '-v', 'error', '-i', src,
+         '-c:a', 'libmp3lame', '-b:a', '320k', mp3)
+    _run('ffmpeg', '-y', '-v', 'error', '-i', mp3, '-c:a', 'flac', dst)
+
+    tier, m = _grade(dst)
+    assert m['codec'] == 'flac'
+    # It clears the bitrate floor comfortably — decoded lossy audio compresses
+    # WORSE than the honest master it imitates, so the floor is no defence
+    # and is not being asked to be one.
+    assert m['kbps'] >= forensics.LOSSLESS_KBPS_FLOOR, m
+    # Both real gates reject it independently.
+    assert m['cliff'] >= forensics.ENCODER_CLIFF_DB, f'transcode cliff went soft: {m}'
+    assert m['ancestor'] in ('suspected', 'confirmed'), m
+    assert tier < 5, f'a real 320k transcode was graded {tier}: {m}'
+    assert tier == 3, f'expected the measured 20 kHz bandwidth to decide: {tier} {m}'
+
+
+def test_the_new_branch_needs_every_one_of_its_conditions(tmp_path):
+    """Unit-level pins on the gate, so a later edit cannot widen it quietly."""
+    base = dict(container='flac', ancestor='none', cutoff_hz=20090,
+                eff_bits=16, codec='flac', cliff_db=4.25, declared_kbps=752)
+    assert forensics.quality_tier(**base) == 5              # the production row
+    assert forensics.quality_tier(**{**base, 'cliff_db': 15.0}) == 3   # a wall
+    assert forensics.quality_tier(**{**base, 'eff_bits': 8}) == 3      # not 16-bit
+    assert forensics.quality_tier(**{**base, 'declared_kbps': 499}) == 3
+    assert forensics.quality_tier(**{**base, 'ancestor': 'suspected'}) == 3
+    assert forensics.quality_tier(**{**base, 'container': 'mp3',
+                                     'codec': 'mp3'}) == 3            # lossy
+    # cliff_db unknown (the four-argument callers) keeps the old behaviour.
+    assert forensics.quality_tier(**{**base, 'cliff_db': None}) == 3
+
+
+def test_the_dark_lossless_master_can_now_outrank_its_own_aac(tmp_path):
+    """WHY NO CUTOFF FLOOR. The lossless sibling of the '02 GOLD' case — a
+    16 kHz dark master, soft rolloff — must out-tier the 256 kbps AAC of the
+    same recording, or the merge this pool wants cannot happen."""
+    aac = forensics.quality_tier(container='mov', ancestor='none',
+                                 cutoff_hz=16387, eff_bits=0, codec='aac',
+                                 cliff_db=2.52, declared_kbps=283)
+    flac = forensics.quality_tier(container='flac', ancestor='none',
+                                  cutoff_hz=16387, eff_bits=16, codec='flac',
+                                  cliff_db=2.52, declared_kbps=640)
+    assert (aac, flac) == (3, 5)
+
+
+def test_abstain_still_answers_four_not_five(tmp_path):
+    """The new branch is checked before the abstain branch, so prove the
+    abstain path is still reachable: 'abstain' is not 'none'."""
+    assert forensics.quality_tier(
+        container='flac', ancestor='abstain', cutoff_hz=15000, eff_bits=16,
+        codec='flac', cliff_db=1.0, declared_kbps=900) == 4

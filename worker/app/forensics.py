@@ -336,6 +336,24 @@ ENCODER_CLIFF_DB = 15.0
 # anti-cheat.
 _KBPS_TIERS = ((240, 3), (160, 2))
 
+# The bitrate a lossless STREAM has to declare before its soft rolloff is
+# read as a dark master rather than as reduced audio.
+#
+# 16-bit/44.1 kHz stereo PCM is 1411 kbps. Real FLAC of real music lands
+# between ~600 and ~1100 kbps (production file d468ee5c is 753; the real
+# 320k-MP3-to-FLAC transcode fixture in test_forensics.py is 1037). 500 kbps
+# is ~35% of uncompressed — under every full-band stereo master, so the floor
+# only rejects audio that was reduced some OTHER way: mono, a low sample
+# rate, or near-silence. None of those should collect a verified-master
+# grade off a container name.
+#
+# THIS IS NOT THE ANTI-CHEAT, and must not be mistaken for it. A fake FLAC
+# clears 500 kbps trivially — decoded lossy audio is noisier than its source
+# and compresses WORSE, so the fake declares MORE than the honest file it
+# imitates. What stops the fake is the cliff and the ancestor verdict, both
+# checked first and both untouched here.
+LOSSLESS_KBPS_FLOOR = 500
+
 
 def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int,
                  codec: str = '', cliff_db: float | None = None,
@@ -370,6 +388,39 @@ def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int,
     lossless = is_lossless(container, codec)
     if lossless and ancestor == 'none' and cutoff_hz >= 20800 and eff_bits >= 16:
         return 5
+
+    # A SOFT ROLLOFF DESCRIBES THE MASTER, NOT AN ENCODER — and that is as
+    # true above the 20800 Hz bar as below it. Production, 2026-07-29, owner
+    # -reported: file d468ee5c, "Paul Kalkbrenner — Altes Kamuffel", a 24 MB
+    # FLAC over 256 s (753 kbps), 16-bit, ancestor 'none', measured cutoff
+    # 20090 Hz with a cliff of 4.25 dB. It landed at TIER 3: 20090 misses the
+    # 20800 bar, so it fell past 5, was not 'abstain' so it fell past 4, and
+    # then max(by_cutoff=3, by_kbps(753)=3) graded a real lossless master the
+    # same as a 256 kbps AAC.
+    #
+    # 4.25 dB across 500 Hz is not a filter. It is where the music stops.
+    # The 20800 bar was only ever a proxy for "nothing cut the top off this
+    # file", and the cliff answers that question directly and better — so
+    # when the cliff is soft, the bar is the wrong test to apply.
+    #
+    # NO CUTOFF FLOOR HERE, deliberately. A genuinely dark master — the
+    # lossless sibling of the "02 GOLD" case, soft rolloff at 16 kHz — is
+    # still a lossless copy of that master, and tier is the hard monotone
+    # term in is_upgrade(), so a floor is exactly what would stop the FLAC
+    # from displacing the 256 kbps AAC of the same dark recording. That is
+    # the merge this pool wants.
+    #
+    # THE ANTI-CHEAT IS UNTOUCHED. Every branch that could hide a transcode
+    # is checked before this one: a 320 kbps MP3 rewrapped as FLAC keeps its
+    # wall, so it arrives 'suspected' or 'confirmed' (and is demoted below),
+    # and even at ancestor 'none' its cliff is nowhere near soft — measured
+    # 29.35 dB on the real transcode fixture in test_forensics.py, against
+    # ENCODER_CLIFF_DB of 15. Both gates reject it independently.
+    if (lossless and ancestor == 'none' and eff_bits >= 16
+            and cliff_db is not None and cliff_db < ENCODER_CLIFF_DB
+            and declared_kbps >= LOSSLESS_KBPS_FLOOR):
+        return 5
+
     if lossless and ancestor == 'abstain':
         return 4
 
