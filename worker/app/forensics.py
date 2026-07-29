@@ -276,10 +276,30 @@ def classify_ancestor(cutoff_hz: int, cliff_db: float, lame_lowpass_hz: int | No
     # 2. abstain BEFORE deciding — this is what makes it fair
     if usable_windows < 4 or hf_ref_delta_db < -60:
         return 'abstain'
-    # 3. cliff-based
-    if cliff_db >= 30 and cutoff_hz < 21000 and \
-       any(abs(cutoff_hz - t) <= 400 for t in CUTOFF_TABLE):
-        return 'confirmed'
+    # 3. cliff-based.
+    #
+    # A WALL IS A WALL WHEREVER IT STANDS. Production, 2026-07-29: file
+    # b67a6dcc, a true 128 kbps MP3 (129 kbps by size), measured a 38.03 dB
+    # cliff at 15811 Hz and came back 'none' — because 15811 sits in a gap
+    # between CUTOFF_TABLE's 15000 and 16800 entries (the +-400 windows cover
+    # 14600-15400 and 16400-17650, so 15400-16400 is unwatched), and the
+    # 'suspected' branch below only spanned 15 <= cliff < 30. A 38 dB wall
+    # was therefore MORE suspicious than a 20 dB one and got a cleaner
+    # verdict. The gaps are real: 11400-14600, 15400-16400 and 17650-18350 Hz
+    # all fall between two table entries.
+    #
+    # The table still earns 'confirmed' — knowing WHICH encoder bitrate left
+    # the wall is stronger evidence than the wall alone. Everything else
+    # sharp and below 21 kHz is now at least 'suspected'.
+    #
+    # This is load-bearing for quality_tier: its bitrate floor is only
+    # consulted when the rolloff is SOFT and no ancestor was found, so a
+    # 38 dB wall reaching it as 'none' is exactly the case where a 320 kbps
+    # transcode of a 128 kbps source could have bought back a tier.
+    if cliff_db >= 30 and cutoff_hz < 21000:
+        if any(abs(cutoff_hz - t) <= 400 for t in CUTOFF_TABLE):
+            return 'confirmed'
+        return 'suspected'
     if 15 <= cliff_db < 30:
         return 'suspected'
     return 'none'

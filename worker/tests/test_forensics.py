@@ -415,3 +415,67 @@ def test_the_old_four_argument_call_is_unchanged():
     exact behaviour it had — including the anti-cheat tests above."""
     assert forensics.quality_tier('flac', 'confirmed', 16000, 16) == 1
     assert forensics.quality_tier('mp3', 'none', 16387, 0) == 1
+
+
+# --- A wall is a wall wherever it stands.
+#
+# Production, 2026-07-29: file b67a6dcc, a true 128 kbps MP3 (129 kbps by
+# size, correctly graded tier 1), measured a 38.03 dB cliff at 15811 Hz and
+# came back ancestor 'none'. 15811 sits in an unwatched gap between
+# CUTOFF_TABLE's 15000 and 16800 entries, and the 'suspected' branch only
+# spanned 15 <= cliff < 30 — so a 38 dB wall got a CLEANER verdict than a
+# 20 dB one.
+
+def test_a_sharp_wall_off_the_table_is_suspected_not_none():
+    """THE b67a6dcc CASE. 15811 Hz is in the 15400-16400 Hz gap."""
+    assert forensics.classify_ancestor(
+        cutoff_hz=15811, cliff_db=38.03, lame_lowpass_hz=None,
+        usable_windows=8, hf_ref_delta_db=-20) == 'suspected'
+
+
+def test_the_other_two_table_gaps_behave_the_same_way():
+    """11400-14600 Hz and 17650-18350 Hz are the other unwatched bands."""
+    for cutoff in (13000, 18000):
+        assert forensics.classify_ancestor(
+            cutoff_hz=cutoff, cliff_db=33.0, lame_lowpass_hz=None,
+            usable_windows=8, hf_ref_delta_db=-20) == 'suspected', cutoff
+
+
+def test_a_table_match_still_earns_the_stronger_confirmed_verdict():
+    """Knowing WHICH encoder bitrate left the wall is stronger evidence than
+    the wall alone, so the table has not been made redundant."""
+    assert forensics.classify_ancestor(
+        cutoff_hz=16800, cliff_db=38.0, lame_lowpass_hz=None,
+        usable_windows=8, hf_ref_delta_db=-20) == 'confirmed'
+
+
+def test_a_sharp_edge_at_the_top_of_the_band_is_still_none():
+    """A lossless master's own 21 kHz ceiling must not become suspicious —
+    the < 21000 guard is what keeps tier 5 reachable."""
+    assert forensics.classify_ancestor(
+        cutoff_hz=21500, cliff_db=40.0, lame_lowpass_hz=None,
+        usable_windows=8, hf_ref_delta_db=-20) == 'none'
+
+
+def test_abstention_still_comes_before_accusation():
+    """The dark-master gate is checked BEFORE the cliff, so widening the
+    cliff branch cannot start accusing quiet masters."""
+    assert forensics.classify_ancestor(
+        cutoff_hz=15811, cliff_db=38.03, lame_lowpass_hz=None,
+        usable_windows=8, hf_ref_delta_db=-70) == 'abstain'
+    assert forensics.classify_ancestor(
+        cutoff_hz=15811, cliff_db=38.03, lame_lowpass_hz=None,
+        usable_windows=2, hf_ref_delta_db=-20) == 'abstain'
+
+
+def test_the_widened_verdict_keeps_the_bitrate_floor_out_of_reach():
+    """WHY THIS MATTERS. A 128 kbps source re-encoded at 320 kbps carries its
+    wall to a frequency the table may not list. Reaching quality_tier as
+    'none' would have let the declared 320 kbps buy back two tiers; as
+    'suspected' the measured bandwidth still decides."""
+    verdict = forensics.classify_ancestor(
+        cutoff_hz=15811, cliff_db=38.03, lame_lowpass_hz=None,
+        usable_windows=8, hf_ref_delta_db=-20)
+    assert forensics.quality_tier(
+        container='mp3', ancestor=verdict, cutoff_hz=15811, eff_bits=0,
+        codec='mp3', cliff_db=38.03, declared_kbps=320) == 1
