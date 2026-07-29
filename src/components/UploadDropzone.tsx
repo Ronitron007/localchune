@@ -110,6 +110,13 @@ export default function UploadDropzone(props: { userId: string }) {
   const [running, setRunning] = createSignal(false)
   const [notice, setNotice] = createSignal('')
   const [over, setOver] = createSignal(false)
+  const selectedCount = createMemo(() => rows.length)
+
+  // Refs to the two hidden native inputs — the "Choose files"/"Choose
+  // folder" buttons below are the only visible, keyboard-reachable pickers;
+  // clicking one forwards to input.click() to open the OS dialog.
+  let fileInputEl: HTMLInputElement | undefined
+  let folderInputEl: HTMLInputElement | undefined
 
   // Deliberately NOT in the store. createStore deep-proxies plain objects, and
   // a proxied File is no longer something xhr.send() will accept.
@@ -367,8 +374,30 @@ export default function UploadDropzone(props: { userId: string }) {
         <p>Drop audio files or a folder here.</p>
         <p>mp3, flac, wav, aiff, m4a, ogg, opus — up to 15 minutes each.</p>
         <p>
-          <input type="file" multiple accept={ACCEPT} onInput={onPick} />
-          {' '}or{' '}
+          <button type="button" class="btn-secondary" onClick={() => fileInputEl?.click()}>
+            Choose files
+          </button>
+          {' '}
+          <button type="button" class="btn-secondary" onClick={() => folderInputEl?.click()}>
+            Choose folder
+          </button>
+          {/* The two pickers below are visually hidden (.sr-only), not
+              display:none — file inputs still respond to .click() either
+              way, but keeping them in the a11y tree with tabindex="-1" +
+              aria-hidden means the buttons above are the only stop in the
+              tab order and the only thing a screen reader announces; two
+              native "No file chosen" labels reading side by side is
+              exactly the duplicate-picker confusion this replaces. */}
+          <input
+            type="file"
+            multiple
+            accept={ACCEPT}
+            class="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onInput={onPick}
+            ref={(el) => { fileInputEl = el }}
+          />
           {/* webkitdirectory is not in Solid's InputHTMLAttributes typings
               (it is a non-standard, unratified attribute), so it is set
               imperatively via ref rather than as a JSX prop. A folder
@@ -377,14 +406,22 @@ export default function UploadDropzone(props: { userId: string }) {
               silently disables multi-file selection. */}
           <input
             type="file"
-            aria-label="Select a folder"
+            class="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
             ref={(el) => {
+              folderInputEl = el
               el.setAttribute('webkitdirectory', '')
               el.setAttribute('directory', '')
             }}
             onInput={onPickFolder}
           />
         </p>
+        <Show when={selectedCount() > 0}>
+          <p class="picker-status" aria-live="polite">
+            {selectedCount()} file{selectedCount() === 1 ? '' : 's'} selected
+          </p>
+        </Show>
       </div>
 
       <p>

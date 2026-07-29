@@ -270,6 +270,20 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
 .playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
+/* On a phone the scrubber has no room to be a middle sliver between name
+   and time — give it its own full-width row below the controls instead.
+   DOM order stays name/toggle/seek/time (site.ts doesn't care); `order`
+   alone reflows it: row 1 = name, play/pause, elapsed/total; row 2 = seek,
+   forced onto its own line by flex-basis: 100%. Desktop is untouched —
+   this block only applies at the same 640px breakpoint the rest of the
+   site already treats as "mobile" (see the body padding rule above). */
+@media (max-width: 640px) {
+  .playerbar .nowplaying { order: 1; }
+  .playerbar .playertoggle { order: 2; }
+  .playerbar .playertime { order: 3; }
+  .playerbar .playerseek { order: 4; flex: 1 1 100%; }
+}
+
 /* --- odds and ends --- */
 .keychip {
   background: var(--fg);
