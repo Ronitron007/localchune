@@ -90,16 +90,24 @@ const tagsAction = `/api/track/${t.file_id}/tags`
       {hasArt && (
         <img class="art" src={`/api/track/${t.file_id}/art?full=1`} alt={`Cover art for ${t.display_title}`} />
       )}
-      <p class="transport">
-        <a
-          class="play"
-          href={`/track/${t.file_id}`}
-          data-track-id={t.file_id}
-          data-label={title}
-        >▶ Play</a>
-        {' '}
-        <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
-      </p>
+      {/* Final-review finding F1: this block was never state-gated. A
+          failed/abandoned file's uploader can reach this page (migration
+          16b) but has no object in R2 to play or download — Play silently
+          fails and Download 302s into a raw R2 NoSuchKey page. The banner
+          above already explains a non-stored state; no replacement UI is
+          needed here. */}
+      {t.state === 'stored' && (
+        <p class="transport">
+          <a
+            class="play"
+            href={`/track/${t.file_id}`}
+            data-track-id={t.file_id}
+            data-label={title}
+          >▶ Play</a>
+          {' '}
+          <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
+        </p>
+      )}
       {/* Migration 15b: download_count is a real counter (track_stats),
           upload_count is a live count(*) over file_claims — see that
           migration's header for why these are two different mechanisms

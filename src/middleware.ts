@@ -4,7 +4,8 @@
 
 import { defineMiddleware } from 'astro:middleware'
 import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
-import { isActive } from './lib/session'
+import { isActive, isApiPath } from './lib/session'
+import { jsonError } from './lib/upload-api'
 
 const PUBLIC_PATHS = new Set([
   '/login', '/auth/callback', '/auth/signout',
@@ -89,6 +90,19 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     !PUBLIC_PATHS.has(path) &&
     !CLAIM_FLOW_PATHS.has(path)
   ) {
+    // Final-review finding F2: a redirect is a 200 text/html by the time
+    // fetch() sees it, and src/lib/uploader.ts's readJson() reads that as
+    // "session ended" — wrong message, and it kills an in-flight batch
+    // during the migration-17 deploy transition (every username goes null
+    // at once). An /api/* caller gets the repo's normal JSON error shape
+    // instead, so the ONE request fails cleanly; /welcome itself (a page
+    // navigation) still gets the redirect.
+    if (isApiPath(path)) {
+      return withAuthCookieHeaders(
+        jsonError(403, 'username_required', 'claim a username at /welcome before using the API'),
+        authHeaders,
+      )
+    }
     return withAuthCookieHeaders(ctx.redirect('/welcome'), authHeaders)
   }
   if ((path.startsWith('/admin') || path.startsWith('/api/admin')) && ctx.locals.member?.role !== 'owner') {

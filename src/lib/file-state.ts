@@ -42,3 +42,14 @@ export const FAILURE_EXPLAIN: Record<string, string> = {
 export function stateLabel(state: string): string {
   return NON_TERMINAL_LABEL[state] ?? FAILURE_EXPLAIN[state] ?? state
 }
+
+/**
+ * Mirrors SQL `pool_visible_states()` (migration 06) exactly: the states in
+ * which a file's ORIGINAL object is guaranteed to still be in R2.
+ * `bump_download()` (migration 15b) already refuses (P0002) outside this
+ * set — the download/source routes check it too, BEFORE presigning, so a
+ * request this route would reject never reaches R2 to 302 into a raw
+ * NoSuchKey page, and never reaches bump_download to have its refusal
+ * silently swallowed inside `waitUntil`.
+ */
+export const POOL_VISIBLE_STATES = new Set(['received', 'analysing', 'stored', 'needs_review'])

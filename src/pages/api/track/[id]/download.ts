@@ -6,6 +6,7 @@
 import type { APIRoute } from 'astro'
 import { presignGet, r2ErrorResponse } from '../../../../lib/r2'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
+import { POOL_VISIBLE_STATES } from '../../../../lib/file-state'
 
 /**
  * Download serves the ORIGINAL, never the preview — the whole point of the
@@ -31,6 +32,17 @@ export const GET: APIRoute = async ({ params, locals }) => {
   // See source.ts: an index-signature access does not narrow, so copy first.
   const r2Key = track.r2_key
   if (!r2Key) return jsonError(404, 'not_found', 'no such track')
+
+  // Task 16b widened pool_get() to return a row for the uploader's own
+  // failed/abandoned/quarantined/rejected file too, so this route can be
+  // reached for a file whose object was never finished or was already
+  // deleted (the sweeper aborts+deletes an abandoned upload's partial
+  // object). Presigning anyway 302s the browser into a raw R2 NoSuchKey
+  // XML page. See POOL_VISIBLE_STATES's doc comment.
+  const state = track.state
+  if (!state || !POOL_VISIBLE_STATES.has(state)) {
+    return jsonError(409, 'not_available', `this file is ${state ?? 'not available'}`)
+  }
 
   const name = track.original_filename ?? 'track'
   // Two forms: a plain ASCII fallback for old clients and RFC 5987 for
