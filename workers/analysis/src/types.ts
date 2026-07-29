@@ -86,16 +86,31 @@ export interface AnalyzeResponse {
   beats: Beats | null
   key: Key | null
   loudness: Loudness | null
-  // Always null today: the container measures cutoff/cliff and LOGS them, but
-  // synthesises no verdict because nothing produces hf_ref_delta_db or a
-  // measured effective bit depth. See app/main.py. analysis_persist() stores
-  // that as NULLs and invents no quality tier.
+  // REAL as of M4 Task 1 (analysis_version v2). It was null on every row
+  // through M3, because classify_ancestor() needed an hf_ref_delta_db and
+  // Forensics needed a MEASURED effective bit depth and nothing produced
+  // either. Still nullable, and that is not vestigial: a v1 row persisted
+  // before the backfill has none, and analysis_persist() stores that as
+  // NULLs rather than inventing a quality tier.
   forensics: Forensics | null
   tags: Record<string, string>
   peaks_key: string | null
   preview_key: string | null
   artwork_key: string | null
   thumb_key: string | null
+  /**
+   * PRD §6 layer 0, as 64 lower-case hex characters — sha256 over the raw
+   * uploaded bytes, taken in the container because it is the only place that
+   * already holds the whole file on local disk.
+   *
+   * A STRING, not `string | null`: app/models.py defaults it to '', and ''
+   * is exactly what analysis_persist() checks for before touching
+   * files.content_sha256. The distinction is load-bearing — the column is
+   * UNIQUE, and `decode('', 'hex')` is a valid EMPTY bytea, so two rows that
+   * both sent '' would collide on it for a reason that has nothing to do
+   * with their audio.
+   */
+  content_sha256: string
   cpu_seconds: number
   /**
    * DO-side only — app/models.py has no such field, so this is never present

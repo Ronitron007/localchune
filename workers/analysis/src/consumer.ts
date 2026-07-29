@@ -247,6 +247,15 @@ export function summarise(r: AnalyzeResponse): string {
     `key=${r.key ? `${r.key.camelot} (${r.key.key} ${r.key.scale})` : 'null'}`,
     `lufs=${r.loudness ? r.loudness.integrated_lufs.toFixed(2) : 'null'}`,
     `tier=${r.forensics ? r.forensics.tier : 'null'}`,
+    // The two forensic numbers worth reading in a tail: what the verdict was
+    // and what bandwidth it was read off. Without them a wrong tier tells you
+    // nothing about which of the two inputs was wrong.
+    `ancestor=${r.forensics ? r.forensics.lossy_ancestor : 'null'}`,
+    `cutoff=${r.forensics ? r.forensics.meas_cutoff_hz : 'null'}Hz`,
+    // Presence, not the digest: 64 hex characters per track would bury the
+    // rest of the line, and the only question a tail answers here is whether
+    // layer 0 has an input at all.
+    `sha=${r.content_sha256 ? r.content_sha256.slice(0, 8) : 'none'}`,
     `cpu=${r.cpu_seconds}s`,
     `artifacts=${[r.peaks_key, r.preview_key, r.artwork_key].filter(Boolean).join(',') || 'none'}`,
     r.artifact_skipped ? `skipped=${JSON.stringify(r.artifact_skipped)}` : '',

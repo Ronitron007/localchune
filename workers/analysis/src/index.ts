@@ -56,7 +56,13 @@ export class AnalysisContainer extends Container<Env> {
   // $0.00 month into a ~$0.73 one for doing exactly the same work.
   sleepAfter = '30s'
 
-  envVars = { ANALYSIS_VERSION: 'v1' }
+  // v2 = M4 Task 1: a real Forensics verdict and content_sha256. The three
+  // copies of this string (here, src/lib/analyze-queue.ts and the
+  // maintenance Worker's cron) must move together — a mismatch means a
+  // backfill silently re-stores under the old version and nothing says so.
+  // This one only reaches /healthz; the two producers are what travel in the
+  // queue message and end up in audio_analysis.analysis_version.
+  envVars = { ANALYSIS_VERSION: 'v2' }
 
   override onStart() {
     console.log('container started')

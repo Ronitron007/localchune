@@ -3,7 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requeueStuck, sweep, type Env } from './index'
+import { ANALYSIS_VERSION, requeueStuck, sweep, type Env } from './index'
 
 /**
  * Important #1 (M2 final review): before env.dev existed, `wrangler dev`
@@ -102,7 +102,7 @@ describe('requeueStuck', () => {
     const send = env.ANALYZE_QUEUE.send as ReturnType<typeof vi.fn>
     expect(send).toHaveBeenCalledTimes(2)
     expect(send).toHaveBeenCalledWith({
-      file_id: ROWS[0].file_id, r2_key: ROWS[0].r2_key, analysis_version: 'v1',
+      file_id: ROWS[0].file_id, r2_key: ROWS[0].r2_key, analysis_version: ANALYSIS_VERSION,
     })
   })
 

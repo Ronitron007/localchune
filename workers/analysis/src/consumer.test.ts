@@ -45,6 +45,7 @@ function response(over: Partial<AnalyzeResponse> = {}): AnalyzeResponse {
     preview_key: null,
     artwork_key: null,
     thumb_key: null,
+    content_sha256: 'a'.repeat(64),
     cpu_seconds: 53.8,
     ...over,
   }
@@ -284,7 +285,33 @@ describe('[F5] handleDeadLetter', () => {
 
 describe('summarise', () => {
   it('reports null forensics as null rather than inventing a tier', () => {
-    expect(summarise(response({ forensics: null }))).toContain('tier=null')
+    const line = summarise(response({ forensics: null }))
+    expect(line).toContain('tier=null')
+    expect(line).toContain('ancestor=null')
+    expect(line).toContain('cutoff=nullHz')
+  })
+
+  it('reports the forensic verdict and the bandwidth it was read off', () => {
+    const line = summarise(response({
+      forensics: {
+        meas_cutoff_hz: 16850, meas_cliff_db_500: 41.2, meas_eff_bit_depth: 16,
+        meas_eff_sample_rate: 44100, lame_tag_present: false, lame_lowpass_hz: null,
+        lame_vbr_method: null, encoder_string: null, lossy_ancestor: 'confirmed',
+        inferred_source_kbps: 128, tier: 1, quality_score: 118.5,
+        spectrogram_key: null,
+      },
+    }))
+    expect(line).toContain('tier=1')
+    expect(line).toContain('ancestor=confirmed')
+    expect(line).toContain('cutoff=16850Hz')
+  })
+
+  it('logs whether layer 0 has an input, never the whole digest', () => {
+    // 64 hex characters per track would bury every other field on the line.
+    const line = summarise(response({ content_sha256: 'ab'.repeat(32) }))
+    expect(line).toContain('sha=abababab')
+    expect(line).not.toContain('ab'.repeat(32))
+    expect(summarise(response({ content_sha256: '' }))).toContain('sha=none')
   })
 
   it('omits the beat grid and the fingerprint from the log line', () => {

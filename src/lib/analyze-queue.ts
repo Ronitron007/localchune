@@ -19,7 +19,7 @@ import { env } from 'cloudflare:workers'
  * incomparable with new ones. It travels in the message so a backfill can
  * re-analyse at a new version without the consumer having to guess.
  */
-export const ANALYSIS_VERSION = 'v1'
+export const ANALYSIS_VERSION = 'v2'
 
 export interface AnalyzeMessage {
   file_id: string

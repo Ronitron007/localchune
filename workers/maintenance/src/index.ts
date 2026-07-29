@@ -59,8 +59,9 @@ const CRON_SWEEP = '17 * * * *'
 const CRON_REQUEUE = '31 * * * *'
 const CRON_RECONCILE = '40 4 * * *'
 
-/** Must match src/lib/analyze-queue.ts:ANALYSIS_VERSION. */
-const ANALYSIS_VERSION = 'v1'
+/** Must match src/lib/analyze-queue.ts:ANALYSIS_VERSION. Exported so
+ *  analysis-version.test.ts can prove all three copies moved together. */
+export const ANALYSIS_VERSION = 'v2'
 /** How long a file may sit in received/analysing before it counts as stuck. */
 const STUCK_OLDER_THAN = '1 hour'
 /** analysis_stuck() clamps this to 500 itself. */
