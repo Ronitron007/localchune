@@ -157,7 +157,8 @@ ADMIN`. No redirects — internal tool.
 
 Home feed sections, server-rendered by `feed_get()`, each a horizontal strip:
 
-1. **Fresh** — files stored in the last 7 days.
+1. **Fresh** — files stored in the last 7 days. (All feed windows are a
+   fixed 7 days; not configurable.)
 2. **Hot this week** — ranked by plays-this-week + likes-this-week, download
    count as tiebreak.
 3. **New public crates** — ordered by `made_public_at desc`.
@@ -166,7 +167,8 @@ Home feed sections, server-rendered by `feed_get()`, each a horizontal strip:
 Empty sections render an honest empty state; they do not hide.
 
 **`/member/[username]`** — public crates + contributed tracks, playable rows.
-Usernames across the app become links to member pages.
+Usernames across the app become links to member pages. Private crates are
+invisible here — no count, no hint that they exist.
 
 ## 8. M6b — queue-centric playback
 
@@ -176,7 +178,10 @@ The queue is the player's data structure, and it is visible.
   `{file_id, label, key_camelot, bpm, duration}` from row `data-*`
   attributes) into module state in the site script. Module state survives
   ClientRouter soft navigation — the player bar already relies on this.
-  Playing a row elsewhere replaces the queue. `+ queue` on any row appends.
+  Playing a row elsewhere replaces the queue. `+ queue` on any row appends;
+  `+ queue` on a crate card appends the whole crate in crate order.
+  The queue caps at 500 items — appends past the cap are dropped with a
+  toast, which bounds the localStorage payload.
 - **Queue panel:** `☰ QUEUE` button on the player bar opens a drawer above
   it: Now Playing + Up Next in play order. Operations: remove, reorder
   (drag + up/down, reusing the crate-reorder JS), clear.
@@ -223,10 +228,9 @@ The queue is the player's data structure, and it is visible.
   append + reorder).
 - Any change to dedup, analysis, or catalogue matching.
 
-## 11. Unresolved questions
+## 11. Questions resolved in spec review (2026-07-29)
 
-1. Feed windows — 7 days fixed, or owner-tunable?
-2. `+ queue` on crate cards (append whole crate) in v1, or track rows only?
-3. Member page: show private-crate count ("3 crates, 1 public") or hide
-   entirely?
-4. Queue cap (e.g. 500) to bound localStorage, or unbounded?
+1. Feed windows: fixed 7 days.
+2. `+ queue` appends whole crates from crate cards: yes, in v1.
+3. Member page hides private crates entirely — no count, no hint.
+4. Queue capped at 500 items.
