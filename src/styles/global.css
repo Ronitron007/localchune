@@ -229,6 +229,26 @@ th a[aria-current] { font-weight: bold; }
 th a[aria-current]::after { content: ' ▾'; }
 td.uploader, td.added { color: var(--mid); }
 
+/* --- like toggle: TrackRow.astro's pool-table cell and the track page's
+   .signals block share this exact markup shape (form.likeform >
+   button.likebtn > .likeglyph + .likecount). No colour token — the
+   monochrome exception in :root is reserved for .btn/.btn-secondary/
+   .btn-danger only, and this is a toggle, not an action button. Bold is
+   the only "pressed" cue besides aria-pressed itself. --- */
+.likeform { display: inline-block; }
+.likebtn {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.likebtn[aria-pressed='true'] { font-weight: bold; }
+.likebtn:disabled { cursor: wait; opacity: 0.6; }
+.signals { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-2); }
+.signal { color: var(--mid); }
+
 /* --- artwork thumbs: content keeps its colour; the box is chrome --- */
 img.thumb, .thumb-empty {
   width: 28px;

@@ -67,9 +67,24 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="uploader">{track.uploader_name}</td>
   <td class="added num">{added}</td>
   <td class="downloads num">{track.download_count}</td>
-  {/* Task 2 (M6a): display-only — the ♥ toggles interaction lands in a
-      later task. Filled heart when liked_by_me, empty otherwise. */}
-  <td class="likes num">{track.liked_by_me ? '♥' : '♡'} {track.like_count}</td>
+  {/* Task 3 (M6a): live now. A mini <form> POST, brutalist idiom (like
+      tags.ts) so it still works with no JS — the route 303s back to
+      Referer. With JS, site.ts's document-level `form.likeform` submit
+      delegation intercepts it, calls org-api.ts's toggleLike() and swaps
+      the glyph/count/aria-pressed in place instead of navigating. Filled
+      heart when liked_by_me, empty otherwise — same convention Task 2
+      established for the display-only cell this replaces. */}
+  <td class="likes num">
+    <form method="post" action={`/api/track/${track.file_id}/like`} class="likeform">
+      <button
+        type="submit"
+        class="likebtn"
+        data-file-id={track.file_id}
+        aria-pressed={track.liked_by_me ? 'true' : 'false'}
+        aria-label={`${track.liked_by_me ? 'Unlike' : 'Like'} ${track.display_title}`}
+      ><span class="likeglyph" aria-hidden="true">{track.liked_by_me ? '♥' : '♡'}</span> <span class="likecount">{track.like_count}</span></button>
+    </form>
+  </td>
   <td class="plays num">{track.play_count}</td>
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>

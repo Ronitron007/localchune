@@ -5,6 +5,7 @@
 
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
+import { SessionExpiredError, toggleLike } from '../lib/org-api'
 
 /**
  * The whole client: play-link delegation into the one persisted <audio>,
@@ -128,6 +129,62 @@ document.addEventListener('click', (e) => {
     void audio.play().catch(() => {
       if (label) label.textContent = 'That track would not play. Try downloading it.'
     })
+  })()
+})
+
+/**
+ * M6a Task 3 — the ♥ toggle. `form.likeform` renders in two places
+ * (TrackRow.astro's pool-table cell, the track page's signals block) with
+ * the same shape: a <button class="likebtn"> carrying `data-file-id`,
+ * `aria-pressed`, and a `.likeglyph`/`.likecount` pair to update in place.
+ * One document-level delegation covers both, same idiom as the play-link
+ * handler above — no per-row listener to (re)bind on a ClientRouter swap.
+ *
+ * Optimistic: the glyph/count/aria-pressed flip the instant the form is
+ * submitted, before the network round trip, and org-api.ts's toggleLike()
+ * either confirms them with the server's authoritative count (covers a
+ * concurrent like/unlike elsewhere landing first) or the catch below rolls
+ * every one of them back to exactly what they were before this click and
+ * reports why in the shared player status region — the same aria-live
+ * element the play handler already uses for "session ended"/"could not
+ * load" messages, so a like failure is announced the same way a play
+ * failure already is.
+ */
+document.addEventListener('submit', (e) => {
+  const form = (e.target as Element).closest?.('form.likeform')
+  if (!(form instanceof HTMLFormElement)) return
+  const button = form.querySelector('button.likebtn')
+  if (!(button instanceof HTMLButtonElement)) return
+  const fileId = button.dataset.fileId
+  const glyph = button.querySelector('.likeglyph')
+  const countEl = button.querySelector('.likecount')
+  if (!fileId || !glyph || !countEl) return
+  e.preventDefault()
+
+  const wasLiked = button.getAttribute('aria-pressed') === 'true'
+  const prevCount = Number(countEl.textContent ?? '0')
+  const setState = (liked: boolean, count: number) => {
+    button.setAttribute('aria-pressed', String(liked))
+    glyph.textContent = liked ? '♥' : '♡'
+    countEl.textContent = String(count)
+  }
+
+  setState(!wasLiked, prevCount + (wasLiked ? -1 : 1))
+  button.disabled = true
+  void (async () => {
+    try {
+      const result = await toggleLike(fileId)
+      setState(result.liked, result.like_count)
+    } catch (err) {
+      setState(wasLiked, prevCount)
+      if (label) {
+        label.textContent = err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : err instanceof Error ? err.message : 'Could not update like.'
+      }
+    } finally {
+      button.disabled = false
+    }
   })()
 })
 
