@@ -44,6 +44,58 @@ export function stateLabel(state: string): string {
 }
 
 /**
+ * ingest_jobs.last_error, translated for members.
+ *
+ * The incident that forced this: 29 preallocated-but-incomplete FLACs
+ * sailed through preflight, uploaded in full, and died in the analysis
+ * container. /uploads then showed the owner the raw failure —
+ * `CalledProcessError: ffprobe … Invalid data found when processing input`
+ * — and the owner could not tell whose fault it was. A raw traceback names
+ * the tool, never the cause, and reads as "the site is broken" when the
+ * truth was "your file is broken".
+ *
+ * So: members see one plain sentence from this mapper; the verbatim string
+ * moves into a title tooltip (uploads.astro, track/[id].astro) where it
+ * stays available for debugging without being the message. Patterns are
+ * matched against what actually writes last_error today — worker/app/
+ * main.py's `{type(e).__name__}: {e} | stderr: …` strings, consumer.ts's
+ * fixed dead-letter reason, and complete.ts's own `complete: …` sentences.
+ * Order matters: "Invalid data found" is ffmpeg-family stderr and is the
+ * diagnosis, so it wins over which binary happened to surface it.
+ */
+export function explainLastError(raw: string | null | undefined): string | null {
+  if (raw == null) return null
+  const t = raw.trim()
+  if (t === '') return null
+  const has = (needle: string) => t.toLowerCase().includes(needle)
+  if (has('invalid data found')) return 'The audio file is corrupt or incomplete.'
+  if (has('calledprocesserror') && has('ffprobe')) return 'The audio file is corrupt or incomplete.'
+  if (has('calledprocesserror') && has('fpcalc')) {
+    return 'The audio could not be fingerprinted — the file may be damaged.'
+  }
+  if (has('jsondecodeerror')) {
+    return 'Analysis hit a tag-parsing fault. The team knows; the file will be retried.'
+  }
+  if (has('dead-lettered after 5 attempts')) return 'Analysis failed after several attempts.'
+  // complete.ts's own upload-phase reasons ("no object at the key",
+  // "size mismatch — declared X, object Y"): these are not analysis
+  // failures, and saying "Analysis failed." for them would be a lie.
+  if (t.startsWith('complete: ')) return 'The upload never fully arrived in storage.'
+  // abort.ts records the client's own transfer failure (uploader.ts's
+  // TransferError messages) as the reason. Also upload-phase, also never
+  // "Analysis failed." — the markers below are that module's closed set.
+  if (
+    has('r2 returned') || has('network error') || has('timed out') ||
+    has('presigned') || has('resum') || has('this upload expired') || has('cors')
+  ) {
+    return 'The upload was interrupted.'
+  }
+  // Never the raw text. A member cannot act on a traceback, and the
+  // verbatim string is one hover away in the tooltip.
+  return 'Analysis failed.'
+}
+
+/**
  * Mirrors SQL `pool_visible_states()` (migration 06) exactly: the states in
  * which a file's ORIGINAL object is guaranteed to still be in R2.
  * `bump_download()` (migration 15b) already refuses (P0002) outside this
