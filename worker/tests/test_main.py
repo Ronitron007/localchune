@@ -281,3 +281,50 @@ def test_aac_in_the_same_container_is_not_promoted_by_the_same_change(staged, aa
     assert r.container == 'mov' and r.codec == 'aac'
     assert r.forensics.meas_eff_bit_depth == 0
     assert r.forensics.tier <= 3
+
+
+@pytest.fixture
+def dark_aac_256k(tmp_path):
+    """The 02 GOLD case, rebuilt by real encoders: a dark master (gentle EQ
+    rolloff, no wall) encoded at a real 256 kbps AAC. Two 2-pole stages give
+    24 dB/octave — a genuine content rolloff, nothing like the 30+ dB/500 Hz
+    wall an encoder lowpass leaves."""
+    wav = str(tmp_path / 'dark.wav')
+    out = str(tmp_path / 'dark256.m4a')
+    _noise_wav(wav, seconds=45, seed=33)
+    _run('ffmpeg', '-y', '-v', 'error', '-i', wav,
+         '-af', 'lowpass=f=16000:poles=2,lowpass=f=16000:poles=2',
+         '-c:a', 'aac', '-b:a', '256k', out)
+    return out
+
+
+@pytest.fixture
+def real_128k_mp3(tmp_path):
+    wav = str(tmp_path / 'c.wav')
+    out = str(tmp_path / 'c128.mp3')
+    _noise_wav(wav, seconds=45, seed=44)
+    _run('ffmpeg', '-y', '-v', 'error', '-i', wav, '-c:a', 'libmp3lame', '-b:a', '128k', out)
+    return out
+
+
+def test_a_256k_aac_of_a_dark_master_is_not_graded_as_a_128k_file(staged, dark_aac_256k):
+    """PRODUCTION REGRESSION. '02 GOLD.m4a' — a verified iTunes Plus 256k
+    purchase — measured cutoff 16387 Hz, cliff 2.52 dB, ancestor 'none', and
+    landed at tier 1. classify_ancestor refused to accuse it; the tier
+    demoted it anyway, reading a dark hip-hop master's own rolloff as
+    evidence of a lossy ancestor."""
+    r = staged('f7', dark_aac_256k)
+    assert r.ok, r.error
+    assert r.forensics.lossy_ancestor in ('none', 'abstain'), 'must not be accused'
+    assert r.forensics.meas_cliff_db_500 < 15, \
+        'the fixture must have a SOFT rolloff or it proves nothing'
+    assert r.forensics.tier == 3
+
+
+def test_a_real_128kbps_encode_still_lands_at_tier_one(staged, real_128k_mp3):
+    """The other half of the same rule. A real 128 kbps file has a WALL, so
+    the measured bandwidth still decides and the fix cannot rescue it."""
+    r = staged('f8', real_128k_mp3)
+    assert r.ok, r.error
+    assert r.forensics.meas_cliff_db_500 >= 15, 'a real 128k encode leaves a wall'
+    assert r.forensics.tier == 1

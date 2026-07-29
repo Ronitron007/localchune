@@ -305,20 +305,68 @@ def is_lossless(container: str, codec: str = '') -> bool:
     return container.lower() in LOSSLESS or codec.lower() in LOSSLESS
 
 
+# A cliff this sharp is an ENCODER's lowpass. Below it, the top of the
+# spectrum is the music ending, not a filter. 15 dB is the same threshold
+# classify_ancestor already uses as its floor for 'suspected', so the two
+# functions agree on what "an encoder did this" looks like.
+ENCODER_CLIFF_DB = 15.0
+
+# Declared-bitrate classes, descending. Only consulted when the rolloff is
+# soft AND no lossy ancestor was found — never as a way around the
+# anti-cheat.
+_KBPS_TIERS = ((240, 3), (160, 2))
+
+
 def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int,
-                 codec: str = '') -> int:
-    # codec is optional and LAST so every existing caller and test keeps
-    # working unchanged; main.py always passes it.
+                 codec: str = '', cliff_db: float | None = None,
+                 declared_kbps: int = 0) -> int:
+    """The grade. Five is a verified lossless master; one is a 128 kbps file.
+
+    codec, cliff_db and declared_kbps are optional and LAST so every existing
+    caller and test keeps working unchanged. main.py always passes all three.
+
+    WHY cliff_db IS HERE. Production, 2026-07-29: "02 GOLD.m4a", a verified
+    iTunes purchase (iTunNORM/iTunSMPB atoms, ~283 kbps => iTunes Plus 256k
+    AAC) measured cutoff 16387 Hz with a cliff of 2.52 dB and landed at
+    TIER 1 — the same grade a 128 kbps file gets. classify_ancestor did its
+    job and refused to accuse it ('none'); the tier then demoted it anyway,
+    because the fall-through read a 16 kHz ceiling as evidence of a lossy
+    ancestor when it was simply a dark hip-hop master whose music stops
+    there. Nine of the first 35 tiered files were tier 1, and some were this.
+
+    A 2.5 dB rolloff is not a filter. An encoder lowpass is a wall: 30 dB and
+    more across 500 Hz. So the measured bandwidth is only allowed to demote
+    below the file's bitrate class when it LOOKS like an encoder did it —
+    a sharp cliff, or an ancestor verdict. Otherwise the declared bitrate,
+    which is a fact about the file rather than an inference from its
+    spectrum, sets the floor.
+
+    THE ANTI-CHEAT IS UNTOUCHED, and the ordering below is what guarantees
+    it: 'confirmed' and 'suspected' return the cutoff-derived tier before the
+    bitrate is ever consulted. A 128 kbps file transcoded up to 320 kbps MP3
+    or 256 kbps AAC still has a sharp cliff at a CUTOFF_TABLE frequency, so
+    it is still confirmed, and its enormous declared bitrate buys it nothing.
+    """
     lossless = is_lossless(container, codec)
     if lossless and ancestor == 'none' and cutoff_hz >= 20800 and eff_bits >= 16:
         return 5
     if lossless and ancestor == 'abstain':
         return 4
+
     # A lossless container with a CONFIRMED lossy ancestor falls through to its
     # MEASURED bandwidth. That single rule is the entire anti-cheat.
-    if cutoff_hz >= 19500: return 3
-    if cutoff_hz >= 17000: return 2
-    return 1
+    by_cutoff = 3 if cutoff_hz >= 19500 else 2 if cutoff_hz >= 17000 else 1
+    if ancestor in ('confirmed', 'suspected'):
+        return by_cutoff
+    if cliff_db is None or cliff_db >= ENCODER_CLIFF_DB or declared_kbps <= 0:
+        return by_cutoff
+
+    # Soft rolloff, no ancestor found: the spectrum is describing the music,
+    # not the encoder. max(), never a plain override — the bitrate may only
+    # raise a floor, so a file that already earned tier 3 on bandwidth cannot
+    # be pushed DOWN by a modest bitrate.
+    by_kbps = next((t for floor, t in _KBPS_TIERS if declared_kbps >= floor), 1)
+    return max(by_cutoff, by_kbps)
 
 
 def quality_score(tier: int, cutoff_hz: int, eff_bits: int, eff_sr: int,

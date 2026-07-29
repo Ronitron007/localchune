@@ -341,3 +341,77 @@ def test_aac_in_the_same_container_is_still_capped_at_its_bandwidth():
                                   cutoff_hz=21500, eff_bits=16, codec='aac') == 3
     assert forensics.quality_tier(container='mov', ancestor='abstain',
                                   cutoff_hz=15000, eff_bits=16, codec='aac') == 1
+
+
+# --- A soft rolloff is not an encoder lowpass.
+#
+# Production, 2026-07-29: "02 GOLD.m4a", a verified iTunes purchase
+# (iTunNORM/iTunSMPB atoms, ~283 kbps => iTunes Plus 256k AAC) measured
+# cutoff 16387 Hz with a cliff of 2.52 dB and landed at TIER 1 — the grade a
+# 128 kbps file gets. classify_ancestor refused to accuse it; the tier
+# demoted it anyway. Nine of the first 35 tiered files were tier 1.
+
+def test_the_02_gold_case_a_256k_aac_of_a_dark_master_is_not_tier_one():
+    assert forensics.quality_tier(
+        container='mov', ancestor='none', cutoff_hz=16387, eff_bits=0,
+        codec='aac', cliff_db=2.52, declared_kbps=283) == 3
+
+
+def test_a_soft_rolloff_at_a_low_bitrate_is_still_tier_one():
+    """The bitrate sets the floor, so a genuinely small file still lands at
+    the bottom — otherwise every dark master would be tier 3."""
+    assert forensics.quality_tier(
+        container='mp3', ancestor='none', cutoff_hz=16387, eff_bits=0,
+        codec='mp3', cliff_db=2.5, declared_kbps=128) == 1
+    assert forensics.quality_tier(
+        container='mp3', ancestor='none', cutoff_hz=16387, eff_bits=0,
+        codec='mp3', cliff_db=2.5, declared_kbps=192) == 2
+
+
+def test_a_sharp_cliff_still_demotes_however_big_the_file_claims_to_be():
+    """THE ANTI-CHEAT. A 128k source re-encoded at 320 kbps keeps its 16.8 kHz
+    wall, so the wall decides — not the bitrate the re-encode declares."""
+    assert forensics.quality_tier(
+        container='mp3', ancestor='confirmed', cutoff_hz=16800, eff_bits=0,
+        codec='mp3', cliff_db=41.0, declared_kbps=320) == 1
+    # And the same for a fake FLAC, whose declared bitrate is ~900 kbps.
+    assert forensics.quality_tier(
+        container='flac', ancestor='confirmed', cutoff_hz=16800, eff_bits=16,
+        codec='flac', cliff_db=41.0, declared_kbps=900) == 1
+    # 'suspected' is treated the same way: the measured bandwidth decides and
+    # the declared 320 kbps buys nothing. 17500 Hz is worth tier 2 on its own,
+    # so this shows the bitrate is not consulted rather than that it agreed.
+    assert forensics.quality_tier(
+        container='mp3', ancestor='suspected', cutoff_hz=17500, eff_bits=0,
+        codec='mp3', cliff_db=20.0, declared_kbps=320) == 2
+
+
+def test_a_sharp_cliff_with_no_ancestor_verdict_still_trusts_the_bandwidth():
+    """cliff >= ENCODER_CLIFF_DB is an encoder lowpass whatever
+    classify_ancestor concluded, so the bitrate is not consulted."""
+    assert forensics.quality_tier(
+        container='mp3', ancestor='none', cutoff_hz=16000, eff_bits=0,
+        codec='mp3', cliff_db=30.0, declared_kbps=320) == 1
+
+
+def test_the_bitrate_may_only_raise_the_floor_never_lower_it():
+    """A file that already earned tier 3 on measured bandwidth cannot be
+    pushed down by a modest declared bitrate."""
+    assert forensics.quality_tier(
+        container='mp3', ancestor='none', cutoff_hz=20000, eff_bits=0,
+        codec='mp3', cliff_db=2.0, declared_kbps=128) == 3
+
+
+def test_the_bitrate_can_never_manufacture_a_lossless_tier():
+    """max() is capped at 3 by construction: tiers 4 and 5 are only reachable
+    through the lossless branches above, which the bitrate never touches."""
+    assert forensics.quality_tier(
+        container='mp3', ancestor='none', cutoff_hz=16000, eff_bits=0,
+        codec='mp3', cliff_db=1.0, declared_kbps=10000) == 3
+
+
+def test_the_old_four_argument_call_is_unchanged():
+    """cliff_db defaults to None, so every pre-existing caller keeps the
+    exact behaviour it had — including the anti-cheat tests above."""
+    assert forensics.quality_tier('flac', 'confirmed', 16000, 16) == 1
+    assert forensics.quality_tier('mp3', 'none', 16387, 0) == 1

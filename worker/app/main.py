@@ -106,6 +106,37 @@ def _link_with_extension(src: str, ext: str) -> str:
     return link
 
 
+def _declared_kbps(info: dict, stream: dict, duration_ms: int) -> int:
+    """The file's own bitrate, in kbps. Zero when it cannot be established.
+
+    Three sources, best first. The AUDIO STREAM's bit_rate is the honest
+    number; the FORMAT's includes container overhead and reads a few percent
+    high (measured on a real iTunes m4a: 283 kbps format against 256 kbps
+    stream), which matters because quality_tier compares it to a 240 kbps
+    threshold. Size over decoded duration is the last resort, for the
+    containers that declare neither — and it is only ever a floor-setter, so
+    a small over-read cannot demote anything.
+
+    This is a fact ABOUT the file, unlike everything else in the forensics
+    block, which is measured FROM it. It is used only where the measurement
+    has nothing to say — see quality_tier.
+    """
+    for src in (stream, info.get("format", {})):
+        try:
+            br = int(src.get("bit_rate") or 0)
+        except (TypeError, ValueError):
+            br = 0
+        if br > 0:
+            return br // 1000
+    try:
+        size = int(info.get("format", {}).get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > 0 and duration_ms > 0:
+        return int(size * 8 / (duration_ms / 1000) / 1000)
+    return 0
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     """Load the model before the port accepts traffic.
@@ -249,7 +280,9 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             cutoff_hz, cliff_db,
             lame.lowpass_hz if lame else None,
             len(wins), hf_delta)
-        tier = forensics.quality_tier(container, ancestor, cutoff_hz, eff_bits, codec)
+        declared_kbps = _declared_kbps(info, stream, duration_ms)
+        tier = forensics.quality_tier(container, ancestor, cutoff_hz, eff_bits,
+                                      codec, cliff_db, declared_kbps)
         # Moved ABOVE the score so its clipped_pct and true_peak can feed it.
         # The same single call, relocated — the loudness pass costs 3.4
         # vCPU-s and running it twice would be visible in the budget.
