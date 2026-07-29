@@ -49,6 +49,15 @@ const num = (v: number | null, digits = 1, unit = '') =>
         {' '}
         <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
       </p>
+      {/* Migration 15b: download_count is a real counter (track_stats),
+          upload_count is a live count(*) over file_claims — see that
+          migration's header for why these are two different mechanisms
+          under one format-agnostic-by-design plan. */}
+      <p class="stats">
+        downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}
+        {' · '}
+        brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}
+      </p>
     </header>
 
     <section class="identity">

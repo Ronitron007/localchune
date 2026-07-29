@@ -42,6 +42,22 @@ export const GET: APIRoute = async ({ params, locals }) => {
 
   try {
     const url = await presignGet(r2Key, { contentDisposition: disposition })
+
+    // Fire-and-forget: count the download, but never let a stats failure
+    // block or delay the redirect below. Deliberately NOT awaited — the
+    // response ships the instant the signed URL is ready. Both the
+    // rejection path (network/transport failure) and the resolution path
+    // (an RPC-level error, e.g. bump_download's own P0002) are logged and
+    // swallowed here, never surfaced to the caller.
+    locals.supabase.rpc('bump_download', { p_file: id }).then(
+      ({ error }) => {
+        if (error) console.error('bump_download failed:', error.message)
+      },
+      (e: unknown) => {
+        console.error('bump_download failed:', e instanceof Error ? e.message : String(e))
+      },
+    )
+
     return new Response(null, {
       status: 302,
       headers: { location: url, 'cache-control': 'private, no-store' },

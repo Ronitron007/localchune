@@ -51,6 +51,10 @@ describe('parsePoolQuery', () => {
     expect(parse('sort=tier_desc').sort).toBe('tier_desc')
   })
 
+  it("accepts downloads_desc — migration 15b's new sort", () => {
+    expect(parse('sort=downloads_desc').sort).toBe('downloads_desc')
+  })
+
   it('ignores an uploader that is not a uuid', () => {
     expect(parse('uploader=me').uploader).toBeNull()
   })

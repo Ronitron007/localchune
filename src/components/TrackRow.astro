@@ -59,6 +59,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   </td>
   <td class="uploader">{track.uploader_name}</td>
   <td class="added num">{added}</td>
+  <td class="downloads num">{track.download_count}</td>
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
   </td>
