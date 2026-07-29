@@ -15,7 +15,7 @@ import { isUuid } from './upload-api'
 
 export const POOL_SORTS = [
   'added_desc', 'bpm_asc', 'key_asc', 'artist_asc', 'duration_asc', 'tier_desc',
-  'downloads_desc',
+  'downloads_desc', 'likes_desc', 'plays_desc',
 ] as const
 export type PoolSort = (typeof POOL_SORTS)[number]
 
@@ -72,6 +72,12 @@ export type PoolTrack = {
   download_count: number
   /** Migration 16, coalesced to '{}' server-side — never null, may be empty. */
   tags: string[]
+  /** Migration 19, coalesced server-side — never null. */
+  like_count: number
+  /** Migration 19, coalesced server-side — never null. */
+  liked_by_me: boolean
+  /** Migration 19, coalesced server-side — never null. */
+  play_count: number
 }
 
 const numberIn = (raw: string | null, lo: number, hi: number): number | null => {

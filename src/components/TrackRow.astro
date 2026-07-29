@@ -67,6 +67,10 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="uploader">{track.uploader_name}</td>
   <td class="added num">{added}</td>
   <td class="downloads num">{track.download_count}</td>
+  {/* Task 2 (M6a): display-only — the ♥ toggles interaction lands in a
+      later task. Filled heart when liked_by_me, empty otherwise. */}
+  <td class="likes num">{track.liked_by_me ? '♥' : '♡'} {track.like_count}</td>
+  <td class="plays num">{track.play_count}</td>
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
   </td>
