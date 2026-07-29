@@ -91,16 +91,17 @@ const HEADERS = [
               {meta.is_public ? 'Make private' : 'Make public'}
             </button>
           </form>
-          {/* onsubmit confirm() guard — still a real <form>, so a visitor
-              with JS off (confirm() never runs, submit proceeds
-              unguarded) or a hand-crafted POST both still delete; the
+          {/* data-confirm drives a delegated confirm() in the site script —
+              an inline handler attribute trips Cloudflare's API WAF on
+              deploy (the upload 403s with a challenge page). Same
+              semantics: with JS off, either form submits unguarded; the
               guard is a courtesy against a stray click, not a security
               boundary. */}
           <form
             method="post"
             action={`/api/crate/${id}/delete`}
             class="deleteform"
-            onsubmit="return confirm('Delete this crate? This cannot be undone.')"
+            data-confirm="Delete this crate? This cannot be undone."
           >
             <button type="submit" class="btn-danger">Delete crate</button>
           </form>

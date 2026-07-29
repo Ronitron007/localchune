@@ -179,6 +179,20 @@ document.addEventListener('click', (e) => {
  * load" messages, so a like failure is announced the same way a play
  * failure already is.
  */
+/**
+ * Delegated confirm() for any form carrying data-confirm. Lives here
+ * instead of an inline handler attribute because Cloudflare's API WAF
+ * challenges a Worker upload whose bundle contains inline handlers — the
+ * deploy POST 403s with an HTML challenge page. Semantics are unchanged:
+ * with JS off the form submits unguarded either way.
+ */
+document.addEventListener('submit', (e) => {
+  const form = (e.target as Element).closest?.('form[data-confirm]')
+  if (!(form instanceof HTMLFormElement)) return
+  const msg = form.dataset.confirm
+  if (msg && !window.confirm(msg)) e.preventDefault()
+})
+
 document.addEventListener('submit', (e) => {
   const form = (e.target as Element).closest?.('form.likeform')
   if (!(form instanceof HTMLFormElement)) return

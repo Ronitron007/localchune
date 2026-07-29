@@ -15,7 +15,7 @@ import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/up
  * back to — the crate page this form was submitted from no longer exists.
  * The plain-form branch therefore always 303s to /crates, never a
  * Referer-derived target (crate/[id].astro's delete form also carries an
- * `onsubmit` `confirm()` guard client-side; this route enforces nothing
+ * confirm() guard client-side (site.ts data-confirm); this route enforces nothing
  * about that — a replayed/hand-crafted POST still deletes, same as every
  * other destructive form in this app).
  */
