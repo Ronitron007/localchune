@@ -10,7 +10,7 @@ import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 /**
  * The drag path: site.ts's drag-to-reorder enhancement serialises the
  * dropped row order into file_ids and POSTs it here as JSON. crate_reorder
- * (migration 20) is the sole authority on whether that array is a valid
+ * (migration 27) is the sole authority on whether that array is a valid
  * permutation of the crate's current items (22023 if not — a missing,
  * extra or duplicate id) and on ownership (42501) — this route validates
  * only shape (an array of uuids) before handing it straight through.

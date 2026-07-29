@@ -8,7 +8,7 @@ import { dbErrorResponse, isUuid, jsonError, readJsonBody, rpcError } from '../.
 import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 
 /**
- * Renames a crate the caller owns. crate_rename (migration 20) does every
+ * Renames a crate the caller owns. crate_rename (migration 27) does every
  * real check — member gate, owner_id = auth.uid() (42501 otherwise),
  * trim/1-80 chars (22023), auto-suffix on a same-owner name collision —
  * this route only reads the body and maps the RPC result onto HTTP, same

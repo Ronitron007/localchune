@@ -232,7 +232,7 @@ document.addEventListener('submit', (e) => {
  * over — so the visible order IS the pending order, with no separate
  * "ghost" state to keep in sync. `drop` reads that same DOM order straight
  * back out via each row's `data-file-id` and POSTs it to `.../reorder`.
- * The server (`crate_reorder`, migration 20) is the only authority on
+ * The server (`crate_reorder`, migration 27) is the only authority on
  * whether the result is legal — on any failure the page reloads, so the
  * visible order snaps back to whatever the database actually has rather
  * than leaving a client-side order the server never accepted.

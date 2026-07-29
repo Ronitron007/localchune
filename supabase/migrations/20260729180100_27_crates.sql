@@ -55,7 +55,7 @@
 -- name" means.
 --
 -- crate_get's column list is `position int` followed by pool_get's ENTIRE
--- column list, in the same order, as of migration 19 -- so a crate's rows
+-- column list, in the same order, as of migration 26 -- so a crate's rows
 -- render through the same TrackRow component the pool table already uses,
 -- unchanged. It joins crate_items to pool_tracks (the same composition unit
 -- pool_get itself reads) and filters to pool_visible_states() the same way
@@ -320,7 +320,7 @@ comment on function public.crate_set_public(uuid, boolean) is
 -- ============================================================
 -- crate_add() -- member gate, owner check, pool_visible_states() P0002 gate
 -- (I1a final-review fix -- the same gate toggle_like/bump_play apply in
--- migration 19: a file that is not pool-visible cannot be added to a crate
+-- migration 26: a file that is not pool-visible cannot be added to a crate
 -- in the first place, matching crate_get's own filter so a crate never
 -- silently accumulates items it can never render), then append at
 -- coalesce(max(position),0)+1. Bumps updated_at.
@@ -535,7 +535,7 @@ comment on function public.crate_list() is
 -- ============================================================
 -- crate_get() -- member gate, then owner-or-public check on the crate
 -- itself (42501 otherwise). Returns `position` followed by pool_get's
--- entire column list (migration 19), joined from crate_items to
+-- entire column list (migration 26), joined from crate_items to
 -- pool_tracks -- the same composition unit pool_get itself reads -- filtered
 -- to pool_visible_states() so a crated file that later fails analysis
 -- disappears from the crate instead of 500ing the page. Ordered by
@@ -641,7 +641,7 @@ grant  execute on function public.crate_get(uuid) to authenticated;
 
 comment on function public.crate_get(uuid) is
   'A crate''s items, ordered by position, as `position` followed by
-   pool_get''s entire column list (migration 19) -- so a crate renders
+   pool_get''s entire column list (migration 26) -- so a crate renders
    through the same TrackRow component the pool table uses, unchanged.
    42501 unless the caller owns the crate or it is public. Filters items to
    pool_visible_states(), the same gate pool_get applies to the file itself,

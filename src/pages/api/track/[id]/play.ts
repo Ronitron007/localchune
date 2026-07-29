@@ -7,7 +7,7 @@ import type { APIRoute } from 'astro'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
 
 /**
- * Bumps one play_events row for the caller on this track — migration 19's
+ * Bumps one play_events row for the caller on this track — migration 26's
  * `bump_play` RPC does the actual insert and the pool-visibility gate
  * (42501/P0002, mapped through the shared `rpcError` table). Same skeleton
  * as `like.ts`: member gate, uuid guard, try/catch around the RPC.

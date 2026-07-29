@@ -5,7 +5,7 @@
 // worker includes Essentia. LICENSE explains why.
 //
 // "Mine" then "Pool" (public crates from everyone else) — crate_list()
-// (migration 20) already restricts its rows to "own crates always, plus
+// (migration 27) already restricts its rows to "own crates always, plus
 // every public crate", so the only work left here is partitioning that one
 // flat list on is_mine and sorting each half. Server-rendered, zero
 // islands, exactly like the pool and /uploads: one RPC round trip renders

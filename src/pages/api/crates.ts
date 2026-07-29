@@ -13,7 +13,7 @@ import type { CrateCard } from '../../lib/org-api'
  * ever returns the caller's own crates, since that is the only list
  * TrackRow.astro's picker ever needs (you can only add a track to a crate
  * you own — crate_add's own 42501 check would reject anything else
- * anyway). crate_list() (migration 20) already computes is_mine; this
+ * anyway). crate_list() (migration 27) already computes is_mine; this
  * handler just filters to it and trims the row down to what the menu
  * renders — {id, name}, nothing else.
  */
@@ -37,7 +37,7 @@ export const GET: APIRoute = async ({ locals }) => {
  * Crate creation. /crates.astro's "+ new crate" is a plain
  * `<form method="post" action="/api/crates">`, no island (Task 6) — the
  * body is always `application/x-www-form-urlencoded`. crate_create
- * (migration 20) does every real check (member gate, trim/1-80 chars,
+ * (migration 27) does every real check (member gate, trim/1-80 chars,
  * auto-suffix on a name collision against the caller's own crates) — this
  * route only reads the form and maps the RPC result onto HTTP, the same
  * division of labour as tags.ts/welcome.ts.

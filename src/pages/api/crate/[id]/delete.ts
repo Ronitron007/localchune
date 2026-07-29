@@ -7,7 +7,7 @@ import type { APIRoute } from 'astro'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
 
 /**
- * Deletes a crate the caller owns. crate_delete (migration 20) does every
+ * Deletes a crate the caller owns. crate_delete (migration 27) does every
  * real check (member gate, owner_id = auth.uid() -> 42501) and cascades
  * crate_items via its FK — this route only maps the RPC result onto HTTP.
  *

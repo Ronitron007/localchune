@@ -55,7 +55,7 @@ describe('parsePoolQuery', () => {
     expect(parse('sort=downloads_desc').sort).toBe('downloads_desc')
   })
 
-  it("accepts likes_desc and plays_desc — migration 19's new sorts", () => {
+  it("accepts likes_desc and plays_desc — migration 26's new sorts", () => {
     expect(parse('sort=likes_desc').sort).toBe('likes_desc')
     expect(parse('sort=plays_desc').sort).toBe('plays_desc')
   })

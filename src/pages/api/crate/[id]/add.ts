@@ -8,7 +8,7 @@ import { dbErrorResponse, isUuid, jsonError, readJsonBody, rpcError } from '../.
 import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 
 /**
- * Appends one track to a crate the caller owns. crate_add (migration 20)
+ * Appends one track to a crate the caller owns. crate_add (migration 27)
  * does every real check (member gate, owner_id = auth.uid() -> 42501,
  * pool_visible_states() -> P0002) and appends at coalesce(max(position),0)+1
  * — this route only reads file_id and maps the RPC result onto HTTP.
@@ -16,7 +16,7 @@ import { sameOriginRedirectTarget } from '../../../../lib/org-api'
  * Two things remove.ts/move.ts never need, both mapped BEFORE the generic
  * rpcError table (upload-api.ts's RPC_STATUS has neither entry, since no
  * other route in this family ever inserts):
- *   - crate_items' primary key is (crate_id, file_id) (migration 20), so
+ *   - crate_items' primary key is (crate_id, file_id) (migration 27), so
  *     re-adding a track already in the crate raises Postgres 23505
  *     (unique_violation) rather than a silent no-op — mapped to 409
  *     `{error: 'already_in_crate'}`. org-api.ts's addToCrate() turns that

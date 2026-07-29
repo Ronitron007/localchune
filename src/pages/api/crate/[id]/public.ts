@@ -9,7 +9,7 @@ import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 
 /**
  * Toggles a crate the caller owns public/private. crate_set_public
- * (migration 20) does every real check (member gate, owner_id =
+ * (migration 27) does every real check (member gate, owner_id =
  * auth.uid() -> 42501) and sets/clears made_public_at — this route only
  * reads the target state and maps the RPC result onto HTTP.
  *

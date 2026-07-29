@@ -13,7 +13,7 @@ import {
 const FILE_ID = '11111111-1111-1111-1111-111111111111'
 const CRATE_ID = '22222222-2222-2222-2222-222222222222'
 
-// A full crate_list() row (migration 20) — only track_count/total_duration_ms
+// A full crate_list() row (migration 27) — only track_count/total_duration_ms
 // vary between the formatCrateMeta cases below, so this is the shared base.
 const CARD: CrateCard = {
   id: CRATE_ID,
@@ -242,7 +242,7 @@ describe('moveInList', () => {
 })
 
 describe('crateItemToPoolTrack', () => {
-  // A full crate_get() row (migration 20) -- position + pool_get's entire
+  // A full crate_get() row (migration 27) -- position + pool_get's entire
   // column list. Only the fields TrackRow/PoolTrack reads are populated
   // here; every other pool_get column is irrelevant to the adapter.
   const ITEM: CrateItem = {

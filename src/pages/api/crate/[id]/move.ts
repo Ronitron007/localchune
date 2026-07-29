@@ -12,7 +12,7 @@ import { moveInList, sameOriginRedirectTarget } from '../../../../lib/org-api'
  * present ↑/↓ button forms (work with no JS, no mouse; this is the
  * accessible fallback the drag-to-reorder enhancement in site.ts needs).
  *
- * The RPC surface is exactly migration 20's: there is no "move by one"
+ * The RPC surface is exactly migration 27's: there is no "move by one"
  * RPC, only crate_reorder(p_crate, p_files uuid[]) which rewrites the
  * whole run. So this route reads the crate's CURRENT order via crate_get
  * (ordered by position already), finds file_id's index, applies the same

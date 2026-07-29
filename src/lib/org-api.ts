@@ -17,7 +17,7 @@
  * from a real JSON response, so it is checked BEFORE the body is parsed.
  *
  * M6a Task 6 adds crateHref/formatCrateMeta/CrateCard — pure formatting
- * helpers for /crates.astro, which calls crate_list() (migration 20)
+ * helpers for /crates.astro, which calls crate_list() (migration 27)
  * server-side and needs no fetch wrapper of its own.
  *
  * M6a Task 7 adds moveInList (pure array helper shared by the /move route
@@ -94,7 +94,7 @@ export async function toggleLike(fileId: string): Promise<ToggleLikeResult> {
 
 /**
  * /api/crate/[id]/add.ts's one distinguishable failure: crate_items' PK is
- * (crate_id, file_id) (migration 20), so re-adding a track already in the
+ * (crate_id, file_id) (migration 27), so re-adding a track already in the
  * crate raises Postgres 23505, which the route maps to 409
  * `{error: 'already in crate'}` BEFORE its generic rpcError table. Callers
  * that only care about generic failure (a disabled/re-enabled button) can
@@ -152,7 +152,7 @@ export async function createCrate(name: string): Promise<string> {
   return body.id
 }
 
-/** Mirrors crate_list()'s (migration 20) row shape, column for column. */
+/** Mirrors crate_list()'s (migration 27) row shape, column for column. */
 export type CrateCard = {
   id: string
   name: string
@@ -207,7 +207,7 @@ export function moveInList<T>(items: T[], index: number, dir: 'up' | 'down'): T[
 }
 
 /**
- * A crate_get() row (migration 20): `position` followed by pool_get's
+ * A crate_get() row (migration 27): `position` followed by pool_get's
  * entire column list. Only the subset TrackRow.astro (via PoolTrack)
  * actually reads is typed here — crate_get returns many more columns
  * (analysis internals, batch/claim provenance) this page has no use for.

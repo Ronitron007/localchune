@@ -309,7 +309,7 @@ comment on view public.pool_tracks is
    authenticated: it runs as its owner and bypasses RLS. download_count and
    upload_count added by migration 15b; tags added by migration 16; the
    audio_analysis LEFT JOIN by migration 16b; uploader_name''s
-   members.username preference by migration 17. Migration 19 (M6a Task 1)
+   members.username preference by migration 17. Migration 26 (M6a Task 1)
    appended like_count, liked_by_me, play_count, sk_likes, sk_plays, sourced
    from LEFT JOIN LATERAL count(*) aggregates -- never a plain join, since
    likes/play_events carry more than one row per file_id.';
@@ -477,7 +477,7 @@ comment on function public.pool_list(
   text, double precision, double precision, boolean, text, boolean,
   int, uuid, text, text, int) is
   'The one list endpoint. Every filter is server-side. Paging is keyset on
-   (sort key, file_id) -- never OFFSET. Migration 19 (M6a Task 1) appended
+   (sort key, file_id) -- never OFFSET. Migration 26 (M6a Task 1) appended
    like_count, liked_by_me, play_count and the ''likes_desc''/''plays_desc''
    sorts; every earlier column and sort is unchanged.';
 
@@ -579,6 +579,6 @@ grant  execute on function public.pool_get(uuid) to authenticated;
 comment on function public.pool_get(uuid) is
   'One track, everything about it. Migration 15b appended download_count
    and upload_count; migration 16 appended tags; migration 18 swapped
-   claim_names to prefer claimed usernames. Migration 19 (M6a Task 1)
+   claim_names to prefer claimed usernames. Migration 26 (M6a Task 1)
    appended like_count, liked_by_me, play_count. Every earlier column and
    the visibility WHERE clause are unchanged.';

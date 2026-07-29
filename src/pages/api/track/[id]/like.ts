@@ -8,7 +8,7 @@ import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/up
 import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 
 /**
- * Toggles the caller's like on one track — migration 19's toggle_like RPC
+ * Toggles the caller's like on one track — migration 26's toggle_like RPC
  * does the actual delete-first flip and returns the count AFTER the call.
  * No ownership check: any active member may like any pool-visible file.
  * 42501 (not active/owner) and P0002 (not pool-visible) both come back

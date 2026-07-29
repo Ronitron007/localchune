@@ -72,11 +72,11 @@ export type PoolTrack = {
   download_count: number
   /** Migration 16, coalesced to '{}' server-side — never null, may be empty. */
   tags: string[]
-  /** Migration 19, coalesced server-side — never null. */
+  /** Migration 26, coalesced server-side — never null. */
   like_count: number
-  /** Migration 19, coalesced server-side — never null. */
+  /** Migration 26, coalesced server-side — never null. */
   liked_by_me: boolean
-  /** Migration 19, coalesced server-side — never null. */
+  /** Migration 26, coalesced server-side — never null. */
   play_count: number
 }
 
