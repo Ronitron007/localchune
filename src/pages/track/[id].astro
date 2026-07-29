@@ -9,7 +9,7 @@ import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { formatBpm } from '../../lib/track-format'
 import { isUuid } from '../../lib/upload-api'
-import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../../lib/file-state'
+import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel, explainLastError } from '../../lib/file-state'
 import { formatTagDate, sourceLine, type Provenance } from '../../lib/provenance'
 
 const { id } = Astro.params
@@ -88,7 +88,10 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               {lastError && (
                 <>
                   {' — '}
-                  <span class="reason">{lastError}</span>
+                  {/* Same mapper as /uploads — the two pages must never
+                      explain the same failure in two vocabularies. Raw
+                      string in the tooltip, plain sentence in the text. */}
+                  <span class="reason" title={lastError}>{explainLastError(lastError)}</span>
                 </>
               )}
             </>

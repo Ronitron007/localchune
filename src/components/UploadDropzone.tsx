@@ -17,6 +17,7 @@ import {
 // calls them directly, and formatDuration is imported rather than
 // reimplemented here.
 import { readDurationMs, preflightFile, formatDuration } from '../lib/preflight'
+import { checkBlobHead } from '../lib/head-check'
 import {
   journalKey, lookupFile, rememberFile, forgetFile, pruneJournal,
 } from '../lib/upload-journal'
@@ -274,6 +275,19 @@ export default function UploadDropzone(props: { userId: string }) {
 
     await pump(
       added.map(({ key, file }) => async () => {
+        // UX.11's content-integrity gate, BEFORE the duration parse: a few
+        // KB read that rejects a known extension whose bytes contradict it
+        // (all-zero torrent-preallocated head, missing magic). The duration
+        // preflight below deliberately fails OPEN on a parse failure, which
+        // is how 29 hollow FLACs once uploaded in full only to die in
+        // analysis — this is the one check allowed to fail CLOSED, and only
+        // on proof. head-check.ts holds the rules and the incident story.
+        const integrity = await checkBlobHead(file.name, file)
+        if (!integrity.ok) {
+          handles.delete(key)
+          patch(key, { status: 'skipped', message: 'skipped — file looks incomplete or corrupt' })
+          return
+        }
         // Task 6 reads the duration off the header in a Web Worker. It never
         // decodes: decodeAudioData needs ~212 MB of RAM for a 10-minute stereo
         // track to obtain a number that lives in the first 100 bytes. It never
