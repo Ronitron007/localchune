@@ -19,7 +19,7 @@ import FileStateTicker from '../components/FileStateTicker'
 import { formatBytes } from '../lib/format'
 import { formatBpm } from '../lib/track-format'
 import { groupFilesByBatch, type MyFile } from '../lib/my-files-api'
-import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../lib/file-state'
+import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel, explainLastError } from '../lib/file-state'
 
 const { data, error } = await Astro.locals.supabase.rpc('my_files', { p_limit: 200 })
 if (error) console.error('my_files failed:', error.message)
@@ -75,10 +75,14 @@ const added = (iso: string) => new Date(iso).toISOString().slice(0, 10)
                         {f.last_error && (
                           <>
                             {' — '}
-                            {/* The owner's own ask: "empty_decode" verbatim,
-                                not just a friendly sentence with no detail
-                                behind it. */}
-                            <span class="reason">{f.last_error}</span>
+                            {/* UX.11 reversed the earlier "verbatim" call:
+                                29 incomplete FLACs put a raw ffprobe
+                                CalledProcessError on this page and the
+                                owner could not tell whose fault it was.
+                                Members get explainLastError's plain
+                                sentence; the verbatim string stays one
+                                hover away in the tooltip. */}
+                            <span class="reason" title={f.last_error}>{explainLastError(f.last_error)}</span>
                           </>
                         )}
                       </>

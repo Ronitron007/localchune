@@ -9,8 +9,9 @@ import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { formatBpm } from '../../lib/track-format'
 import { isUuid } from '../../lib/upload-api'
-import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../../lib/file-state'
+import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel, explainLastError } from '../../lib/file-state'
 import type { CrateCard } from '../../lib/org-api'
+import { formatTagDate, sourceLine, type Provenance } from '../../lib/provenance'
 
 const { id } = Astro.params
 // Guard before the RPC: a non-uuid path segment would otherwise reach
@@ -66,6 +67,17 @@ const tagsAction = `/api/track/${t.file_id}/tags`
 const { data: cardsData, error: cardsError } = await Astro.locals.supabase.rpc('crate_list')
 if (cardsError) console.error('crate_list failed:', cardsError.message)
 const myCrates = ((cardsData ?? []) as CrateCard[]).filter((c) => c.is_mine)
+
+// Migration 20 — the owner's ask: "the tags you saw like the purchase
+// date and purchased from itunes... cant we add these tags automatically
+// for users to see". pool_get's `provenance` is the SQL-allowlisted
+// projection of the file's embedded tags (provenance_from_tags()); the
+// buyer-identity atoms an iTunes file carries (apID/account_id, ownr,
+// xid) never leave the database, so nothing here needs to — or could —
+// filter them. Each row below renders only when its value exists.
+const prov: Provenance = t.provenance ?? {}
+const source = sourceLine(prov, t.original_filename)
+const released = formatTagDate(prov.release_date) ?? prov.release_date
 ---
 <Shell title={`localchune — ${title}`}>
   <article class="trackdetail">
@@ -88,7 +100,10 @@ const myCrates = ((cardsData ?? []) as CrateCard[]).filter((c) => c.is_mine)
               {lastError && (
                 <>
                   {' — '}
-                  <span class="reason">{lastError}</span>
+                  {/* Same mapper as /uploads — the two pages must never
+                      explain the same failure in two vocabularies. Raw
+                      string in the tooltip, plain sentence in the text. */}
+                  <span class="reason" title={lastError}>{explainLastError(lastError)}</span>
                 </>
               )}
             </>
@@ -271,6 +286,12 @@ const myCrates = ((cardsData ?? []) as CrateCard[]).filter((c) => c.is_mine)
     <section class="provenance">
       <h2>Provenance</h2>
       <dl>
+        {source && <><dt>Source</dt><dd>{source}</dd></>}
+        {prov.copyright && <><dt>Copyright</dt><dd>{prov.copyright}</dd></>}
+        {prov.label && <><dt>Label</dt><dd>{prov.label}</dd></>}
+        {released && <><dt>Released</dt><dd class="num">{released}</dd></>}
+        {prov.genre && <><dt>Genre</dt><dd>{prov.genre}</dd></>}
+        {prov.encoder && <><dt>Encoder</dt><dd>{prov.encoder}</dd></>}
         <dt>Uploaded by</dt><dd>{t.uploader_name}</dd>
         <dt>Batch</dt><dd>{t.batch_label ?? t.batch_id}</dd>
         <dt>Added</dt><dd class="num">{new Date(t.created_at).toISOString().slice(0, 10)}</dd>

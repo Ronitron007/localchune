@@ -17,6 +17,7 @@ import {
 // calls them directly, and formatDuration is imported rather than
 // reimplemented here.
 import { readDurationMs, preflightFile, formatDuration } from '../lib/preflight'
+import { checkBlobHead } from '../lib/head-check'
 import {
   journalKey, lookupFile, rememberFile, forgetFile, pruneJournal,
 } from '../lib/upload-journal'
@@ -191,6 +192,65 @@ export default function UploadDropzone(props: { userId: string }) {
     }
     document.addEventListener('click', clickGuard, true)
     onCleanup(() => document.removeEventListener('click', clickGuard, true))
+
+    // ACCEPTED GAP, investigated and not guarded: browser back/forward.
+    // popstate drives a soft transition exactly like a link click does, and
+    // it is NOT covered by clickGuard above or by the beforeunload handler —
+    // a batch survives a back-button press with no warning and, unlike a
+    // link click, no dialog is even possible to show cleanly. Traced through
+    // node_modules/astro/dist/transitions/{router,events}.js (Astro 7.1.5):
+    //
+    // 1. A popstate guard can never win the ordering trick clickGuard uses.
+    //    clickGuard beats ClientRouter's own click listener by being a
+    //    CAPTURE-phase listener on `document`, an ANCESTOR of the clicked
+    //    <a> — capture always precedes the target's own bubble-phase
+    //    listeners, regardless of registration order. `popstate` has no
+    //    such ancestor: its target is `window` itself, so every listener on
+    //    it — capture flag or not — fires in plain registration order.
+    //    Astro's own listener (`addEventListener("popstate", onPopState)`
+    //    in router.js) is registered at that module's top level, which sits
+    //    in Shell.astro's <head> — strictly earlier in the document than
+    //    this island's client:load script, and deferred module scripts run
+    //    in document order. Astro's handler is therefore guaranteed to run
+    //    BEFORE any listener this onMount could ever add.
+    // 2. Even winning that race would not help. Unlike a link click, a
+    //    popstate event fires AFTER the browser has already moved the
+    //    history pointer — there is no native "cancel this back
+    //    navigation". router.js's onPopState calls transition() synchronously
+    //    (no `await` before it dispatches astro:before-preparation), so by
+    //    the time any same-target listener of ours could run, Astro has
+    //    already started its own transition for this event.
+    //  - preventDefault() on astro:before-preparation (the trick PR #13
+    //    rejected for clicks, for the same reason) is actively useless here:
+    //    on a popstate transition `to` is `new URL(location.href)` — the
+    //    URL the browser ALREADY navigated to — so `defaultPrevented`'s
+    //    fallback (`location.href = to.href`) reloads the page you already
+    //    landed on. It does not restore the page you were on; it is a
+    //    strictly worse version of doing nothing.
+    //  - The remaining option — confirm() + history.pushState()/history.go()
+    //    to shove the URL back where it was on decline — was considered and
+    //    rejected. onPopState reads `history.state` LIVE, not the event's
+    //    own snapshot, so restoring it before onPopState runs does not
+    //    "cancel" anything: Astro just treats it as a same-page transition
+    //    and re-fetches + soft-swaps THIS page's own HTML, remounting every
+    //    island on it — destroying the exact in-memory File handles
+    //    (`handles`, above) this guard exists to protect. That is not a
+    //    partial win, it is the bug this whole file exists to prevent,
+    //    self-inflicted. And `history.go()`, unlike pushState, does not
+    //    apply synchronously — it queues a second, later popstate — so
+    //    there is no ordering fix available either.
+    //
+    // Net: this Astro version gives no hook, no ordering trick, and no
+    // "cancel" primitive strong enough to guard back/forward without
+    // itself causing the data loss it would exist to prevent. Shipping a
+    // confirm()-and-hope version would be exactly the "half-working
+    // history juggle" this file's PR description already rejected once for
+    // clicks. beforeunload (above) still covers the one popstate case that
+    // IS a real unload: transitionEnabledOnThisPage() false makes
+    // onPopState call location.reload() instead of a soft transition — not
+    // reachable in this app, since Shell.astro always renders
+    // <ClientRouter />, but worth naming as the one case that was never at
+    // risk.
   })
 
   const patch = (key: string, next: Partial<Row>) => {
@@ -215,6 +275,19 @@ export default function UploadDropzone(props: { userId: string }) {
 
     await pump(
       added.map(({ key, file }) => async () => {
+        // UX.11's content-integrity gate, BEFORE the duration parse: a few
+        // KB read that rejects a known extension whose bytes contradict it
+        // (all-zero torrent-preallocated head, missing magic). The duration
+        // preflight below deliberately fails OPEN on a parse failure, which
+        // is how 29 hollow FLACs once uploaded in full only to die in
+        // analysis — this is the one check allowed to fail CLOSED, and only
+        // on proof. head-check.ts holds the rules and the incident story.
+        const integrity = await checkBlobHead(file.name, file)
+        if (!integrity.ok) {
+          handles.delete(key)
+          patch(key, { status: 'skipped', message: 'skipped — file looks incomplete or corrupt' })
+          return
+        }
         // Task 6 reads the duration off the header in a Web Worker. It never
         // decodes: decodeAudioData needs ~212 MB of RAM for a 10-minute stereo
         // track to obtain a number that lives in the first 100 bytes. It never
