@@ -46,6 +46,11 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       <span class="sep"> — </span>
       <span class="name">{track.display_title}</span>
     </a>
+    {track.tags.length > 0 && (
+      <span class="tags">
+        {track.tags.map((tag) => <span class="tagchip">{tag}</span>)}
+      </span>
+    )}
   </td>
   <td class="bpm num" title={noBeat ? 'no beat detected' : undefined}>
     {formatBpm(track.bpm, track.ibi_std_ms)}

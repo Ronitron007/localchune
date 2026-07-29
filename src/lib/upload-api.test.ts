@@ -8,7 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   MAX_PART_URLS_PER_CALL, isUuid, readJsonBody, parseBatchBody, parsePresignBody,
   parsePartsBody, parseCompleteBody, parseAbortBody, parseFileIdParam,
-  rpcError, loadOwnedJob, dbErrorResponse,
+  rpcError, loadOwnedJob, dbErrorResponse, parseTagForm,
 } from './upload-api'
 
 const U1 = '11111111-1111-1111-1111-111111111111'
@@ -246,5 +246,48 @@ describe('loadOwnedJob', () => {
     expect(res.status).toBe(503)
     expect(res.headers.get('content-type')).toMatch(/^application\/json/)
     expect(await res.json()).toEqual({ error: 'db_error', message: 'try again' })
+  })
+})
+
+describe('parseTagForm', () => {
+  const form = (fields: Record<string, string>) => {
+    const fd = new FormData()
+    for (const [k, v] of Object.entries(fields)) fd.set(k, v)
+    return fd
+  }
+
+  it('defaults to add when intent is absent', () => {
+    expect(parseTagForm(form({ tag: 'Deep House' }))).toEqual({
+      ok: true, value: { intent: 'add', tag: 'Deep House' },
+    })
+  })
+
+  it("passes the raw tag through untouched — trimming/casefolding is tag_add's job, not this parser's", () => {
+    expect(parseTagForm(form({ tag: '  Deep   House  ' }))).toEqual({
+      ok: true, value: { intent: 'add', tag: '  Deep   House  ' },
+    })
+  })
+
+  it('rejects a missing or blank tag on add', () => {
+    expect(parseTagForm(form({}))).toEqual({ ok: false, error: 'tag is required' })
+    expect(parseTagForm(form({ tag: '   ' }))).toEqual({ ok: false, error: 'tag is required' })
+  })
+
+  it('reads a remove intent with its tag_key', () => {
+    expect(parseTagForm(form({ intent: 'remove', tag_key: 'deep house' }))).toEqual({
+      ok: true, value: { intent: 'remove', tagKey: 'deep house' },
+    })
+  })
+
+  it('rejects a missing or blank tag_key on remove', () => {
+    expect(parseTagForm(form({ intent: 'remove' }))).toEqual({ ok: false, error: 'tag_key is required' })
+    expect(parseTagForm(form({ intent: 'remove', tag_key: '  ' })))
+      .toEqual({ ok: false, error: 'tag_key is required' })
+  })
+
+  it('any intent other than "remove" is treated as add', () => {
+    expect(parseTagForm(form({ intent: 'bogus', tag: 'House' }))).toEqual({
+      ok: true, value: { intent: 'add', tag: 'House' },
+    })
   })
 })

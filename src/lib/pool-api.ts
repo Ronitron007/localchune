@@ -70,6 +70,8 @@ export type PoolTrack = {
   row_cursor: string
   /** Migration 15b, coalesced to 0 server-side — never null. */
   download_count: number
+  /** Migration 16, coalesced to '{}' server-side — never null, may be empty. */
+  tags: string[]
 }
 
 const numberIn = (raw: string | null, lo: number, hi: number): number | null => {

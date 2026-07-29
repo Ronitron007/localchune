@@ -27,6 +27,10 @@ const title = `${artist} — ${t.display_title}`
 const hasArt = t.artwork_key !== null || t.thumb_key !== null
 const num = (v: number | null, digits = 1, unit = '') =>
   v === null || v === undefined ? '—' : `${v.toFixed(digits)}${unit}`
+// Migration 16: only the uploader gets the add/remove forms. Everyone
+// pool-visible sees the chips — checked server-side, not hidden with CSS.
+const isUploader = Astro.locals.member?.user_id === t.uploaded_by
+const tagsAction = `/api/track/${t.file_id}/tags`
 ---
 <Shell title={`localchune — ${title}`}>
   <article class="trackdetail">
@@ -59,6 +63,42 @@ const num = (v: number | null, digits = 1, unit = '') =>
         brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}
       </p>
     </header>
+
+    {/* Migration 16 — owner's verbatim ask: "give the uploader an ability
+        to add tags... at any point of time for all the tracks that he's
+        uploaded." Editable at ANY file state, uploader-only, brutalist
+        idiom — plain <form> POSTs to /api/track/[id]/tags, no island. The
+        remove form's tag_key field carries the tag's DISPLAY text, not a
+        separately-fetched key: tag_remove re-derives the same normalised
+        key from it (trim/casefold/collapse), so no extra column is needed
+        just to round-trip a delete. */}
+    <section class="tags">
+      <h2>Tags</h2>
+      {t.tags.length === 0 && <p class="explain">No tags yet.</p>}
+      <ul class="tageditor">
+        {t.tags.map((tag: string) => (
+          <li>
+            <span class="tagchip">{tag}</span>
+            {isUploader && (
+              <form class="tagform" method="post" action={tagsAction}>
+                <input type="hidden" name="intent" value="remove" />
+                <input type="hidden" name="tag_key" value={tag} />
+                <button type="submit" aria-label={`Remove tag ${tag}`}>×</button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ul>
+      {isUploader && (
+        <form class="tagform" method="post" action={tagsAction}>
+          <label>
+            <span class="sr-only">Add a tag</span>
+            <input type="text" name="tag" maxlength="32" placeholder="add a tag" required />
+          </label>
+          <button type="submit">add tag</button>
+        </form>
+      )}
+    </section>
 
     <section class="identity">
       <h2>Identity</h2>
