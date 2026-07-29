@@ -35,10 +35,15 @@ import type { PoolTrack } from './pool-api'
 
 /**
  * Same-origin-validated Referer, or `fallback` when there is none, it
- * fails to parse, or it points somewhere else — the open-redirect guard
- * `/api/track/[id]/like.ts` established inline for its one caller. Five
- * `/api/crate/[id]/*` routes (Task 7) need the exact same check on their
- * plain-form branch, so it is factored here instead of retyped five times.
+ * fails to parse, it points somewhere else, or its pathname is
+ * protocol-relative residue (`//evil.example/...` — same-origin by
+ * `URL`'s own reckoning, since the authority is still this origin, but a
+ * leading `//` in a `Location`/href is interpreted by browsers as
+ * "switch host," so it is rejected same as a genuine cross-origin
+ * Referer) — the open-redirect guard `/api/track/[id]/like.ts` originally
+ * established inline for its one caller, now shared by it and the five
+ * `/api/crate/[id]/*` routes (Task 7) that need the exact same check on
+ * their plain-form branch.
  */
 export function sameOriginRedirectTarget(
   refererHeader: string | null, requestUrl: string, fallback: string,
@@ -46,7 +51,7 @@ export function sameOriginRedirectTarget(
   if (!refererHeader) return fallback
   try {
     const referer = new URL(refererHeader, requestUrl)
-    if (referer.origin === new URL(requestUrl).origin) {
+    if (referer.origin === new URL(requestUrl).origin && !referer.pathname.startsWith('//')) {
       return referer.pathname + referer.search
     }
   } catch {

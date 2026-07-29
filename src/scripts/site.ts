@@ -319,11 +319,19 @@ async function submitCrateOrder(container: HTMLElement) {
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ file_ids: fileIds }),
     })
-    if (!res.ok) throw new Error('reorder failed')
+    // Content-type first, same convention as org-api.ts's toggleLike/
+    // addToCrate/createCrate: middleware redirects a dead session to
+    // /login, and fetch() follows that redirect itself, so a lost session
+    // lands here as a 200 text/html rather than a 401/403 — res.ok alone
+    // would read that as a successful save when the reorder was never
+    // persisted. Any non-JSON response is therefore a failure, same reload
+    // path as a rejected save below.
+    const type = res.headers.get('content-type') ?? ''
+    if (!type.includes('application/json') || !res.ok) throw new Error('reorder failed')
   } catch {
     // Server rejected it (not a valid permutation, not the owner any
-    // more, a dropped connection) — reload rather than leave the DOM
-    // showing an order the database never committed.
+    // more, a dropped connection, a lost session) — reload rather than
+    // leave the DOM showing an order the database never committed.
     window.location.reload()
   }
 }

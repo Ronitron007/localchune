@@ -31,9 +31,15 @@ const meta = ((cardsData ?? []) as CrateCard[]).find((c) => c.id === id)
 if (!meta) return new Response('Not found', { status: 404 })
 
 const { data: rowsData, error: getError } = await Astro.locals.supabase.rpc('crate_get', { p_crate: id })
+// A non-42501 failure here (dropped connection, Postgres unreachable) must
+// not render the same "no tracks" empty state a genuinely empty crate
+// gets — that reads as data loss during an outage. 42501 already returns
+// 404 above; anything else just flags the outage message below.
+let loadFailed = false
 if (getError) {
   if (getError.code === '42501') return new Response('Not found', { status: 404 })
   console.error('crate_get failed:', getError.message)
+  loadFailed = true
 }
 const items = (rowsData ?? []) as CrateItem[]
 const isOwner = meta.is_mine
@@ -104,7 +110,9 @@ const HEADERS = [
 
     {items.length === 0 ? (
       <p class="explain">
-        {isOwner ? 'No tracks in this crate yet.' : 'This crate is empty.'}
+        {loadFailed
+          ? 'Could not load — try again.'
+          : isOwner ? 'No tracks in this crate yet.' : 'This crate is empty.'}
       </p>
     ) : (
       <table>

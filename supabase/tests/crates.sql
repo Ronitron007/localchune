@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(38);
 
 -- Two active members. A (d1) owns every crate created below; B (d2) exists
 -- to prove ownership/visibility gates in both directions.
@@ -18,6 +18,9 @@ insert into public.upload_batches (id, created_by) values
 -- cf04: the "crated file later fails analysis" fixture -- starts stored,
 -- flipped to failed mid-test.
 -- cf05: the visibility fixture (lives in the crate that gets toggled public).
+-- cf06: the final-review (I1b) "hidden item must not deadlock reorder"
+-- fixture -- starts stored, flipped to failed mid-test, alongside cf01 in a
+-- crate of its own.
 -- All owned by A, all pool-visible (stored) at insert time.
 insert into public.files
   (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
@@ -31,7 +34,9 @@ values
   ('00000000-0000-0000-0000-00000000cf04','00000000-0000-0000-0000-0000000000db',
    '00000000-0000-0000-0000-0000000000d1','audio/d1/cf04.flac','Four.flac',  1000,'flac','stored'),
   ('00000000-0000-0000-0000-00000000cf05','00000000-0000-0000-0000-0000000000db',
-   '00000000-0000-0000-0000-0000000000d1','audio/d1/cf05.flac','Five.flac',  1000,'flac','stored');
+   '00000000-0000-0000-0000-0000000000d1','audio/d1/cf05.flac','Five.flac',  1000,'flac','stored'),
+  ('00000000-0000-0000-0000-00000000cf06','00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1','audio/d1/cf06.flac','Six.flac',   1000,'flac','stored');
 
 insert into public.audio_analysis (file_id, analysis_version, duration_ms, bpm, key_camelot, raw_tags)
 values
@@ -39,7 +44,8 @@ values
   ('00000000-0000-0000-0000-00000000cf02','v1', 200000, 128, '8A', '{}'::jsonb),
   ('00000000-0000-0000-0000-00000000cf03','v1', 200000, 128, '8A', '{}'::jsonb),
   ('00000000-0000-0000-0000-00000000cf04','v1', 200000, 128, '8A', '{}'::jsonb),
-  ('00000000-0000-0000-0000-00000000cf05','v1', 200000, 128, '8A', '{}'::jsonb);
+  ('00000000-0000-0000-0000-00000000cf05','v1', 200000, 128, '8A', '{}'::jsonb),
+  ('00000000-0000-0000-0000-00000000cf06','v1', 200000, 128, '8A', '{}'::jsonb);
 
 -- Generated crate ids (crate_create/crate_rename return uuids; crates itself
 -- has no base grant to authenticated) are stashed here by label so later
@@ -272,6 +278,56 @@ select is(
   (select count(*)::int from public.crate_get((select id from crate_ids where label = 'a_fade'))),
   0,
   'a crated file that later fails analysis silently drops out of crate_get instead of raising' );
+
+-- ---- final-review I1a: crate_add refuses a non-pool-visible file ----
+-- cf04 is already 'failed' from the a_fade block above -- reuse it directly
+-- rather than adding a fourth file to the fixture.
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d1"}';
+insert into crate_ids (label, id) select 'a_hidden_add', public.crate_create('Hidden Add');
+select throws_ok(
+  format($$ select public.crate_add(%L, '00000000-0000-0000-0000-00000000cf04'::uuid) $$,
+    (select id from crate_ids where label = 'a_hidden_add')),
+  'P0002', null, 'crate_add refuses a file whose state is not pool-visible (failed)' );
+
+-- ---- final-review I1b: a hidden item must not deadlock crate_reorder ----
+-- cf06 is added FIRST (position 1), cf01 SECOND (position 2); cf06 then
+-- flips to failed, so this crate's pool-visible items are {cf01} alone. The
+-- array a real client can even construct only ever contains what
+-- crate_get shows it (pool-visible items) -- under the OLD full-crate
+-- set-equality check this array could never satisfy crate_reorder (its
+-- length would always be short by the hidden item), permanently 22023ing
+-- any reorder of a crate holding a hidden item.
+insert into crate_ids (label, id) select 'a_reorder_hidden', public.crate_create('Reorder Hidden');
+select public.crate_add((select id from crate_ids where label = 'a_reorder_hidden'),
+                         '00000000-0000-0000-0000-00000000cf06'::uuid);
+select public.crate_add((select id from crate_ids where label = 'a_reorder_hidden'),
+                         '00000000-0000-0000-0000-00000000cf01'::uuid);
+
+reset role;
+update public.files set state = 'failed'
+ where id = '00000000-0000-0000-0000-00000000cf06';
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d1"}';
+select lives_ok(
+  format($$ select public.crate_reorder(%L, array['00000000-0000-0000-0000-00000000cf01'::uuid]) $$,
+    (select id from crate_ids where label = 'a_reorder_hidden')),
+  'crate_reorder succeeds given only the crate''s pool-visible items, even though it also holds a hidden (failed) one' );
+
+select results_eq(
+  format($$ select position, file_id from public.crate_get(%L) $$,
+    (select id from crate_ids where label = 'a_reorder_hidden')),
+  $$ values (1::int, '00000000-0000-0000-0000-00000000cf01'::uuid) $$,
+  'crate_get shows only the visible item, renumbered to position 1' );
+
+reset role;
+select is(
+  (select position from public.crate_items
+    where crate_id = (select id from crate_ids where label = 'a_reorder_hidden')
+      and file_id = '00000000-0000-0000-0000-00000000cf06'),
+  2,
+  'the hidden item is renumbered to a position after n (n=1) instead of colliding with the deferred unique constraint at commit' );
 
 -- ---- anon cannot execute at all -- 42501 before the body ever runs ----
 set local role anon;

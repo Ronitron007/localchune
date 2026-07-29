@@ -172,6 +172,15 @@ describe('sameOriginRedirectTarget', () => {
   it('falls back on a malformed Referer', () => {
     expect(sameOriginRedirectTarget('http://[', REQUEST_URL, '/crate/x')).toBe('/crate/x')
   })
+
+  it('falls back on a same-origin Referer whose pathname is protocol-relative residue', () => {
+    // `new URL` parses this as same-origin (the authority is still
+    // localchune.example) with pathname `//evil.example/` — a leading `//`
+    // in a redirect target is interpreted by browsers as "switch host," so
+    // it must be rejected same as a genuine cross-origin Referer.
+    expect(sameOriginRedirectTarget('https://localchune.example//evil.example/', REQUEST_URL, '/crate/x'))
+      .toBe('/crate/x')
+  })
 })
 
 describe('crateHref', () => {

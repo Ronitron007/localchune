@@ -29,6 +29,15 @@
 -- some rows temporarily share a position with others until the whole
 -- statement (deferred to transaction end) is committed.
 --
+-- Final-review fix (I1): crate_add refuses (P0002) a file that is not
+-- pool_visible_states() -- same gate as toggle_like/bump_play -- so a
+-- hidden file can never enter a crate. crate_reorder's set-equality check
+-- is therefore against the crate's pool-VISIBLE items only, matching what
+-- crate_get actually shows the client; any item left out (a hidden one) is
+-- renumbered to a position after the visible run rather than compared at
+-- all, so a crate holding a hidden item can still be reordered instead of
+-- permanently 22023ing.
+--
 -- Every mutating RPC below bumps crates.updated_at -- `/crates` sorts on it
 -- and it is the one signal that a crate's *contents* changed, independent of
 -- created_at (which never changes) and made_public_at (which only tracks the
@@ -309,14 +318,19 @@ comment on function public.crate_set_public(uuid, boolean) is
    updated_at.';
 
 -- ============================================================
--- crate_add() -- member gate, owner check, append at
+-- crate_add() -- member gate, owner check, pool_visible_states() P0002 gate
+-- (I1a final-review fix -- the same gate toggle_like/bump_play apply in
+-- migration 19: a file that is not pool-visible cannot be added to a crate
+-- in the first place, matching crate_get's own filter so a crate never
+-- silently accumulates items it can never render), then append at
 -- coalesce(max(position),0)+1. Bumps updated_at.
 -- ============================================================
 create or replace function public.crate_add(p_crate uuid, p_file uuid)
 returns void
 language plpgsql security definer set search_path = '' as $$
 declare
-  v_pos int;
+  v_pos   int;
+  v_state text;
 begin
   if not (public.is_active_member() or public.is_owner()) then
     raise exception 'forbidden' using errcode = '42501';
@@ -324,6 +338,11 @@ begin
   if not exists (select 1 from public.crates c
                   where c.id = p_crate and c.owner_id = auth.uid()) then
     raise exception 'forbidden' using errcode = '42501';
+  end if;
+
+  select f.state into v_state from public.files f where f.id = p_file;
+  if v_state is null or not (v_state = any (public.pool_visible_states())) then
+    raise exception 'file % is not pool-visible', p_file using errcode = 'P0002';
   end if;
 
   select coalesce(max(ci.position), 0) + 1 into v_pos
@@ -340,7 +359,9 @@ grant  execute on function public.crate_add(uuid, uuid) to authenticated;
 
 comment on function public.crate_add(uuid, uuid) is
   'Appends p_file to a crate the caller owns (42501 otherwise) at
-   coalesce(max(position),0)+1. Bumps updated_at.';
+   coalesce(max(position),0)+1. Refuses (P0002) on any file whose state is
+   not in pool_visible_states() -- same gate as toggle_like/bump_play -- so
+   a hidden file can never enter a crate to begin with. Bumps updated_at.';
 
 -- ============================================================
 -- crate_remove() -- member gate, owner check, delete the item. Leaves a gap
@@ -374,17 +395,26 @@ comment on function public.crate_remove(uuid, uuid) is
 
 -- ============================================================
 -- crate_reorder() -- member gate, owner check, then asserts p_files is a
--- set-equal permutation of the crate's current items (22023 on missing,
--- extra or duplicate ids) before rewriting every position to the array
--- index in one UPDATE. The deferrable unique(crate_id, position) is what
--- makes that single in-place UPDATE legal -- see the table comment. Bumps
--- updated_at.
+-- set-equal permutation of the crate's POOL-VISIBLE items only (22023 on
+-- missing, extra or duplicate ids) before rewriting those positions to the
+-- array index in one UPDATE. This is the I1b final-review fix: a client
+-- only ever sees pool-visible items (crate_get filters to
+-- pool_visible_states(), same as crate_get itself), so it can never legally
+-- construct an array that also names a hidden item -- requiring full-crate
+-- set-equality against p_files would make reordering permanently
+-- impossible the moment a crate held even one hidden item. A second UPDATE
+-- then renumbers any hidden item(s) to positions AFTER the visible run
+-- (v_n + 1, v_n + 2, ... in their existing relative order), so the
+-- deferred unique(crate_id, position) check at commit never sees a
+-- collision between a freshly-renumbered visible item and an untouched
+-- hidden one. Bumps updated_at.
 -- ============================================================
 create or replace function public.crate_reorder(p_crate uuid, p_files uuid[])
 returns void
 language plpgsql security definer set search_path = '' as $$
 declare
   v_files uuid[] := coalesce(p_files, array[]::uuid[]);
+  v_n     int    := cardinality(coalesce(p_files, array[]::uuid[]));
 begin
   if not (public.is_active_member() or public.is_owner()) then
     raise exception 'forbidden' using errcode = '42501';
@@ -394,21 +424,39 @@ begin
     raise exception 'forbidden' using errcode = '42501';
   end if;
 
-  if (select count(*) from public.crate_items where crate_id = p_crate)
-     <> cardinality(v_files)
+  if (select count(*) from public.crate_items ci
+        join public.files f on f.id = ci.file_id
+       where ci.crate_id = p_crate
+         and f.state = any (public.pool_visible_states()))
+     <> v_n
      or exists (select 1 from unnest(v_files) f
                 left join public.crate_items ci
                   on ci.crate_id = p_crate and ci.file_id = f
-                where ci.file_id is null)
+                left join public.files ff
+                  on ff.id = f and ff.state = any (public.pool_visible_states())
+                where ci.file_id is null or ff.id is null)
      or (select count(distinct f) from unnest(v_files) f)
-        <> cardinality(v_files)
-  then raise exception 'reorder array must be a permutation of crate items'
+        <> v_n
+  then raise exception 'reorder array must be a permutation of the crate''s pool-visible items'
        using errcode = '22023';
   end if;
 
   update public.crate_items ci
      set position = u.ord
     from unnest(v_files) with ordinality as u(file_id, ord)
+   where ci.crate_id = p_crate and ci.file_id = u.file_id;
+
+  -- Any item NOT named in p_files is, by the check above, a hidden item --
+  -- renumber it past the visible run, preserving its existing relative
+  -- order, so it never collides with the 1..v_n positions just written.
+  update public.crate_items ci
+     set position = v_n + u.ord
+    from (
+      select file_id, row_number() over (order by position) as ord
+        from public.crate_items
+       where crate_id = p_crate
+         and file_id <> all (v_files)
+    ) u
    where ci.crate_id = p_crate and ci.file_id = u.file_id;
 
   update public.crates set updated_at = now() where id = p_crate;
@@ -420,10 +468,11 @@ grant  execute on function public.crate_reorder(uuid, uuid[]) to authenticated;
 comment on function public.crate_reorder(uuid, uuid[]) is
   'Rewrites a crate the caller owns (42501 otherwise) to the order given by
    p_files, which must be a set-equal permutation of the crate''s current
-   file_ids -- a missing, extra or duplicate id raises 22023. Positions
-   become the 1-based array index. Single UPDATE, legal only because
-   crate_items'' unique(crate_id, position) is deferrable initially deferred.
-   Bumps updated_at.';
+   POOL-VISIBLE file_ids only -- a missing, extra or duplicate id raises
+   22023. Visible positions become the 1-based array index; any hidden item
+   is renumbered to a position after the visible run, preserving its
+   relative order, so it never collides with the deferred unique check at
+   commit. Bumps updated_at.';
 
 -- ============================================================
 -- crate_list() -- member gate, then every crate the caller owns plus every

@@ -5,6 +5,7 @@
 
 import type { APIRoute } from 'astro'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
+import { sameOriginRedirectTarget } from '../../../../lib/org-api'
 
 /**
  * Toggles the caller's like on one track — migration 19's toggle_like RPC
@@ -45,20 +46,10 @@ export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
     // track page or the pool table, whichever rendered it. tags.ts always
     // knows its one destination (/track/[id]); this route has two, so it
     // trusts Referer instead, with the track page as a safe fallback when
-    // a client sends none.
-    let redirectTo = `/track/${id}`
-    const referer = request.headers.get('referer')
-    if (referer) {
-      try {
-        // Referer must be same-origin to prevent open-redirect.
-        const refererUrl = new URL(referer, request.url)
-        if (refererUrl.origin === new URL(request.url).origin) {
-          redirectTo = refererUrl.pathname + refererUrl.search
-        }
-      } catch {
-        // Malformed Referer URL, use fallback.
-      }
-    }
+    // a client sends none. sameOriginRedirectTarget is the same
+    // open-redirect guard the five /api/crate/[id]/* routes use — see its
+    // doc comment in org-api.ts.
+    const redirectTo = sameOriginRedirectTarget(request.headers.get('referer'), request.url, `/track/${id}`)
     return redirect(redirectTo, 303)
   }
 

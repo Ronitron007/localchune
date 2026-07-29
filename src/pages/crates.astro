@@ -20,11 +20,20 @@ import { crateHref, formatCrateMeta, type CrateCard } from '../lib/org-api'
 
 const { data, error } = await Astro.locals.supabase.rpc('crate_list')
 if (error) console.error('crate_list failed:', error.message)
+// 42501 (not an active member) is a real permission answer, not an outage
+// — everything else here (a dropped connection, Postgres unreachable) is
+// the "could not load" case: rendering the normal empty state on a genuine
+// RPC failure would read as "you have no crates" when the truth is
+// "the page could not find out."
+const loadFailed = !!error && error.code !== '42501'
 const cards = (data ?? []) as CrateCard[]
 
 const byUpdatedDesc = (a: CrateCard, b: CrateCard) => b.updated_at.localeCompare(a.updated_at)
 const mine = cards.filter((c) => c.is_mine).sort(byUpdatedDesc)
 const pool = cards.filter((c) => !c.is_mine).sort(byUpdatedDesc)
+
+/** Date only, same ISO-slice convention as TrackRow.astro's "added" column. */
+const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice(0, 10)
 ---
 <Shell title="localchune — crates">
   <h1>Crates</h1>
@@ -38,7 +47,11 @@ const pool = cards.filter((c) => !c.is_mine).sort(byUpdatedDesc)
   </form>
 
   {cards.length === 0 ? (
-    <EmptyState variant="crates-empty" />
+    loadFailed ? (
+      <p class="explain">Could not load crates — try again.</p>
+    ) : (
+      <EmptyState variant="crates-empty" />
+    )
   ) : (
     <>
       <section class="crates-section">
@@ -53,7 +66,7 @@ const pool = cards.filter((c) => !c.is_mine).sort(byUpdatedDesc)
                     which is expected and fine for this task. */}
                 <a href={crateHref(c.id)}>{c.name}</a>
                 {!c.is_public && <span class="privatechip">PRIVATE</span>}
-                <div class="explain">{formatCrateMeta(c)}</div>
+                <div class="explain">{formatCrateMeta(c)} · updated {updatedDate(c)}</div>
               </li>
             ))}
           </ul>
@@ -69,7 +82,7 @@ const pool = cards.filter((c) => !c.is_mine).sort(byUpdatedDesc)
             {pool.map((c) => (
               <li class="cratecard">
                 <a href={crateHref(c.id)}>{c.name}</a>
-                <div class="explain">by {c.owner_name} · {formatCrateMeta(c)}</div>
+                <div class="explain">by {c.owner_name} · {formatCrateMeta(c)} · updated {updatedDate(c)}</div>
               </li>
             ))}
           </ul>
