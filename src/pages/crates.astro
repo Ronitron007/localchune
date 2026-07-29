@@ -1,0 +1,93 @@
+---
+// src/pages/crates.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// "Mine" then "Pool" (public crates from everyone else) — crate_list()
+// (migration 27) already restricts its rows to "own crates always, plus
+// every public crate", so the only work left here is partitioning that one
+// flat list on is_mine and sorting each half. Server-rendered, zero
+// islands, exactly like the pool and /uploads: one RPC round trip renders
+// everything.
+//
+// Sort: crate_list() has no ORDER BY of its own (see the migration's
+// comment on crates.updated_at — "/crates sorts on it"), so this page is
+// the one place that decides the order: newest-content-change first.
+import Shell from '../layouts/Shell.astro'
+import EmptyState from '../components/EmptyState.astro'
+import { crateHref, formatCrateMeta, type CrateCard } from '../lib/org-api'
+
+const { data, error } = await Astro.locals.supabase.rpc('crate_list')
+if (error) console.error('crate_list failed:', error.message)
+// 42501 (not an active member) is a real permission answer, not an outage
+// — everything else here (a dropped connection, Postgres unreachable) is
+// the "could not load" case: rendering the normal empty state on a genuine
+// RPC failure would read as "you have no crates" when the truth is
+// "the page could not find out."
+const loadFailed = !!error && error.code !== '42501'
+const cards = (data ?? []) as CrateCard[]
+
+const byUpdatedDesc = (a: CrateCard, b: CrateCard) => b.updated_at.localeCompare(a.updated_at)
+const mine = cards.filter((c) => c.is_mine).sort(byUpdatedDesc)
+const pool = cards.filter((c) => !c.is_mine).sort(byUpdatedDesc)
+
+/** Date only, same ISO-slice convention as TrackRow.astro's "added" column. */
+const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice(0, 10)
+---
+<Shell title="localchune — crates">
+  <h1>Crates</h1>
+
+  <form method="post" action="/api/crates" class="cratecreate">
+    <label>
+      <span class="sr-only">New crate name</span>
+      <input type="text" name="name" placeholder="New crate name" maxlength="80" required />
+    </label>
+    <button type="submit" class="btn">Create</button>
+  </form>
+
+  {cards.length === 0 ? (
+    loadFailed ? (
+      <p class="explain">Could not load crates — try again.</p>
+    ) : (
+      <EmptyState variant="crates-empty" />
+    )
+  ) : (
+    <>
+      <section class="crates-section">
+        <h2>Mine</h2>
+        {mine.length === 0 ? (
+          <p class="explain">You have not made a crate yet.</p>
+        ) : (
+          <ul class="cratelist">
+            {mine.map((c) => (
+              <li class="cratecard">
+                {/* /crate/[id] lands in Task 7 — until then this 404s,
+                    which is expected and fine for this task. */}
+                <a href={crateHref(c.id)}>{c.name}</a>
+                {!c.is_public && <span class="privatechip">PRIVATE</span>}
+                <div class="explain">{formatCrateMeta(c)} · updated {updatedDate(c)}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section class="crates-section">
+        <h2>Pool</h2>
+        {pool.length === 0 ? (
+          <p class="explain">No public crates from anyone else yet.</p>
+        ) : (
+          <ul class="cratelist">
+            {pool.map((c) => (
+              <li class="cratecard">
+                <a href={crateHref(c.id)}>{c.name}</a>
+                <div class="explain">by {c.owner_name} · {formatCrateMeta(c)} · updated {updatedDate(c)}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  )}
+</Shell>

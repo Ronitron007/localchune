@@ -7,7 +7,11 @@
 // Three situations, three messages, three next actions — collapsing them
 // into one "No results" is how an empty pool gets mistaken for a broken
 // filter. The server decides the variant; nothing here is interactive.
-interface Props { variant: 'pool-empty' | 'no-search-match' | 'no-filter-match'; term?: string }
+//
+// 'crates-empty' (M6a Task 6): /crates.astro when crate_list() returns no
+// rows at all — no crates of the caller's own and no public ones from
+// anyone else yet.
+interface Props { variant: 'pool-empty' | 'no-search-match' | 'no-filter-match' | 'crates-empty'; term?: string }
 const { variant, term = '' } = Astro.props
 ---
 <div class="empty" role="status">
@@ -27,6 +31,12 @@ const { variant, term = '' } = Astro.props
     <>
       <p>No track matches these filters.</p>
       <p>Try widening the BPM range, or turning on half/double time. <a href="/">Clear filters</a></p>
+    </>
+  )}
+  {variant === 'crates-empty' && (
+    <>
+      <p>No crates yet.</p>
+      <p>Name one below to start your first.</p>
     </>
   )}
 </div>

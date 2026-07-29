@@ -4,28 +4,41 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// One row. No crates column (M6 — omit, don't disable). Artist and title
-// come from the server (migration 11's display_* fallbacks) and are never
-// re-derived here — search matches the server's strings.
+// One row. Artist and title come from the server (migration 11's
+// display_* fallbacks) and are never re-derived here — search matches the
+// server's strings.
 //
 // The play control is a LINK whose href is the track page: with JS the
 // site script intercepts it and streams; without JS it navigates, which
 // still works. The thumb <img> only renders when thumb.jpg exists — rows
 // never load full-size art, and a missing thumb is a bordered empty box,
 // never a broken image.
+//
+// M6a Task 7: two optional, backward-compatible additions for
+// /crate/[id].astro's owner view — every existing caller (the pool table)
+// leaves both at their defaults and renders byte-for-byte as before.
+// `reorderable` puts `draggable`/`data-file-id` on the row itself, which is
+// all site.ts's drag-to-reorder delegation needs to pick it up; the named
+// `controls` slot lets the crate page append one trailing <td> (↑ ↓ ✕)
+// without this component knowing anything about crates — it renders
+// nothing when the caller passes no slotted content.
 import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
 import { formatBpm } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
 import type { PoolTrack } from '../lib/pool-api'
 
-interface Props { track: PoolTrack }
-const { track } = Astro.props
+interface Props { track: PoolTrack; reorderable?: boolean }
+const { track, reorderable = false } = Astro.props
 const artist = track.display_artist ?? 'Unknown artist'
 const noBeat = track.bpm === null || track.bpm <= 0
 const added = new Date(track.created_at).toISOString().slice(0, 10)
 ---
-<tr class="trackrow">
+<tr
+  class="trackrow"
+  draggable={reorderable ? 'true' : undefined}
+  data-file-id={reorderable ? track.file_id : undefined}
+>
   <td class="controls">
     <a
       class="play"
@@ -67,7 +80,49 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="uploader">{track.uploader_name}</td>
   <td class="added num">{added}</td>
   <td class="downloads num">{track.download_count}</td>
+  {/* Task 3 (M6a): live now. A mini <form> POST, brutalist idiom (like
+      tags.ts) so it still works with no JS — the route 303s back to
+      Referer. With JS, site.ts's document-level `form.likeform` submit
+      delegation intercepts it, calls org-api.ts's toggleLike() and swaps
+      the glyph/count/aria-pressed in place instead of navigating. Filled
+      heart when liked_by_me, empty otherwise — same convention Task 2
+      established for the display-only cell this replaces. */}
+  <td class="likes num">
+    <form method="post" action={`/api/track/${track.file_id}/like`} class="likeform">
+      <button
+        type="submit"
+        class="likebtn"
+        data-file-id={track.file_id}
+        aria-pressed={track.liked_by_me ? 'true' : 'false'}
+        aria-label={`${track.liked_by_me ? 'Unlike' : 'Like'} ${track.display_title}`}
+      ><span class="likeglyph" aria-hidden="true">{track.liked_by_me ? '♥' : '♡'}</span> <span class="likecount">{track.like_count}</span></button>
+    </form>
+  </td>
+  <td class="plays num">{track.play_count}</td>
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
   </td>
+  {/* Task 8: add-to-crate picker, every row, pool table and crate page
+      alike — you can only add to a crate you OWN (crate_add's 42501
+      check), never the one you might currently be viewing, so this is not
+      slotted the way the crate page's owner-only move/remove controls are.
+      Server-rendered contents are the no-JS fallback ONLY: a disclosure
+      with one link to the track page, where the real no-JS `<select>` +
+      submit form lives (see track/[id].astro). With JS, site.ts's
+      document-level `toggle` delegation fetches the caller's own crates
+      ONCE (GET /api/crates?mine=1) on first open of ANY picker on the
+      page, then replaces `.cratepick-menu`'s contents in every picker —
+      this one included — with real crate buttons plus an inline
+      "new crate…" form. `data-file-id` on the <details> itself (not the
+      row) is what lets that delegation work whether or not this row is
+      also `reorderable`. */}
+  <td class="addcrate">
+    <details class="cratepick" data-file-id={track.file_id}>
+      <summary class="btn-secondary" aria-label={`Add ${track.display_title} to a crate`}>+</summary>
+      <div class="cratepick-menu">
+        <a href={`/track/${track.file_id}`}>manage on track page →</a>
+      </div>
+    </details>
+  </td>
+  <slot name="controls" />
 </tr>

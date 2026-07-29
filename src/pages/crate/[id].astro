@@ -1,0 +1,174 @@
+---
+// src/pages/crate/[id].astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// One crate: its tracks, playable, in order. crate_get() (migration 27)
+// has no crate-metadata columns of its own (name/is_public/owner) — only
+// crate_list() carries those, alongside the is_mine flag this page needs
+// to decide "owner controls or read-only" — so this page calls BOTH RPCs,
+// the same pair /crates.astro and this page's own owner-controls forms
+// already depend on.
+//
+// A missing row in crate_list() (the crate does not exist, or it exists
+// and is private and not the caller's) and a 42501 from crate_get() are
+// the SAME answer, mapped to the SAME 404 — a probing visitor cannot tell
+// "no such crate" from "exists, not yours to see" apart. See migration
+// 20's crate_get comment: the database's own answer is 42501 either way;
+// only the HTTP status is chosen here.
+import Shell from '../../layouts/Shell.astro'
+import TrackRow from '../../components/TrackRow.astro'
+import { crateItemToPoolTrack, formatCrateMeta, type CrateCard, type CrateItem } from '../../lib/org-api'
+import { isUuid } from '../../lib/upload-api'
+
+const { id } = Astro.params
+if (!isUuid(id)) return new Response('Not found', { status: 404 })
+
+const { data: cardsData, error: listError } = await Astro.locals.supabase.rpc('crate_list')
+if (listError) console.error('crate_list failed:', listError.message)
+const meta = ((cardsData ?? []) as CrateCard[]).find((c) => c.id === id)
+if (!meta) return new Response('Not found', { status: 404 })
+
+const { data: rowsData, error: getError } = await Astro.locals.supabase.rpc('crate_get', { p_crate: id })
+// A non-42501 failure here (dropped connection, Postgres unreachable) must
+// not render the same "no tracks" empty state a genuinely empty crate
+// gets — that reads as data loss during an outage. 42501 already returns
+// 404 above; anything else just flags the outage message below.
+let loadFailed = false
+if (getError) {
+  if (getError.code === '42501') return new Response('Not found', { status: 404 })
+  console.error('crate_get failed:', getError.message)
+  loadFailed = true
+}
+const items = (rowsData ?? []) as CrateItem[]
+const isOwner = meta.is_mine
+
+const HEADERS = [
+  { label: '', sr: 'Play' },
+  { label: '', sr: 'Artwork' },
+  { label: 'Artist' },
+  { label: 'Title' },
+  { label: 'BPM' },
+  { label: 'Key' },
+  { label: 'Length' },
+  { label: 'Quality' },
+  { label: 'Uploader' },
+  { label: 'Added' },
+  { label: 'Downloads' },
+  { label: '♥' },
+  { label: 'Plays' },
+  { label: '', sr: 'Download' },
+  // Task 8: TrackRow's add-to-crate picker cell — see that component.
+  { label: '', sr: 'Add to crate' },
+]
+---
+<Shell title={`localchune — ${meta.name}`}>
+  <article class="cratedetail">
+    <header class="cratehead">
+      <h1>{meta.name}</h1>
+      <p class="explain">
+        {!isOwner && <>by {meta.owner_name} · </>}
+        {formatCrateMeta(meta)}
+        {!meta.is_public && <span class="privatechip">PRIVATE</span>}
+      </p>
+
+      {/* Owner-only management forms — plain <form> POSTs, brutalist
+          idiom, same shape as /crates.astro's create form and the track
+          page's tag editor: every one of these works with no JS. */}
+      {isOwner && (
+        <div class="cratemanage">
+          <form method="post" action={`/api/crate/${id}/rename`} class="renameform">
+            <label>
+              <span class="sr-only">Rename crate</span>
+              <input type="text" name="name" value={meta.name} maxlength="80" required />
+            </label>
+            <button type="submit" class="btn-secondary">Rename</button>
+          </form>
+          <form method="post" action={`/api/crate/${id}/public`} class="publicform">
+            <input type="hidden" name="public" value={meta.is_public ? 'false' : 'true'} />
+            <button type="submit" class="btn-secondary">
+              {meta.is_public ? 'Make private' : 'Make public'}
+            </button>
+          </form>
+          {/* data-confirm drives a delegated confirm() in the site script —
+              an inline handler attribute trips Cloudflare's API WAF on
+              deploy (the upload 403s with a challenge page). Same
+              semantics: with JS off, either form submits unguarded; the
+              guard is a courtesy against a stray click, not a security
+              boundary. */}
+          <form
+            method="post"
+            action={`/api/crate/${id}/delete`}
+            class="deleteform"
+            data-confirm="Delete this crate? This cannot be undone."
+          >
+            <button type="submit" class="btn-danger">Delete crate</button>
+          </form>
+        </div>
+      )}
+    </header>
+
+    {items.length === 0 ? (
+      <p class="explain">
+        {loadFailed
+          ? 'Could not load — try again.'
+          : isOwner ? 'No tracks in this crate yet.' : 'This crate is empty.'}
+      </p>
+    ) : (
+      <table>
+        <thead>
+          <tr>
+            {HEADERS.map((h) => (
+              <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
+            ))}
+            {isOwner && <th scope="col"><span class="sr-only">Manage</span></th>}
+          </tr>
+        </thead>
+        {/* `data-reorder` carries the crate id itself — site.ts's drag
+            delegation reads it straight off the container instead of
+            parsing the page URL, so the enhancement works regardless of
+            how this page is ever routed. Absent entirely for a non-owner:
+            read-only list, no drag, no controls cell below. */}
+        <tbody data-reorder={isOwner ? id : undefined}>
+          {items.map((item, idx) => (
+            <TrackRow track={crateItemToPoolTrack(item)} reorderable={isOwner}>
+              {isOwner && (
+                <td class="cratecontrols" slot="controls">
+                  <form method="post" action={`/api/crate/${id}/move`} class="moveform">
+                    <input type="hidden" name="file_id" value={item.file_id} />
+                    <input type="hidden" name="dir" value="up" />
+                    <button
+                      type="submit"
+                      class="btn-secondary"
+                      aria-label={`Move ${item.display_title} up`}
+                      disabled={idx === 0}
+                    >↑</button>
+                  </form>
+                  <form method="post" action={`/api/crate/${id}/move`} class="moveform">
+                    <input type="hidden" name="file_id" value={item.file_id} />
+                    <input type="hidden" name="dir" value="down" />
+                    <button
+                      type="submit"
+                      class="btn-secondary"
+                      aria-label={`Move ${item.display_title} down`}
+                      disabled={idx === items.length - 1}
+                    >↓</button>
+                  </form>
+                  <form method="post" action={`/api/crate/${id}/remove`} class="removeform">
+                    <input type="hidden" name="file_id" value={item.file_id} />
+                    <button
+                      type="submit"
+                      class="btn-danger"
+                      aria-label={`Remove ${item.display_title} from this crate`}
+                    >✕</button>
+                  </form>
+                </td>
+              )}
+            </TrackRow>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </article>
+</Shell>

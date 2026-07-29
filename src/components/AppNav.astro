@@ -11,9 +11,11 @@ const here = Astro.url.pathname
   <a href="/" aria-current={here === '/' ? 'page' : undefined}>Pool</a>
   <a href="/upload" aria-current={here === '/upload' ? 'page' : undefined}>Upload</a>
   <a href="/uploads" aria-current={here === '/uploads' ? 'page' : undefined}>My uploads</a>
-  {/* Crates is M6 and Admin is owner-only. Both are OMITTED rather than
-      shown disabled — a disabled link is a promise with no delivery date,
-      and it tells a non-owner that an admin page exists. */}
+  {/* M6a Task 6. */}
+  <a href="/crates" aria-current={here.startsWith('/crates') || here.startsWith('/crate/') ? 'page' : undefined}>Crates</a>
+  {/* Admin is owner-only — OMITTED rather than shown disabled — a disabled
+      link is a promise with no delivery date, and it tells a non-owner
+      that an admin page exists. */}
   {m.role === 'owner' && (
     <a href="/admin" aria-current={here.startsWith('/admin') ? 'page' : undefined}>Admin</a>
   )}

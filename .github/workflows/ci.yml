@@ -1,7 +1,9 @@
 # localchune — MIT licensed. See LICENSE.
 # CI: every push to main and every PR runs the three test surfaces.
-# Deploys stay manual (npm run deploy / deploy:analysis / deploy:maintenance)
-# — they need production secrets that deliberately do not live in CI.
+# Deploys stay a manual decision. The app Worker deploys via deploy.yml
+# (workflow_dispatch — see its header for why CI runners, not the laptop);
+# deploy:analysis / deploy:maintenance stay laptop-only, their secrets
+# deliberately do not live in CI.
 name: ci
 
 on:

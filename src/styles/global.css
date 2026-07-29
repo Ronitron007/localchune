@@ -229,6 +229,26 @@ th a[aria-current] { font-weight: bold; }
 th a[aria-current]::after { content: ' ▾'; }
 td.uploader, td.added { color: var(--mid); }
 
+/* --- like toggle: TrackRow.astro's pool-table cell and the track page's
+   .signals block share this exact markup shape (form.likeform >
+   button.likebtn > .likeglyph + .likecount). No colour token — the
+   monochrome exception in :root is reserved for .btn/.btn-secondary/
+   .btn-danger only, and this is a toggle, not an action button. Bold is
+   the only "pressed" cue besides aria-pressed itself. --- */
+.likeform { display: inline-block; }
+.likebtn {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.likebtn[aria-pressed='true'] { font-weight: bold; }
+.likebtn:disabled { cursor: wait; opacity: 0.6; }
+.signals { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-2); }
+.signal { color: var(--mid); }
+
 /* --- artwork thumbs: content keeps its colour; the box is chrome --- */
 img.thumb, .thumb-empty {
   width: 28px;
@@ -328,6 +348,114 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .empty a, .empty p { color: var(--fg); }
 .counts { color: var(--mid); }
 .pager { padding: var(--pad-2) 0; }
+
+/* --- /crates: create form + the Mine/Pool card lists (M6a Task 6) --- */
+.cratecreate { display: flex; align-items: center; gap: var(--pad-1); }
+.cratecreate input[type='text'] { width: 16rem; }
+.crates-section h2 { font-weight: normal; color: var(--mid); }
+.cratelist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-1);
+  padding: 0;
+  margin: var(--pad-1) 0 0;
+}
+.cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
+.cratecard .explain { margin-top: 0.15em; }
+.privatechip {
+  border: 1px solid var(--line);
+  padding: 0 0.35em;
+  display: inline-block;
+  margin-left: 0.5em;
+  font-size: 0.85em;
+}
+
+/* --- /crate/[id]: header management forms + the ↑ ↓ ✕ controls cell
+   (M6a Task 7). Same three-tier button system as everywhere else in the
+   app — no new colour, radius or shadow. --- */
+.cratehead > * + * { margin-top: var(--pad-1); }
+.cratemanage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-1) var(--pad-2);
+}
+.renameform { display: inline-flex; align-items: center; gap: var(--pad-1); }
+.renameform input[type='text'] { width: 16rem; }
+.cratecontrols {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  white-space: nowrap;
+}
+.cratecontrols form { display: inline-block; }
+.cratecontrols button { padding: 0 0.5em; }
+/* A draggable row gets a grab cursor as the only affordance — no drop
+   shadow or lift-on-drag effect (the brutalist monochrome rule again). */
+tr[draggable='true'] { cursor: grab; }
+tr[draggable='true']:active { cursor: grabbing; }
+
+/* --- TrackRow's `+` add-to-crate picker (M6a Task 8) — every row, pool
+   table and crate page alike. `<details>` gets no extra chrome of its own
+   (no border/background) — the `<summary>` reuses .btn-secondary so it
+   reads exactly like any other row-level control, and the menu popping
+   open below it is enough of an affordance without a native marker glyph.
+   `.cratepick-menu` is deliberately narrow (a picker, not a form page) and
+   positioned to sit just under the summary rather than push the row's own
+   height around when it opens. --- */
+.addcrate { white-space: nowrap; }
+.cratepick { position: relative; display: inline-block; }
+.cratepick > summary {
+  list-style: none;
+  width: 1.6em;
+  text-align: center;
+}
+.cratepick > summary::-webkit-details-marker { display: none; }
+.cratepick-menu {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  top: 100%;
+  margin-top: 2px;
+  min-width: 10rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: var(--pad-1);
+}
+.cratepick-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cratepick-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  padding: calc(var(--pad-1) / 2) 0;
+  cursor: pointer;
+}
+.cratepick-option:hover, .cratepick-option:focus { text-decoration: underline; }
+.cratepick-option:disabled { cursor: wait; opacity: 0.6; }
+.cratepick-new {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  margin-top: var(--pad-1);
+  padding-top: var(--pad-1);
+  border-top: 1px solid var(--faint);
+}
+.cratepick-new input[type='text'] { width: 100%; min-width: 0; }
+
+/* --- /track/[id]: the no-JS add-to-crate fallback form (M6a Task 8) —
+   same inline shape as .tagform/.claimform above. --- */
+.addcrateform { display: flex; align-items: center; gap: var(--pad-1); margin-top: var(--pad-1); }
 
 /* --- upload dropzone + rows: the owner's own screenshot, "text flush
    against its dashed border" — pad-3 on the box that draws the border,
