@@ -1,6 +1,6 @@
 # localchune
 
-A private, invite-only track pool for a small DJ circle (~10 people).
+A private, invite-only track pool for a small DJ circle.
 
 Everyone uploads the tracks they've bought; everyone can search, audition and
 download the whole pool. Before anything is added it's fingerprinted against
@@ -28,7 +28,7 @@ Design complete, implementation not started.
 | Catalogue | AcoustID → MusicBrainz → Apple Music API → Cover Art Archive |
 | Genre | Discogs styles, from the CC0 monthly dumps |
 
-Running cost at ~2,000 tracks: **≈$6/month**, of which $5 is Cloudflare Workers
+Running cost at ~2,000 tracks: **≈$10-15/month**, of which $5 is Cloudflare Workers
 Paid. See PRD §10.
 
 ## Core model
