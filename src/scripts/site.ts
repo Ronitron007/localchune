@@ -243,11 +243,20 @@ document.addEventListener('submit', (e) => {
  * keyboard path of its own — that pair of buttons is it.
  */
 let draggingRow: HTMLTableRowElement | null = null
+let dragContainer: HTMLElement | null = null
+let dragOrderSnapshot: string[] | null = null
+let dropHandled = false
 
 document.addEventListener('dragstart', (e) => {
   const row = (e.target as Element).closest?.('tr[draggable="true"][data-file-id]')
   if (!(row instanceof HTMLTableRowElement) || !row.closest('[data-reorder]')) return
   draggingRow = row
+  const container = row.closest('[data-reorder]')
+  dragContainer = container instanceof HTMLElement ? container : null
+  dragOrderSnapshot = dragContainer === null ? null : Array.from(
+    dragContainer.querySelectorAll<HTMLElement>('tr[data-file-id]'),
+  ).map((r) => r.dataset.fileId ?? '')
+  dropHandled = false
   e.dataTransfer?.setData('text/plain', row.dataset.fileId ?? '')
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
 })
@@ -269,10 +278,32 @@ document.addEventListener('drop', (e) => {
   e.preventDefault()
   const container = draggingRow.closest('[data-reorder]')
   draggingRow = null
-  if (container instanceof HTMLElement) void submitCrateOrder(container)
+  if (container instanceof HTMLElement) {
+    dropHandled = true
+    void submitCrateOrder(container)
+  }
 })
 
-document.addEventListener('dragend', () => { draggingRow = null })
+document.addEventListener('dragend', () => {
+  // A drop released outside [data-reorder] (past the table, over thead,
+  // off-page, or cancelled via Escape) fires dragend with no drop — dragover
+  // already live-mutated the DOM with nothing left to persist that order.
+  // Restore this file's stated invariant (server order wins on any failure)
+  // by reloading whenever the DOM order no longer matches the drag's start.
+  if (!dropHandled && dragContainer) {
+    const currentOrder = Array.from(
+      dragContainer.querySelectorAll<HTMLElement>('tr[data-file-id]'),
+    ).map((r) => r.dataset.fileId ?? '')
+    const unchanged = dragOrderSnapshot !== null
+      && dragOrderSnapshot.length === currentOrder.length
+      && dragOrderSnapshot.every((id, i) => id === currentOrder[i])
+    if (!unchanged) window.location.reload()
+  }
+  draggingRow = null
+  dragContainer = null
+  dragOrderSnapshot = null
+  dropHandled = false
+})
 
 async function submitCrateOrder(container: HTMLElement) {
   const crateId = container.dataset.reorder

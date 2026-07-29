@@ -136,6 +136,11 @@ describe('moveInList', () => {
     expect(moveInList(['a', 'b', 'c'], 2, 'down')).toEqual(['a', 'b', 'c'])
   })
 
+  it('is a no-op when index itself is out of range, in both directions', () => {
+    expect(moveInList(['a', 'b', 'c'], -1, 'up')).toEqual(['a', 'b', 'c'])
+    expect(moveInList(['a', 'b', 'c'], 3, 'down')).toEqual(['a', 'b', 'c'])
+  })
+
   it('never mutates the input array', () => {
     const original = ['a', 'b', 'c']
     const copy = [...original]
