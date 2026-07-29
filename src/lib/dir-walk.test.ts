@@ -100,7 +100,7 @@ describe('walkEntry — recursion', () => {
 
   it('returns no files for a null root', async () => {
     const result = await walkEntry(null)
-    expect(result).toEqual({ ok: true, files: [] })
+    expect(result).toEqual({ ok: true, files: [], skipped_unsupported: 0 })
   })
 })
 
@@ -272,6 +272,68 @@ describe('isAcceptableSegment', () => {
     expect(isAcceptableSegment('.DS_Store')).toBe(false)
     expect(isAcceptableSegment('__MACOSX')).toBe(false)
     expect(isAcceptableSegment('My Album')).toBe(true)
+  })
+})
+
+describe('walkEntry — skipped file counts (unsupported vs noise)', () => {
+  it('populates skipped_unsupported when files are filtered for extension/zero-byte', async () => {
+    const dir = fakeDir('folder', [
+      fakeFile('track.mp3', 10),
+      fakeFile('cover.jpg', 10),
+      fakeFile('empty.mp3', 0),
+      fakeFile('readme.txt', 10),
+    ])
+    const result = await walkEntry(dir)
+    expect(result.ok).toBe(true)
+    expect(result.files).toHaveLength(1)
+    expect(result.skipped_unsupported).toBe(3)
+  })
+
+  it('does not count dotfiles and __MACOSX as unsupported (they are noise)', async () => {
+    const macDir = fakeDir('__MACOSX', [fakeFile('data.mp3', 10)])
+    const dir = fakeDir('folder', [
+      fakeFile('track.mp3', 10),
+      fakeFile('.DS_Store', 10),
+      macDir,
+    ])
+    const result = await walkEntry(dir)
+    expect(result.ok).toBe(true)
+    expect(result.files).toHaveLength(1)
+    expect(result.skipped_unsupported).toBe(0)
+  })
+
+  it('marks walk truncated when readEntries errors', async () => {
+    // Create a reader that returns one batch then errors on the next call.
+    // Important: the reader is created once and reused, so state must persist.
+    const makeErrorReader = (): DirectoryReaderLike => {
+      let callCount = 0
+      return {
+        readEntries(success, error) {
+          queueMicrotask(() => {
+            callCount += 1
+            // First call: return one file
+            if (callCount === 1) {
+              success([fakeFile('track1.mp3', 10)])
+            } else {
+              // Second call (checking for more): error
+              error?.(new Error('read error'))
+            }
+          })
+        },
+      }
+    }
+    const dir: DirectoryEntryLike = {
+      name: 'folder',
+      isFile: false,
+      isDirectory: true,
+      createReader() { return makeErrorReader() },
+    }
+    const result = await walkEntry(dir)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('too_many_files')
+      expect(result.files).toHaveLength(1)
+    }
   })
 })
 

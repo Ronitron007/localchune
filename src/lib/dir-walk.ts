@@ -83,12 +83,12 @@ export type WalkOptions = {
 }
 
 export type WalkOutcome =
-  | { ok: true; files: File[] }
+  | { ok: true; files: File[]; skipped_unsupported: number }
   /** Typed, not thrown: hitting the cap is an expected outcome of a big
    *  drop, not a defect. `files` holds whatever was collected up to
    *  `limit` — the caller can still upload those while telling the user
    *  the rest were left out. */
-  | { ok: false; reason: 'too_many_files'; files: File[]; limit: number }
+  | { ok: false; reason: 'too_many_files'; files: File[]; limit: number; skipped_unsupported: number }
 
 /**
  * One path segment (a bare filename, or one directory name on the way down
@@ -121,16 +121,25 @@ export function isAcceptableAudioPath(path: string, size: number): boolean {
   return containerFromFilename(path) !== null
 }
 
-function readAllEntries(reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> {
+/**
+ * Returns both entries and an error flag. If error occurs, we still return
+ * what we collected so far, but flag indicates the directory walk was
+ * truncated mid-read (the user did not get everything).
+ */
+function readAllEntries(reader: DirectoryReaderLike): Promise<{ entries: FileSystemEntryLike[]; error: boolean }> {
   const out: FileSystemEntryLike[] = []
+  let error = false
   const step = (): Promise<FileSystemEntryLike[]> =>
     new Promise<FileSystemEntryLike[]>((resolve) => {
-      reader.readEntries(resolve, () => resolve([]))
+      reader.readEntries(resolve, () => {
+        error = true
+        resolve([])
+      })
     })
-  const loop = async (): Promise<FileSystemEntryLike[]> => {
+  const loop = async (): Promise<{ entries: FileSystemEntryLike[]; error: boolean }> => {
     for (;;) {
       const batch = await step()
-      if (batch.length === 0) return out
+      if (batch.length === 0) return { entries: out, error }
       out.push(...batch)
     }
   }
@@ -160,14 +169,19 @@ export async function walkEntry(
   const maxFiles = options.maxFiles ?? MAX_FILES
   const files: File[] = []
   let truncated = false
+  let skipped_unsupported = 0
 
   const visit = async (entry: FileSystemEntryLike | null, depth: number): Promise<void> => {
-    if (entry === null || truncated) return
+    if (entry === null) return
+    // Don't check truncated here - let file-cap checks below handle stopping
     if (!isAcceptableSegment(entry.name)) return
 
     if (entry.isFile) {
       const file = await readFile(entry)
-      if (file === null || !isAcceptableAudioPath(file.name, file.size)) return
+      if (file === null || !isAcceptableAudioPath(file.name, file.size)) {
+        if (file !== null) skipped_unsupported += 1
+        return
+      }
       // Checked AFTER reading and filtering, not before: an unacceptable
       // file (wrong extension, zero bytes) must never count against the
       // cap, and landing exactly on the limit with nothing left over is not
@@ -182,17 +196,22 @@ export async function walkEntry(
     // where traversal stops, so its children (one level deeper) are never
     // reached. No error, just no deeper files.
     if (depth >= maxDepth) return
-    const children = await readAllEntries(entry.createReader())
+    if (truncated) return // Don't descend into new directories if cap reached
+    const { entries: children, error } = await readAllEntries(entry.createReader())
+    // Process children before checking error. If readEntries errored, we still
+    // have a batch to process from before the error occurred.
     for (const child of children) {
-      if (truncated) return
+      if (truncated) return // Stop if file cap was hit during recursion
       await visit(child, depth + 1)
     }
+    // Mark truncated AFTER processing this batch if we got an error
+    if (error) { truncated = true }
   }
 
   await visit(root, 0)
   return truncated
-    ? { ok: false, reason: 'too_many_files', files, limit: maxFiles }
-    : { ok: true, files }
+    ? { ok: false, reason: 'too_many_files', files, limit: maxFiles, skipped_unsupported }
+    : { ok: true, files, skipped_unsupported }
 }
 
 /**
@@ -208,18 +227,20 @@ export async function walkEntries(
   const maxFiles = options.maxFiles ?? MAX_FILES
   const files: File[] = []
   let truncated = false
+  let skipped_unsupported = 0
 
   for (const root of roots) {
     const remaining = maxFiles - files.length
     if (remaining <= 0) { truncated = true; break }
     const result = await walkEntry(root, { ...options, maxFiles: remaining })
     files.push(...result.files)
+    skipped_unsupported += result.skipped_unsupported
     if (!result.ok) { truncated = true; break }
   }
 
   return truncated
-    ? { ok: false, reason: 'too_many_files', files, limit: maxFiles }
-    : { ok: true, files }
+    ? { ok: false, reason: 'too_many_files', files, limit: maxFiles, skipped_unsupported }
+    : { ok: true, files, skipped_unsupported }
 }
 
 /**
@@ -237,6 +258,7 @@ export function filterFlatFiles(
   const maxFiles = options.maxFiles ?? MAX_FILES
   const kept: File[] = []
   let truncated = false
+  let skipped_unsupported = 0
 
   for (const file of files) {
     // webkitRelativePath is non-standard and TS's lib.dom types do not
@@ -244,12 +266,15 @@ export function filterFlatFiles(
     // -directory) file input, so fall back to the bare name.
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath
     const path = relativePath !== undefined && relativePath.length > 0 ? relativePath : file.name
-    if (!isAcceptableAudioPath(path, file.size)) continue
+    if (!isAcceptableAudioPath(path, file.size)) {
+      skipped_unsupported += 1
+      continue
+    }
     if (kept.length >= maxFiles) { truncated = true; break }
     kept.push(file)
   }
 
   return truncated
-    ? { ok: false, reason: 'too_many_files', files: kept, limit: maxFiles }
-    : { ok: true, files: kept }
+    ? { ok: false, reason: 'too_many_files', files: kept, limit: maxFiles, skipped_unsupported }
+    : { ok: true, files: kept, skipped_unsupported }
 }

@@ -70,7 +70,7 @@ const ACCEPT = '.mp3,.flac,.wav,.wave,.aiff,.aif,.aifc,.m4a,.mp4,.ogg,.oga,.opus
  * .DS_Store/cover-art/__MACOSX junk, not to police a file the user picked
  * on purpose.
  */
-async function collectFiles(transfer: DataTransfer): Promise<{ files: File[]; truncated: boolean }> {
+async function collectFiles(transfer: DataTransfer): Promise<{ files: File[]; truncated: boolean; skipped_unsupported: number }> {
   const items = [...transfer.items]
   const entries = items.map((item) =>
     typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null)
@@ -79,17 +79,19 @@ async function collectFiles(transfer: DataTransfer): Promise<{ files: File[]; tr
     // list DataTransfer gives directly — folder contents may simply be
     // absent in that case, which is the browser's limitation, not this
     // module's.
-    return { files: [...transfer.files], truncated: false }
+    return { files: [...transfer.files], truncated: false, skipped_unsupported: 0 }
   }
 
   const files: File[] = []
   let truncated = false
+  let skipped_unsupported = 0
   for (const entry of entries) {
     if (entry === null) continue
     if (entry.isDirectory) {
       const remaining = MAX_FILES - files.length
       const result = await walkEntries([entry as unknown as FileSystemEntryLike], { maxFiles: remaining })
       files.push(...result.files)
+      skipped_unsupported += result.skipped_unsupported
       if (!result.ok) truncated = true
     } else {
       const file = await new Promise<File | null>((resolve) => {
@@ -99,7 +101,7 @@ async function collectFiles(transfer: DataTransfer): Promise<{ files: File[]; tr
     }
     if (truncated) break
   }
-  return { files, truncated }
+  return { files, truncated, skipped_unsupported }
 }
 
 export default function UploadDropzone(props: { userId: string }) {
@@ -184,8 +186,15 @@ export default function UploadDropzone(props: { userId: string }) {
     event.preventDefault()
     setOver(false)
     if (event.dataTransfer === null) return
-    const { files, truncated } = await collectFiles(event.dataTransfer)
-    if (truncated) setNotice(`Only the first ${MAX_FILES} files in that folder were used.`)
+    const { files, truncated, skipped_unsupported } = await collectFiles(event.dataTransfer)
+    const notices: string[] = []
+    if (skipped_unsupported > 0) {
+      notices.push(`${skipped_unsupported} file${skipped_unsupported === 1 ? '' : 's'} skipped — unsupported format or empty.`)
+    }
+    if (truncated) {
+      notices.push(`Only the first ${MAX_FILES} files in that folder were used.`)
+    }
+    if (notices.length > 0) setNotice(notices.join(' '))
     await enqueue(files)
   }
 
@@ -207,7 +216,14 @@ export default function UploadDropzone(props: { userId: string }) {
     const list = event.currentTarget.files
     if (list !== null) {
       const result = filterFlatFiles(list)
-      if (!result.ok) setNotice(`Only the first ${MAX_FILES} files in that folder were used.`)
+      const notices: string[] = []
+      if (result.skipped_unsupported > 0) {
+        notices.push(`${result.skipped_unsupported} file${result.skipped_unsupported === 1 ? '' : 's'} skipped — unsupported format or empty.`)
+      }
+      if (!result.ok) {
+        notices.push(`Only the first ${MAX_FILES} files in that folder were used.`)
+      }
+      if (notices.length > 0) setNotice(notices.join(' '))
       await enqueue(result.files)
     }
     event.currentTarget.value = ''
