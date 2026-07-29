@@ -22,6 +22,18 @@
   --pad-1: 8px;
   --pad-2: 16px;
   --pad-3: 24px;
+
+  /* Task 8 — the ONE deliberate colour exception to the brutalist
+     monochrome above. These four values exist for .btn/.btn-secondary/
+     .btn-danger ONLY (see that block below); nothing else in this file
+     may reference them. Blue matches the owner's Safari-default-blue
+     screenshot; red is the standard "destructive action" red. Both carry
+     a slightly darker border shade so the 1px edge reads against the
+     fill instead of vanishing into it. */
+  --btn-blue: #0b57d0;
+  --btn-blue-line: #0842a0;
+  --btn-red: #c0392b;
+  --btn-red-line: #962d22;
 }
 
 *, *::before, *::after {
@@ -55,9 +67,48 @@ body > .appfoot { margin-top: var(--pad-3); }
 main > * + * { margin-top: var(--pad-3); }
 /* /login has no Shell (no session yet to build AppNav from), so it gets
    the same page-margin body rule above but needs its own top-level
-   rhythm — it has no <main> wrapper to hang body > main off of. */
+   rhythm — it has no <main> wrapper to hang body > main off of.
+
+   Task 8 — /login and /welcome are the app's two "single card" pages:
+   centered horizontally AND vertically, full viewport height, brutalist
+   idiom kept (no card/border/shadow around the block — it is just where
+   the content sits). /login has no Shell, so the flex centering applies
+   to <body> directly; /welcome (below, `body.centerpage main`) applies it
+   to <main> instead so AppNav/footer stay in their normal top/bottom
+   position around the centered block. */
+body.loginpage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: var(--pad-3) var(--pad-2);
+  text-align: center;
+}
 body.loginpage > * + * { margin-top: var(--pad-2); }
-body.loginpage { padding-top: var(--pad-3); }
+
+/* /welcome: Shell.astro passes `center` -> body class "centerpage". AppNav
+   and the footer stay exactly where Shell always puts them; only <main>
+   (the claim form) grows to fill the space between them and centers its
+   own content, both axes. */
+body.centerpage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+body.centerpage main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+/* A block that fills the whole flex cross-axis reads as a left-to-right
+   page, not a centered "card" — cap the readable width so the explain
+   copy and form visibly sit in the middle of a wide desktop viewport.
+   Below 30rem (mobile) this is a no-op; the block already fills 100%. */
+body.loginpage > *, body.centerpage main > * { max-width: 30rem; }
 
 a { color: var(--fg); }
 
@@ -100,6 +151,51 @@ input[type='checkbox'], input[type='radio'] { border: none; }
 /* Buttons sitting side by side in a row (upload actions, retry rows, tag
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
+
+/* --- Task 8: the three-tier button system ---
+   Every button/submit in the app is one of these three. Geometry (square
+   corners — border-radius: 0 is already global above — 1px border, same
+   padding) is identical across all three; only fill/text/border colour
+   differ. This is the ONE deliberate colour exception to the brutalist
+   monochrome (see the --btn-* tokens in :root above) — nothing else in
+   this file gains colour.
+     .btn           primary   — solid blue, white text, darker-blue border
+     .btn-secondary secondary — white fill, black text, black border
+     .btn-danger    danger    — solid red,  white text, darker-red border
+   The player's play/pause button stays icon-minimal and does NOT take one
+   of these classes (see src/layouts/Shell.astro). A link kept as a link
+   (e.g. the filter bar's Clear) does not take one either. */
+.btn, .btn-secondary, .btn-danger {
+  display: inline-block;
+  border-width: 1px;
+  border-style: solid;
+  padding: calc(var(--pad-1) / 2) var(--pad-2);
+  font: inherit;
+  line-height: normal;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn {
+  background: var(--btn-blue);
+  color: #fff;
+  border-color: var(--btn-blue-line);
+}
+.btn-secondary {
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--line);
+}
+.btn-danger {
+  background: var(--btn-red);
+  color: #fff;
+  border-color: var(--btn-red-line);
+}
+.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled,
+.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'], .btn-danger[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* --- filter form --- */
 .filterbar {

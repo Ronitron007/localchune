@@ -23,7 +23,7 @@ const error = Astro.url.searchParams.get('error')
 const submitted = Astro.url.searchParams.get('value') ?? ''
 const placeholder = suggestUsername(m.email)
 ---
-<Shell title="localchune — pick a username">
+<Shell title="localchune — pick a username" center>
   <h1>Pick a username</h1>
   <p class="explain">
     3–20 characters, lowercase letters, numbers, underscore, starts with a
@@ -46,6 +46,6 @@ const placeholder = suggestUsername(m.email)
         autofocus
       />
     </label>
-    <button type="submit">claim username</button>
+    <button type="submit" class="btn">claim username</button>
   </form>
 </Shell>

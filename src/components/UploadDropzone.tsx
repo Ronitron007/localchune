@@ -402,19 +402,19 @@ export default function UploadDropzone(props: { userId: string }) {
         <p class="resume-prompt" aria-live="polite">
           {resumableCount()} of these were uploaded before and can carry on from where they
           stopped.{' '}
-          <button type="button" onClick={startBatch} disabled={running()}>Resume</button>{' '}
-          <button type="button" onClick={startFresh} disabled={running()}>Start fresh</button>
+          <button type="button" class="btn" onClick={startBatch} disabled={running()}>Resume</button>{' '}
+          <button type="button" class="btn-secondary" onClick={startFresh} disabled={running()}>Start fresh</button>
         </p>
       </Show>
 
       <p>
-        <button type="button" onClick={startBatch} disabled={running() || queuedCount() === 0}>
+        <button type="button" class="btn" onClick={startBatch} disabled={running() || queuedCount() === 0}>
           Upload {queuedCount()} file{queuedCount() === 1 ? '' : 's'}
         </button>{' '}
-        <button type="button" onClick={retryAllFailed} disabled={running() || failedCount() === 0}>
+        <button type="button" class="btn-secondary" onClick={retryAllFailed} disabled={running() || failedCount() === 0}>
           Retry {failedCount()} failed
         </button>{' '}
-        <button type="button" onClick={cancel} disabled={!running()}>Cancel</button>
+        <button type="button" class="btn-danger" onClick={cancel} disabled={!running()}>Cancel</button>
       </p>
 
       <Show when={active().length > 0}>
@@ -439,7 +439,7 @@ export default function UploadDropzone(props: { userId: string }) {
             <span class="message">{row.message}</span>
             <Show when={row.status === 'failed' || row.status === 'cancelled'}>
               {' '}
-              <button type="button" disabled={running()} onClick={() => void retryRow(row.key)}>
+              <button type="button" class="btn-secondary" disabled={running()} onClick={() => void retryRow(row.key)}>
                 Retry
               </button>
             </Show>

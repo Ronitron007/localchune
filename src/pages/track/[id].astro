@@ -130,7 +130,7 @@ const tagsAction = `/api/track/${t.file_id}/tags`
               <form class="tagform" method="post" action={tagsAction}>
                 <input type="hidden" name="intent" value="remove" />
                 <input type="hidden" name="tag_key" value={tag} />
-                <button type="submit" aria-label={`Remove tag ${tag}`}>×</button>
+                <button type="submit" class="btn-danger" aria-label={`Remove tag ${tag}`}>×</button>
               </form>
             )}
           </li>
@@ -142,7 +142,7 @@ const tagsAction = `/api/track/${t.file_id}/tags`
             <span class="sr-only">Add a tag</span>
             <input type="text" name="tag" maxlength="32" placeholder="add a tag" required />
           </label>
-          <button type="submit">add tag</button>
+          <button type="submit" class="btn">add tag</button>
         </form>
       )}
     </section>

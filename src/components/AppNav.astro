@@ -22,5 +22,5 @@ const here = Astro.url.pathname
       through /welcome. */}
   <span class="who">{m.username ?? m.email}</span>
   <span class="credits">{creditsRemaining(m.access_expires_at)} credits</span>
-  <form method="post" action="/auth/signout"><button type="submit">Sign out</button></form>
+  <form method="post" action="/auth/signout"><button type="submit" class="btn-secondary">Sign out</button></form>
 </nav>

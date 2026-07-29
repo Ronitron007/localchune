@@ -15,7 +15,7 @@ const error = Astro.url.searchParams.get('error_description')
 <body class="loginpage">
   <h1>localchune</h1>
   {error && <p role="alert"><strong>{error}</strong></p>}
-  <button id="in">Sign in with Google</button>
+  <button id="in" class="btn">Sign in with Google</button>
   <script>
     import { browserClient } from '../lib/supabase'
     document.getElementById('in')!.addEventListener('click', () => {
