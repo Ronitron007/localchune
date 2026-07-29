@@ -7,6 +7,10 @@ export type Member = {
   email: string
   role: 'member' | 'owner'
   access_expires_at: string
+  // Migration 17: null until the member claims one at /welcome. Middleware
+  // reads this directly to gate the claim-flow redirect — see
+  // src/middleware.ts.
+  username: string | null
 }
 
 const DAY_MS = 86_400_000

@@ -207,6 +207,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .tageditor li { display: inline-flex; align-items: center; gap: 0.15rem; }
 .tageditor .tagchip { margin-right: 0; font-size: 1em; }
 .tageditor form.tagform button { padding: 0 0.35em; }
+
+/* --- /welcome: the username claim form --- */
+.claimform { display: flex; align-items: center; gap: var(--pad-1); margin-top: var(--pad-2); }
+.claimform input[type='text'] { width: 16rem; }
+
 .explain, .reason { color: var(--mid); }
 .reason { font-family: monospace; }
 .empty { border: 1px solid var(--faint); padding: var(--pad-2); color: var(--mid); }

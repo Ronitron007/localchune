@@ -17,7 +17,10 @@ const here = Astro.url.pathname
   {m.role === 'owner' && (
     <a href="/admin" aria-current={here.startsWith('/admin') ? 'page' : undefined}>Admin</a>
   )}
-  <span class="who">{m.email}</span>
+  {/* Task 7: greets by username once claimed, falling back to email
+      exactly as before for a member the middleware hasn't yet routed
+      through /welcome. */}
+  <span class="who">{m.username ?? m.email}</span>
   <span class="credits">{creditsRemaining(m.access_expires_at)} credits</span>
   <form method="post" action="/auth/signout"><button type="submit">Sign out</button></form>
 </nav>

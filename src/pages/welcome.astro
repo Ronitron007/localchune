@@ -1,0 +1,51 @@
+---
+// src/pages/welcome.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The claim flow's only page. src/middleware.ts routes every null-username
+// member here for any path outside the claim flow itself — this page is
+// therefore reachable from anywhere, at any time, until the claim succeeds.
+// Brutalist idiom: a plain <form method="post"> to /api/welcome, no island.
+// On failure that route redirects back here with ?error=&value=, the same
+// query-param re-render /login already uses for error_description.
+import Shell from '../layouts/Shell.astro'
+import { suggestUsername } from '../lib/username'
+
+const m = Astro.locals.member!
+// Already claimed — nothing to do here. Closes the loop for a bookmarked
+// /welcome, a back-button after a successful claim, or a second tab racing
+// the middleware's own redirect.
+if (m.username !== null) return Astro.redirect('/')
+
+const error = Astro.url.searchParams.get('error')
+const submitted = Astro.url.searchParams.get('value') ?? ''
+const placeholder = suggestUsername(m.email)
+---
+<Shell title="localchune — pick a username">
+  <h1>Pick a username</h1>
+  <p class="explain">
+    3–20 characters, lowercase letters, numbers, underscore, starts with a
+    letter. This is what other members see next to the tracks you upload.
+    Once set, it cannot be changed.
+  </p>
+  {error && <p role="alert"><strong>{error}</strong></p>}
+  <form method="post" action="/api/welcome" class="claimform">
+    <label>
+      <span class="sr-only">Username</span>
+      <input
+        type="text"
+        name="username"
+        required
+        minlength="3"
+        maxlength="20"
+        placeholder={placeholder}
+        value={submitted}
+        autocomplete="off"
+        autofocus
+      />
+    </label>
+    <button type="submit">claim username</button>
+  </form>
+</Shell>

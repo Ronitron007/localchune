@@ -7,7 +7,7 @@ import { creditsRemaining, isActive } from './session'
 
 const NOW = new Date('2026-07-27T12:00:00Z')
 const m = (iso: string) =>
-  ({ user_id: 'u', email: 'a@b.com', role: 'member' as const, access_expires_at: iso })
+  ({ user_id: 'u', email: 'a@b.com', role: 'member' as const, access_expires_at: iso, username: null })
 
 describe('creditsRemaining', () => {
   it('rounds a partial day up', () => {
