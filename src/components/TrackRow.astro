@@ -40,12 +40,14 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       ? <img class="thumb" src={`/api/track/${track.file_id}/art`} alt="" width="28" height="28" loading="lazy" />
       : <span class="thumb-empty" aria-hidden="true"></span>}
   </td>
+  {/* Task 8: artist and title are now independent columns — each still
+      links to the track page, and the tag chips move to the title cell
+      (they describe the track, not the artist). */}
+  <td class="artist">
+    <a href={`/track/${track.file_id}`}>{artist}</a>
+  </td>
   <td class="title">
-    <a href={`/track/${track.file_id}`}>
-      <span class="artist">{artist}</span>
-      <span class="sep"> — </span>
-      <span class="name">{track.display_title}</span>
-    </a>
+    <a href={`/track/${track.file_id}`}>{track.display_title}</a>
     {track.tags.length > 0 && (
       <span class="tags">
         {track.tags.map((tag) => <span class="tagchip">{tag}</span>)}

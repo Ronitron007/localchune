@@ -1,5 +1,5 @@
 begin;
-select plan(22);
+select plan(23);
 
 -- allowlist BEFORE auth.users: handle_new_user() raises 'not allowlisted'
 -- otherwise, and the on_auth_user_created trigger provisions public.members
@@ -72,6 +72,15 @@ select is( (select camelot_sort from public.pool_tracks
 select is( (select uploader_name from public.pool_tracks
              where file_id = '00000000-0000-0000-0000-00000000df01'), 'pv1',
            'uploader_name is the email local part, not the address' );
+
+-- ---- Task 8: display_artist reaches the view (and therefore pool_list/
+-- pool_get) as its own column -- df01's raw_tags is '{}' so this is the
+-- filename-fallback path (display_artist() itself is already proven above
+-- at the pure-function level; this proves the SAME derivation is what the
+-- view actually exposes for a real row, not a parallel implementation). ----
+select is( (select display_artist from public.pool_tracks
+             where file_id = '00000000-0000-0000-0000-00000000df01'), 'Aphex Twin',
+           'pool_tracks populates display_artist via the filename fallback when raw_tags has no artist tag' );
 
 -- ---- migration 16b: a failed file has no audio_analysis row at all ----
 -- analysis_fail() never inserts one -- df03 has none, on purpose.

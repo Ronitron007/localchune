@@ -1,5 +1,5 @@
 begin;
-select plan(13);
+select plan(14);
 
 -- Two active members. e1 claims a username (and is later promoted to owner
 -- to prove admin_members() surfaces it); e2 exists to prove the reserved
@@ -34,6 +34,14 @@ values
    'audio/e1/ef01.flac','Track.flac', 1000, 'flac', 'stored');
 insert into public.audio_analysis (file_id, analysis_version, duration_ms, bpm, key_camelot, raw_tags)
 values ('00000000-0000-0000-0000-00000000ef01','v1', 300000, 128, '10A', '{}'::jsonb);
+
+-- Task 8 fold-in fixture: e1's own claim on their own upload (the row
+-- ingest_finalize would have written) -- authenticated has no INSERT grant
+-- on file_claims (migration 10), so this goes in before the role switch
+-- same as every other fixture row above.
+insert into public.file_claims (file_id, user_id, batch_id) values
+  ('00000000-0000-0000-0000-00000000ef01','00000000-0000-0000-0000-0000000000e1',
+   '00000000-0000-0000-0000-0000000000eb');
 
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
@@ -72,6 +80,14 @@ select is( (select username from public.current_member()), 'rohanm',
 select is( (select uploader_name from public.pool_get('00000000-0000-0000-0000-00000000ef01')),
            'rohanm',
            'pool_get shows the username, not the email local part, once one is set' );
+
+-- ---- Task 8 fold-in: claim_names gets the same treatment (migration 18)
+-- -- e1 is ef01's own claimant (self-claim), so this proves claim_names now
+-- prefers the claimed username over the email local part, same as
+-- uploader_name just above. ----
+select is( (select claim_names from public.pool_get('00000000-0000-0000-0000-00000000ef01')),
+           array['rohanm'],
+           'claim_names shows the claimant''s username once set, not the email local part' );
 
 -- ---- reserved: checked against the LOWERCASED value, so uppercase input
 -- cannot smuggle a reserved name past the check ----
