@@ -138,6 +138,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   padding: 0 0.35em;
   display: inline-block;
 }
+.myfiles-batch { margin: 1.5rem 0; }
+.myfiles-batch h2 { font-weight: normal; color: var(--mid); }
+.statechip { border: 1px solid var(--line); padding: 0 0.35em; display: inline-block; }
+.explain, .reason { color: var(--mid); }
+.reason { font-family: monospace; }
 .empty { border: 1px solid var(--faint); padding: 1rem; color: var(--mid); }
 .empty a, .empty p { color: var(--fg); }
 .counts { color: var(--mid); }

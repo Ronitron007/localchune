@@ -1,0 +1,96 @@
+---
+// src/pages/uploads.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// "What have I uploaded, and what happened to it" — the owner's verbatim
+// complaint. Server-rendered, GET-only, zero islands: my_files() (migration
+// 15a) is called once and every row renders from that one round trip,
+// exactly like the pool. The pool answers "what does everyone have"; this
+// page answers "what did I upload and is it OK".
+//
+// Non-terminal rows still get the live ticker: a member who uploads and
+// immediately opens /uploads (a second tab, a reload, coming back later)
+// should see the same live progress the upload page shows, not just a
+// static "queued for analysis" that only updates on refresh.
+import Shell from '../layouts/Shell.astro'
+import FileStateTicker from '../components/FileStateTicker'
+import { formatBytes } from '../lib/format'
+import { formatBpm } from '../lib/track-format'
+import { groupFilesByBatch, type MyFile } from '../lib/my-files-api'
+import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../lib/file-state'
+
+const { data, error } = await Astro.locals.supabase.rpc('my_files', { p_limit: 200 })
+if (error) console.error('my_files failed:', error.message)
+const files = (data ?? []) as MyFile[]
+const batches = groupFilesByBatch(files)
+
+const added = (iso: string) => new Date(iso).toISOString().slice(0, 10)
+---
+<Shell title="localchune — my uploads">
+  <h1>My uploads</h1>
+
+  <FileStateTicker client:load />
+
+  {batches.length === 0 ? (
+    <div class="empty" role="status">
+      <p>Nothing uploaded yet.</p>
+      <p><a href="/upload">Upload some tracks</a>.</p>
+    </div>
+  ) : (
+    batches.map((batch) => (
+      <section class="myfiles-batch">
+        <h2>{batch.batch_label ?? batch.batch_id}</h2>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Filename</th>
+              <th scope="col">Status</th>
+              <th scope="col">BPM</th>
+              <th scope="col">Key</th>
+              <th scope="col">Size</th>
+              <th scope="col">Added</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batch.files.map((f) => {
+              const failed = TERMINAL_FAILED_STATES.has(f.state)
+              return (
+                <tr class={`filerow ${f.state}`}>
+                  <td class="name">
+                    {f.state === 'stored'
+                      ? <a href={`/track/${f.file_id}`}>{f.original_filename}</a>
+                      : f.original_filename}
+                  </td>
+                  <td>
+                    <span class="statechip">{stateLabel(f.state)}</span>
+                    {failed && (
+                      <>
+                        <br />
+                        <span class="explain">{FAILURE_EXPLAIN[f.state] ?? ''}</span>
+                        {f.last_error && (
+                          <>
+                            {' — '}
+                            {/* The owner's own ask: "empty_decode" verbatim,
+                                not just a friendly sentence with no detail
+                                behind it. */}
+                            <span class="reason">{f.last_error}</span>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </td>
+                  <td class="num">{f.bpm !== null ? formatBpm(f.bpm, null) : '—'}</td>
+                  <td class="num">{f.key_camelot ?? '—'}</td>
+                  <td class="num">{formatBytes(f.byte_size)}</td>
+                  <td class="num">{added(f.created_at)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </section>
+    ))
+  )}
+</Shell>

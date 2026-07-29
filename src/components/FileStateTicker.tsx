@@ -7,24 +7,12 @@ import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import AnalysisFailedRow from './AnalysisFailedRow'
 import StatusRegion from './StatusRegion'
 import { currentBatchId, type FileStatus } from '../lib/upload-batch'
+import { NON_TERMINAL_LABEL as LABEL, TERMINAL_FAILED_STATES as FAILED } from '../lib/file-state'
 
 const POLL_MS = 5_000
 /** Stop after twenty minutes. A stuck row is M3's cron's problem, not a
  *  reason to poll this member's browser until they close the tab. */
 const MAX_POLL_MS = 20 * 60 * 1000
-
-const LABEL: Record<string, string> = {
-  pending: 'waiting',
-  uploading: 'uploading',
-  received: 'uploaded — queued for analysis',
-  analysing: 'being listened to…',
-  stored: 'ready',
-  needs_review: 'held for review',
-}
-
-const FAILED = new Set([
-  'failed', 'abandoned', 'quarantined', 'rejected_duration', 'rejected_redundant',
-])
 
 /**
  * The moment an upload visibly completes its journey: received → analysing
