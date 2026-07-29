@@ -69,6 +69,19 @@ export interface Forensics {
   tier: number
   quality_score: number
   spectrogram_key: string | null
+  /**
+   * The three quality_score() inputs the container used to compute and then
+   * throw away (M4 Task 4, concern 2). is_upgrade() needs all ten of them;
+   * without these, anything rebuilding the score from audio_analysis scores
+   * with neutral defaults and loses the fake-FLAC branch.
+   *
+   * Optional in TypeScript because an OLD image is still answering for the
+   * minutes a container rollout takes. analysis_persist() derives all three
+   * from the rest of the response when they are absent — migration 25.
+   */
+  lame_disagrees?: boolean
+  mono_vs_stereo?: boolean
+  decode_errors?: boolean
 }
 
 export interface AnalyzeResponse {

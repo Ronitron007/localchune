@@ -4,7 +4,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import {
-  OK_FALSE_MAX_ATTEMPTS, handleDeadLetter, handleMessage, parseMessage, summarise, type Deps,
+  ANALYSIS_LEASE_MS, OK_FALSE_MAX_ATTEMPTS, R2MissingError, handleDeadLetter,
+  handleMessage, parseMessage, summarise, type Deps,
 } from './consumer'
 import { NO_DATA_FOUND, PostgrestError } from './supabase'
 import type { AnalyzeResponse } from './types'
@@ -57,6 +58,22 @@ function deps(over: Partial<Deps> = {}): Deps {
     analyse: vi.fn().mockResolvedValue(response()),
     persist: vi.fn().mockResolvedValue('stored'),
     fail: vi.fn().mockResolvedValue('failed'),
+    dedup: vi.fn().mockResolvedValue({ ok: true, action: 'no_match', trackId: 't1', scored: 0 }),
+    fileState: vi.fn().mockResolvedValue({ state: 'analysing', state_changed_at: NOW_ISO }),
+    ...over,
+  }
+}
+
+const NOW = Date.parse('2026-07-29T12:00:00.000Z')
+const NOW_ISO = new Date(NOW).toISOString()
+/** Past analysis_begin's 10-minute lease: the claim is abandoned, so a dead
+ *  letter is allowed to end it. */
+const STALE_ISO = new Date(NOW - ANALYSIS_LEASE_MS - 1000).toISOString()
+
+function dlqDeps(over: Partial<Pick<Deps, 'fail' | 'fileState'>> = {}) {
+  return {
+    fail: vi.fn().mockResolvedValue('failed'),
+    fileState: vi.fn().mockResolvedValue({ state: 'analysing', state_changed_at: STALE_ISO }),
     ...over,
   }
 }
@@ -248,38 +265,177 @@ describe('handleMessage', () => {
     }
     expect(delays).toEqual([60, 120, 300, 300])
   })
+
+  // ---- [M4.5] a missing R2 object is terminal, not a retry ----
+
+  it('fails and acks IMMEDIATELY when the object is gone', async () => {
+    // The bytes are not coming back. The old behaviour burned five
+    // deliveries plus a DLQ round trip rediscovering the same 404, and the
+    // row stayed 'analysing' throughout — so the :31 cron re-enqueued it
+    // and the whole cycle repeated, hourly, forever. Four hosted rows are
+    // in exactly this state.
+    const d = deps({ analyse: vi.fn().mockRejectedValue(new R2MissingError(R2_KEY)) })
+    const out = await handleMessage(BODY, 1, d)
+
+    expect(out.action).toBe('ack')
+    expect(d.fail).toHaveBeenCalledWith(FILE_ID, `r2 object missing: ${R2_KEY}`)
+    // 'failed' is not a state analysis_stuck() returns. THAT is what ends
+    // the loop, not the ack.
+    expect(out.reason).toMatch(/marked failed, not retried/)
+  })
+
+  it('still retries every OTHER analyse failure', async () => {
+    // An unreachable container or a 5xx from /analyze is a bad minute.
+    const d = deps({ analyse: vi.fn().mockRejectedValue(new Error('container unreachable')) })
+    expect((await handleMessage(BODY, 1, d)).action).toBe('retry')
+  })
+
+  it('retries when the r2-miss failure could not be RECORDED', async () => {
+    // Acking here would leave the row in 'analysing' with nothing left to
+    // move it — the exact stranding this branch exists to prevent.
+    const d = deps({
+      analyse: vi.fn().mockRejectedValue(new R2MissingError(R2_KEY)),
+      fail: vi.fn().mockRejectedValue(new PostgrestError('boom', 500, null)),
+    })
+    expect((await handleMessage(BODY, 1, d)).action).toBe('retry')
+  })
+
+  // ---- [M4.5] dedup runs after persist, and can never fail the message ----
+
+  it('runs the matcher after persist, with the digest from the response', async () => {
+    // THE DIGEST IS LOAD-BEARING. files.content_sha256 is UNIQUE and
+    // analysis_persist() leaves the second of two byte-identical files
+    // NULL, so layer 0 only ever fires on an argument the consumer supplies.
+    const d = deps()
+    const out = await handleMessage(BODY, 1, d)
+
+    expect(d.dedup).toHaveBeenCalledWith(FILE_ID, 'a'.repeat(64))
+    expect(out.action).toBe('ack')
+    expect(out.reason).toContain('dedup no_match')
+  })
+
+  it('passes a null digest rather than an empty string', async () => {
+    // '' is what the container sends when it failed before hashing, and
+    // decode('', 'hex') is a valid EMPTY bytea — which would collide with
+    // the next empty one on a UNIQUE column.
+    const d = deps({ analyse: vi.fn().mockResolvedValue(response({ content_sha256: '' })) })
+    await handleMessage(BODY, 1, d)
+    expect(d.dedup).toHaveBeenCalledWith(FILE_ID, null)
+  })
+
+  it('acks and warns when dedup fails, and never retries the analysis', async () => {
+    // THE decision this task turns on. A retry would call analysis_begin(),
+    // get 'stored', ack as "not claimable" — so the dedup would never run
+    // anyway — and would have burned ~45 vCPU-s of container time to
+    // recompute a fingerprint already stored. dedup_pending() and the :47
+    // cron are what actually recover this file.
+    const d = deps({ dedup: vi.fn().mockRejectedValue(new Error('boom')) })
+    const out = await handleMessage(BODY, 1, d)
+
+    expect(out.action).toBe('ack')
+    expect(out.reason).toMatch(/dedup deferred to cron/)
+    expect(d.analyse).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not run the matcher when persist itself failed', async () => {
+    const d = deps({ persist: vi.fn().mockRejectedValue(new PostgrestError('boom', 500, null)) })
+    expect((await handleMessage(BODY, 1, d)).action).toBe('retry')
+    expect(d.dedup).not.toHaveBeenCalled()
+  })
 })
 
 describe('[F5] handleDeadLetter', () => {
   it('marks the file failed and acks', async () => {
-    const fail = vi.fn().mockResolvedValue('failed')
-    const out = await handleDeadLetter(BODY, 1, { fail })
+    const d = dlqDeps()
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
 
     expect(out.action).toBe('ack')
-    expect(fail).toHaveBeenCalledWith(FILE_ID, 'dead-lettered after 5 attempts')
+    expect(d.fail).toHaveBeenCalledWith(FILE_ID, 'dead-lettered after 5 attempts')
   })
 
   it('acks a malformed message instead of retrying it forever', async () => {
-    const fail = vi.fn()
-    const out = await handleDeadLetter({ nonsense: true }, 1, { fail })
+    const d = dlqDeps()
+    const out = await handleDeadLetter({ nonsense: true }, 1, d, NOW)
 
     expect(out.action).toBe('ack')
     expect(out.reason).toContain('malformed')
-    expect(fail).not.toHaveBeenCalled()
+    expect(d.fail).not.toHaveBeenCalled()
   })
 
   it('acks, rather than retries, when the file is already gone (P0002)', async () => {
-    const fail = vi.fn().mockRejectedValue(new PostgrestError('unknown file', 404, NO_DATA_FOUND))
-    const out = await handleDeadLetter(BODY, 1, { fail })
+    const d = dlqDeps({
+      fail: vi.fn().mockRejectedValue(new PostgrestError('unknown file', 404, NO_DATA_FOUND)),
+    })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
 
     expect(out.action).toBe('ack')
   })
 
   it('retries any other analysis_fail failure — the database having a bad minute is not terminal', async () => {
-    const fail = vi.fn().mockRejectedValue(new PostgrestError('boom', 500, null))
-    const out = await handleDeadLetter(BODY, 1, { fail })
+    const d = dlqDeps({ fail: vi.fn().mockRejectedValue(new PostgrestError('boom', 500, null)) })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
 
     expect(out.action).toBe('retry')
+  })
+
+  // ---- [M4.5] the guard: a dead letter must not fail a healthy file ----
+
+  it('refuses to fail a file that has since been STORED', async () => {
+    // The dangerous one. A message exhausts its five attempts, the :31 cron
+    // re-enqueues the file, the re-run succeeds — and THEN the dead letter
+    // is delivered. Without this guard it would undo a completed analysis
+    // and drop the track out of the pool.
+    const d = dlqDeps({
+      fileState: vi.fn().mockResolvedValue({ state: 'stored', state_changed_at: NOW_ISO }),
+    })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
+
+    expect(out.action).toBe('ack')
+    expect(out.reason).toContain("state is 'stored'")
+    expect(d.fail).not.toHaveBeenCalled()
+  })
+
+  it('refuses to fail a file another delivery is analysing right now', async () => {
+    // 'analysing' INSIDE analysis_begin's 10-minute lease means a second
+    // delivery holds the claim and is presumably still running it.
+    const d = dlqDeps({
+      fileState: vi.fn().mockResolvedValue({
+        state: 'analysing',
+        state_changed_at: new Date(NOW - 60_000).toISOString(),
+      }),
+    })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
+
+    expect(out.action).toBe('ack')
+    expect(out.reason).toMatch(/another delivery holds the claim/)
+    expect(d.fail).not.toHaveBeenCalled()
+  })
+
+  it('DOES fail a file whose claim has outlived the lease', async () => {
+    // Past the lease the claim is abandoned, which is the case this handler
+    // exists for: the row would otherwise sit in 'analysing' forever and be
+    // resurrected by the :31 cron every hour with no attempt ceiling.
+    const d = dlqDeps({
+      fileState: vi.fn().mockResolvedValue({ state: 'analysing', state_changed_at: STALE_ISO }),
+    })
+    expect((await handleDeadLetter(BODY, 1, d, NOW)).action).toBe('ack')
+    expect(d.fail).toHaveBeenCalled()
+  })
+
+  it('acks without failing when the row is gone', async () => {
+    const d = dlqDeps({ fileState: vi.fn().mockResolvedValue(null) })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
+
+    expect(out.action).toBe('ack')
+    expect(d.fail).not.toHaveBeenCalled()
+  })
+
+  it('retries rather than guessing when it cannot read the state', async () => {
+    const d = dlqDeps({ fileState: vi.fn().mockRejectedValue(new Error('503')) })
+    const out = await handleDeadLetter(BODY, 1, d, NOW)
+
+    expect(out.action).toBe('retry')
+    expect(d.fail).not.toHaveBeenCalled()
   })
 })
 

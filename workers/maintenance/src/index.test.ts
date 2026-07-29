@@ -3,7 +3,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ANALYSIS_VERSION, requeueStuck, sweep, type Env } from './index'
+import { ANALYSIS_VERSION, dedupSweep, requeueStuck, sweep, type Env } from './index'
 
 /**
  * Important #1 (M2 final review): before env.dev existed, `wrangler dev`
@@ -143,5 +143,119 @@ describe('requeueStuck', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 401 })))
 
     await expect(requeueStuck(fakeEnv())).rejects.toThrow(/analysis_stuck/)
+  })
+})
+
+/**
+ * M4's dedup backstop.
+ *
+ * The property under test is the ORDER, and it is not cosmetic:
+ * dedup_pending() selects `state = 'stored' and track_id is null`, and
+ * dedup_seed_tracks() mints a track for every one of those. Seed first and
+ * the work list is empty before it is read — this cron would then run every
+ * hour, report nothing to do, and the inline matcher's failures would never
+ * be recovered by anything.
+ */
+describe('dedupSweep', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const FP = { fp_compressed_b64: btoa('abcd'), fp_sha256: 'aa', algo_version: 'v' }
+
+  /** Route a fetch by the RPC name in its URL. `pending` is consumed page by
+   *  page, so a caller can model the list draining as tracks are assigned. */
+  function router(handlers: Record<string, (body: Record<string, unknown>) => unknown>) {
+    const seen: string[] = []
+    const spy = vi.fn(async (url: string, init: RequestInit) => {
+      const fn = String(url).split('/rest/v1/rpc/')[1]
+      seen.push(fn)
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      const h = handlers[fn]
+      if (!h) throw new Error(`unexpected rpc ${fn}`)
+      return Response.json(h(body) ?? null)
+    })
+    vi.stubGlobal('fetch', spy)
+    return { spy, seen }
+  }
+
+  it('matches every pending file, THEN seeds whatever is left', async () => {
+    const pages = [[{ file_id: 'f1', algo_version: 'v' }, { file_id: 'f2', algo_version: 'v' }], []]
+    const { seen } = router({
+      dedup_pending: () => pages.shift() ?? [],
+      dedup_probe: () => [FP],
+      dedup_candidates: () => [],
+      dedup_resolve: () => ({ ok: true, action: 'no_match', track_id: 't1' }),
+      dedup_seed_tracks: () => 0,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(seen.indexOf('dedup_pending')).toBeLessThan(seen.indexOf('dedup_seed_tracks'))
+    expect(seen.filter((f) => f === 'dedup_resolve')).toHaveLength(2)
+  })
+
+  it('stops when a page makes no progress instead of re-reading it forever', async () => {
+    // A file with no fingerprint can never be assigned a track, so
+    // dedup_pending returns it again on the next call — and again, and
+    // again. The seed below is what finally gives those rows an identity.
+    const { seen } = router({
+      dedup_pending: () => [{ file_id: 'f1', algo_version: 'v' }],
+      dedup_probe: () => [],
+      dedup_seed_tracks: () => 1,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(seen.filter((f) => f === 'dedup_pending')).toHaveLength(1)
+    expect(seen).toContain('dedup_seed_tracks')
+  })
+
+  it('keeps going when one file throws — the rest of the page still runs', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const pages = [[{ file_id: 'f1', algo_version: 'v' }, { file_id: 'f2', algo_version: 'v' }], []]
+    let probes = 0
+    router({
+      dedup_pending: () => pages.shift() ?? [],
+      dedup_probe: () => { probes++; if (probes === 1) throw new Error('503'); return [FP] },
+      dedup_candidates: () => [],
+      dedup_resolve: () => ({ ok: true, action: 'no_match', track_id: 't1' }),
+      dedup_seed_tracks: () => 0,
+    })
+
+    await expect(dedupSweep(fakeEnv())).resolves.toBeUndefined()
+    expect(errorSpy.mock.calls.flat().join(' ')).toContain('f1')
+  })
+
+  it('pages the seed until it drains', async () => {
+    const counts = [500, 500, 12]
+    const { seen } = router({
+      dedup_pending: () => [],
+      dedup_seed_tracks: () => counts.shift() ?? 0,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(seen.filter((f) => f === 'dedup_seed_tracks')).toHaveLength(3)
+  })
+
+  it('asks dedup_candidates with a null digest — the backstop has only a file id', async () => {
+    // Safe by construction: byte-identical files produce identical
+    // fingerprints, so layer 1 returns the twin as its top hit. Layer 0
+    // saves a decompress; it is not load-bearing for correctness.
+    const pages = [[{ file_id: 'f1', algo_version: 'v' }], []]
+    let args: Record<string, unknown> = {}
+    router({
+      dedup_pending: () => pages.shift() ?? [],
+      dedup_probe: () => [FP],
+      dedup_candidates: (b) => { args = b; return [] },
+      dedup_resolve: () => ({ ok: true, action: 'no_match', track_id: 't1' }),
+      dedup_seed_tracks: () => 0,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(args.p_content_sha256).toBeNull()
   })
 })
