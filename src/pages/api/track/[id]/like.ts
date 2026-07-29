@@ -4,7 +4,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-import { isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
+import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
 
 /**
  * Toggles the caller's like on one track — migration 19's toggle_like RPC
@@ -29,9 +29,14 @@ export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
   const id = params.id
   if (!isUuid(id)) return jsonError(400, 'bad_request', 'not a track id')
 
-  const { data, error } = await locals.supabase.rpc('toggle_like', { p_file: id })
-  if (error) return rpcError(error)
-  const row = data?.[0] as { like_count: number; liked: boolean } | undefined
+  let row: { like_count: number; liked: boolean } | undefined
+  try {
+    const { data, error } = await locals.supabase.rpc('toggle_like', { p_file: id })
+    if (error) return rpcError(error)
+    row = data?.[0]
+  } catch (e) {
+    return dbErrorResponse(e instanceof Error ? e.message : String(e))
+  }
   if (!row) return jsonError(500, 'rpc_error', 'toggle_like returned no row')
 
   const contentType = request.headers.get('content-type') ?? ''
@@ -41,8 +46,20 @@ export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
     // knows its one destination (/track/[id]); this route has two, so it
     // trusts Referer instead, with the track page as a safe fallback when
     // a client sends none.
+    let redirectTo = `/track/${id}`
     const referer = request.headers.get('referer')
-    return redirect(referer ?? `/track/${id}`, 303)
+    if (referer) {
+      try {
+        // Referer must be same-origin to prevent open-redirect.
+        const refererUrl = new URL(referer, request.url)
+        if (refererUrl.origin === new URL(request.url).origin) {
+          redirectTo = refererUrl.pathname + refererUrl.search
+        }
+      } catch {
+        // Malformed Referer URL, use fallback.
+      }
+    }
+    return redirect(redirectTo, 303)
   }
 
   return Response.json(
