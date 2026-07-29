@@ -27,6 +27,7 @@ import {
 import { pump, FILE_CONCURRENCY, PREFLIGHT_CONCURRENCY } from '../lib/upload-queue'
 import { formatBytes } from '../lib/format'
 import { setCurrentBatchId } from '../lib/upload-batch'
+import { NAV_GUARD_MESSAGE, shouldConfirmBeforeNavigating, type NavClickInfo } from '../lib/nav-guard'
 import StatusRegion from './StatusRegion'
 
 type RowStatus =
@@ -138,6 +139,58 @@ export default function UploadDropzone(props: { userId: string }) {
     const warn = (event: BeforeUnloadEvent) => { if (running()) event.preventDefault() }
     window.addEventListener('beforeunload', warn)
     onCleanup(() => window.removeEventListener('beforeunload', warn))
+
+    // `warn` above only fires for a REAL page unload (tab close, hard
+    // reload, typed URL). Shell.astro's <ClientRouter /> intercepts every
+    // internal <a> click and swaps the DOM in place instead — no unload,
+    // so beforeunload never runs, and the in-memory File handles in
+    // `handles` (never in the reactive store — see its declaration above)
+    // are silently gone once the swap lands.
+    //
+    // astro:before-preparation (astro/dist/transitions/events.js) IS
+    // cancelable, but preventDefault() there doesn't keep the user on
+    // this page — astro/dist/transitions/router.js's transition() treats
+    // "prevented" as "can't do a soft nav" and unconditionally falls back
+    // to `location.href = to.href`, a real hard navigation to the SAME
+    // destination. That's the right hook for "this destination can't use
+    // view transitions," not for "the user declined to leave": using it
+    // here would force a hard nav no matter what this dialog answers,
+    // plus a second, generic beforeunload prompt on top of ours.
+    //
+    // So this intercepts one step earlier, at the same click ClientRouter
+    // itself listens for (astro/components/ClientRouter.astro), but in
+    // the CAPTURE phase — capture-phase listeners on `document` always
+    // run before its own bubble-phase one, regardless of registration
+    // order. `isSoftNavClick` mirrors that script's own eligibility check
+    // (isReloadEl/leavesWindow) so this only prompts for a click Astro
+    // would otherwise turn into a silent soft navigation; anything else
+    // (new tab, external link, data-astro-reload, download) already
+    // produces a real unload that `warn` above already covers. Declining
+    // here calls preventDefault() before ClientRouter's own listener
+    // ever sees the click, so it never calls navigate() — a clean single
+    // dialog, no navigation, no fallback reload.
+    const clickGuard = (event: MouseEvent) => {
+      if (!running()) return
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+      const origin = (path[0] ?? event.target) as EventTarget | null
+      const link = origin instanceof Element ? origin.closest('a, area') : null
+      if (!(link instanceof HTMLElement)) return
+      const info: NavClickInfo = {
+        href: link.getAttribute('href'),
+        target: link.getAttribute('target'),
+        download: link.hasAttribute('download'),
+        reload: link.dataset.astroReload !== undefined,
+        button: event.button,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+      }
+      if (!shouldConfirmBeforeNavigating(running(), info, location.origin)) return
+      if (!confirm(NAV_GUARD_MESSAGE)) event.preventDefault()
+    }
+    document.addEventListener('click', clickGuard, true)
+    onCleanup(() => document.removeEventListener('click', clickGuard, true))
   })
 
   const patch = (key: string, next: Partial<Row>) => {
