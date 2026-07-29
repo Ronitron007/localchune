@@ -143,7 +143,11 @@ img.thumb { object-fit: cover; border: 1px solid var(--line); }
 .thumb-empty { border: 1px solid var(--faint); }
 img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 
-/* --- player bar --- */
+/* --- player bar ---
+   The <audio> element is the playback engine only — no native controls
+   attr, so browsers give it no box. The visible row is the custom
+   play/pause button, the touch-friendly range seek, and the elapsed/total
+   clock; see src/scripts/site.ts for the timeupdate/seek wiring. */
 .playerbar {
   position: fixed;
   bottom: 0;
@@ -151,13 +155,24 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   right: 0;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.5rem 1rem;
+  flex-wrap: wrap;
+  gap: var(--pad-1) var(--pad-2);
+  padding: var(--pad-1) var(--pad-2);
   background: var(--bg);
   border-top: 1px solid var(--line);
 }
-.playerbar audio { flex: 1; max-width: 32rem; }
-.playerbar .nowplaying { color: var(--mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playerbar audio { display: none; }
+.playerbar .nowplaying {
+  color: var(--mid);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+.playerbar .playertoggle { flex: none; }
+.playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
+.playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
 /* --- odds and ends --- */
 .keychip {
