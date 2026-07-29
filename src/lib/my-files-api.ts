@@ -21,6 +21,15 @@ export type MyFile = {
   key_camelot: string | null
 }
 
+/**
+ * Composite keyset cursor for my_files() pagination: both created_at and
+ * file_id must be passed together to handle tied timestamps correctly.
+ */
+export type MyFilesCursor = {
+  created_at: string
+  file_id: string
+}
+
 export type BatchGroup = {
   batch_id: string
   batch_label: string | null

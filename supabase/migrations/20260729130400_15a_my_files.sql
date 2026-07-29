@@ -18,18 +18,16 @@
 -- uploader their OWN failed/pending/quarantined rows too, so the visibility
 -- rule here is intentionally the auth.uid() predicate alone, not RLS.
 --
--- Keyset pagination on (created_at, id), both descending. Only the
--- created_at half of the keyset is a parameter (p_before) -- there is no
--- p_before_id twin. A tie on created_at inside one page is exercised by
--- nothing in this product: rows are minted one HTTP round trip apart even
--- inside a bulk drop (each gets its own /api/upload/presign call), so two
--- files landing at the identical microsecond is not a real scenario the way
--- it is for pool_list()'s cross-member ordering. `id desc` is still the
--- documented tiebreak so the ORDER BY is deterministic either way.
+-- Keyset pagination on (created_at, id), both descending. The composite
+-- cursor is (p_before, p_before_id): when both are provided, the predicate
+-- is (f.created_at, f.id) < (p_before, p_before_id); when only p_before
+-- is provided (backward compat), f.created_at < p_before. This guards
+-- against tied timestamps that would otherwise permanently skip rows.
 -- ============================================================
 create or replace function public.my_files(
-  p_limit  int         default 200,
-  p_before timestamptz default null
+  p_limit       int         default 200,
+  p_before      timestamptz default null,
+  p_before_id   uuid        default null
 )
 returns table (
   file_id           uuid,
@@ -60,7 +58,9 @@ begin
     left join public.upload_batches ub on ub.id      = f.batch_id
     left join public.audio_analysis a  on a.file_id  = f.id
    where f.uploaded_by = (select auth.uid())
-     and (p_before is null or f.created_at < p_before)
+     and (p_before is null
+          or (p_before_id is not null and (f.created_at, f.id) < (p_before, p_before_id))
+          or (p_before_id is null and f.created_at < p_before))
    order by f.created_at desc, f.id desc
    limit v_limit;
 end $$;
@@ -73,12 +73,15 @@ end $$;
 create index if not exists files_uploader_created_idx
   on public.files (uploaded_by, created_at desc, id desc);
 
-revoke execute on function public.my_files(int, timestamptz) from public, anon;
-grant  execute on function public.my_files(int, timestamptz) to authenticated;
+revoke execute on function public.my_files(int, timestamptz, uuid) from public, anon;
+grant  execute on function public.my_files(int, timestamptz, uuid) to authenticated;
 
-comment on function public.my_files(int, timestamptz) is
+comment on function public.my_files(int, timestamptz, uuid) is
   'One uploader''s whole history: every file they ever dropped, in every
    state, newest first. last_error comes through verbatim from
    ingest_jobs so a failure like "empty_decode" is visible instead of
    silent. bpm/key_camelot are null until audio_analysis exists for the
-   file. Keyset-paginated on (created_at, id) via p_before.';
+   file. Keyset-paginated on (created_at, id) via composite cursor
+   (p_before, p_before_id) — when both given, uses (f.created_at, f.id) <
+   (p_before, p_before_id); when only p_before given, uses f.created_at <
+   p_before for backward compat.';

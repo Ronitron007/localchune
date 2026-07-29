@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(14);
 
 -- Two members. d1 is the caller under test; d2 exists only to prove their
 -- rows never leak into d1's list.
@@ -47,12 +47,34 @@ values ('00000000-0000-0000-0000-0000000000f2','00000000-0000-0000-0000-00000000
 insert into public.audio_analysis (file_id, analysis_version, duration_ms, bpm, key_camelot, raw_tags)
 values ('00000000-0000-0000-0000-0000000000f1','v1', 200000, 128.4, '8B', '{}'::jsonb);
 
+-- Seed 5 files with identical created_at for composite cursor testing.
+-- These are inserted as postgres before the role switch to authenticated.
+with tied_ts as (select now() as ts)
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state, created_at)
+values
+  ('00000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1', 'audio/d1/tied5.flac', 'tied5.flac',
+   1000, 'flac', 'stored', (select ts from tied_ts)),
+  ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1', 'audio/d1/tied4.flac', 'tied4.flac',
+   1000, 'flac', 'stored', (select ts from tied_ts)),
+  ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1', 'audio/d1/tied3.flac', 'tied3.flac',
+   1000, 'flac', 'stored', (select ts from tied_ts)),
+  ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1', 'audio/d1/tied2.flac', 'tied2.flac',
+   1000, 'flac', 'stored', (select ts from tied_ts)),
+  ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1', 'audio/d1/tied1.flac', 'tied1.flac',
+   1000, 'flac', 'stored', (select ts from tied_ts));
+
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d1"}';
 
 -- ---- the assertion that matters: only the caller's own rows ----
-select is( (select count(*)::int from public.my_files()), 3,
-           'the caller sees exactly their own three files' );
+select is( (select count(*)::int from public.my_files()), 8,
+           'the caller sees all 8 of their files (3 original + 5 tied)' );
 select is( (select count(*)::int from public.my_files()
              where file_id = '00000000-0000-0000-0000-0000000000f9'), 0,
            'another member''s file never appears' );
@@ -82,9 +104,14 @@ select is( (select f.last_error from public.my_files() f
 -- ---- ordering: newest first ----
 select is( (select array_agg(f.file_id order by f.created_at desc) from public.my_files() f),
            array['00000000-0000-0000-0000-0000000000f3'::uuid,
+                 '00000000-0000-0000-0000-000000000005'::uuid,
+                 '00000000-0000-0000-0000-000000000004'::uuid,
+                 '00000000-0000-0000-0000-000000000003'::uuid,
+                 '00000000-0000-0000-0000-000000000002'::uuid,
+                 '00000000-0000-0000-0000-000000000001'::uuid,
                  '00000000-0000-0000-0000-0000000000f2'::uuid,
                  '00000000-0000-0000-0000-0000000000f1'::uuid],
-           'newest first' );
+           'newest first (f3 + 5 tied rows @ now, then f2 @ 1h ago, then f1 @ 2h ago)' );
 
 -- ---- keyset pagination on (created_at, id) ----
 select is( (select array_agg(x.file_id) from (select f.file_id from public.my_files(p_limit => 1) f) x),
@@ -95,6 +122,50 @@ select is( (select count(*)::int from public.my_files(
                             where f.id = '00000000-0000-0000-0000-0000000000f3'))),
            2,
            'p_before excludes the row it was read from and returns the older two' );
+
+-- ---- composite keyset cursor: tied timestamps no longer skip rows ----
+-- When all tied rows + f3 (which also has created_at=now()) are paginated:
+-- Page 1 limit=3 returns: [f3, tied5, tied4]. Filtering for tied: 2 rows.
+-- Using the cursor from tied4, page 2 returns: [tied3, tied2, tied1, f2].
+-- Limited to 3, that's [tied3, tied2, tied1]. Filtering for tied: 3 rows.
+-- Total tied across pages: 2 + 3 = 5. No rows skipped despite tied timestamps.
+
+-- Page 1: get first 3 rows overall (includes f3 and 2 tied), filter to tied.
+with page1 as (
+  select f.file_id, f.created_at
+    from public.my_files(p_limit => 3) f
+   where f.file_id in (select id from public.files where r2_key like 'audio/d1/tied%')
+)
+select is(
+  (select count(*)::int from page1),
+  2,
+  'page 1 with tied timestamps returns 2 tied rows (f3 + tied5 + tied4 total, 2 are tied)' );
+
+-- Page 2: continue with composite cursor from the last tied row from page 1.
+with page1_all as (
+  select f.file_id, f.created_at
+    from public.my_files(p_limit => 3) f
+),
+cursor_from_page1 as (
+  select f.created_at, f.file_id
+    from page1_all f
+   where f.file_id in (select id from public.files where r2_key like 'audio/d1/tied%')
+   order by f.created_at desc, f.file_id desc
+   limit 1
+),
+page2 as (
+  select f.file_id, f.created_at
+    from public.my_files(
+           p_limit => 3,
+           p_before => (select c.created_at from cursor_from_page1 c),
+           p_before_id => (select c.file_id from cursor_from_page1 c)
+         ) f
+   where f.file_id in (select id from public.files where r2_key like 'audio/d1/tied%')
+)
+select is(
+  (select count(*)::int from page2),
+  3,
+  'page 2 with composite cursor returns remaining 3 tied rows (no skip)' );
 
 -- ---- a second member sees only their own single row ----
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d2"}';
