@@ -15,8 +15,13 @@ import SourceLink from '../components/SourceLink.astro'
 import StorageChip from '../components/StorageChip.astro'
 import '../styles/global.css'
 
-interface Props { title: string }
-const { title } = Astro.props
+// Task 8: `center` is for the app's "single card" pages (currently just
+// /welcome — /login has no Shell at all, see its own body.loginpage rule
+// in global.css). It adds body.centerpage, which vertically AND
+// horizontally centers <main>'s content between AppNav and the footer —
+// see global.css's `body.centerpage main` rule for the mechanics.
+interface Props { title: string; center?: boolean }
+const { title, center = false } = Astro.props
 ---
 <html lang="en">
 <head>
@@ -25,16 +30,27 @@ const { title } = Astro.props
   <title>{title}</title>
   <ClientRouter />
 </head>
-<body>
+<body class={center ? 'centerpage' : undefined}>
   <AppNav />
   <main><slot /></main>
   <footer class="appfoot">
     <StorageChip />
     <SourceLink />
   </footer>
+  {/* Task 3: native `controls` renders inconsistently on mobile and hides
+      the seek affordance entirely on some phones. The <audio> element
+      stays as the playback engine (no `controls` attr, so it draws no
+      box of its own) and this custom row — play/pause, a touch-friendly
+      range seek, elapsed/total — replaces it. Everything here lives
+      inside the SAME transition:persist="player" node as before, so it
+      survives a ClientRouter navigation exactly like the old markup did;
+      see src/scripts/site.ts for the wiring. */}
   <div class="playerbar" transition:persist="player">
     <span id="player-label" class="nowplaying" aria-live="polite"></span>
-    <audio id="player-audio" controls preload="none"></audio>
+    <button id="player-toggle" type="button" class="playertoggle" aria-label="Play">▶</button>
+    <input id="player-seek" type="range" class="playerseek" min="0" max="0" step="1" value="0" aria-label="Seek" />
+    <span id="player-time" class="playertime num">0:00 / --:--</span>
+    <audio id="player-audio" preload="none"></audio>
   </div>
   <script src="../scripts/site.ts"></script>
 </body>

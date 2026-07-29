@@ -32,7 +32,7 @@ export default function AllowlistForm() {
     <form onSubmit={submit}>
       <input type="email" required placeholder="dj@gmail.com"
              value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
-      <button type="submit">Invite</button>
+      <button type="submit" class="btn">Invite</button>
       <StatusRegion message={status()} />
     </form>
   )

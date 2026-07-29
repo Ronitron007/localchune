@@ -9,6 +9,7 @@ import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
 import { formatBpm } from '../../lib/track-format'
 import { isUuid } from '../../lib/upload-api'
+import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel } from '../../lib/file-state'
 
 const { id } = Astro.params
 // Guard before the RPC: a non-uuid path segment would otherwise reach
@@ -27,11 +28,61 @@ const title = `${artist} — ${t.display_title}`
 const hasArt = t.artwork_key !== null || t.thumb_key !== null
 const num = (v: number | null, digits = 1, unit = '') =>
   v === null || v === undefined ? '—' : `${v.toFixed(digits)}${unit}`
+// Migration 16: only the uploader gets the add/remove forms. Everyone
+// pool-visible sees the chips — checked server-side, not hidden with CSS.
+const isUploader = Astro.locals.member?.user_id === t.uploaded_by
+
+// Migration 16b: pool_get's own-uploader-any-state path now returns a row
+// for a failed/quarantined/rejected/abandoned file too (previously it never
+// could — pool_tracks INNER JOINed audio_analysis, and a file in one of
+// these states never gets an analysis row). last_error lives on
+// ingest_jobs, not pool_get's column set — read the same way
+// src/lib/upload-api.ts's loadOwnedJob() already does, `user_id`-scoped so
+// this can never leak another uploader's reason even if the state check
+// above were ever wrong. Only fetched for the uploader, and only for a
+// terminal-failed state — a 'stored' or 'needs_review' row never has one.
+let lastError: string | null = null
+if (isUploader && TERMINAL_FAILED_STATES.has(t.state)) {
+  const { data: job, error: jobError } = await Astro.locals.supabase
+    .from('ingest_jobs')
+    .select('last_error')
+    .eq('file_id', t.file_id)
+    .eq('user_id', t.uploaded_by)
+    .maybeSingle()
+  if (jobError) console.error('ingest_jobs lookup failed:', jobError.message)
+  lastError = (job?.last_error as string | null | undefined) ?? null
+}
+
+const tagsAction = `/api/track/${t.file_id}/tags`
 ---
 <Shell title={`localchune — ${title}`}>
   <article class="trackdetail">
     <header>
       <h1>{title}</h1>
+      {/* Migration 16b -- the owner's core ask #2, upload visibility: a
+          failed file deserves a page saying what it is and why it failed,
+          not a 404. Only rendered off the "stored" happy path, so a normal
+          pool track's header looks exactly as it did before. The
+          vocabulary (state label, one-line explanation) is the same
+          src/lib/file-state.ts module /uploads.astro already uses — a file
+          must never say one thing on one page and something else here. */}
+      {t.state !== 'stored' && (
+        <p class="statebanner">
+          <span class="statechip">{stateLabel(t.state)}</span>
+          {TERMINAL_FAILED_STATES.has(t.state) && (
+            <>
+              {' — '}
+              <span class="explain">{FAILURE_EXPLAIN[t.state] ?? ''}</span>
+              {lastError && (
+                <>
+                  {' — '}
+                  <span class="reason">{lastError}</span>
+                </>
+              )}
+            </>
+          )}
+        </p>
+      )}
       {/* The larger copy. Colour, unfiltered — content is not chrome.
           M7 note: if this art is ever Apple-sourced, the "Listen on
           Apple Music" badge is required HERE (PRD §8.1) — this page,
@@ -39,17 +90,70 @@ const num = (v: number | null, digits = 1, unit = '') =>
       {hasArt && (
         <img class="art" src={`/api/track/${t.file_id}/art?full=1`} alt={`Cover art for ${t.display_title}`} />
       )}
-      <p class="transport">
-        <a
-          class="play"
-          href={`/track/${t.file_id}`}
-          data-track-id={t.file_id}
-          data-label={title}
-        >▶ Play</a>
-        {' '}
-        <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
+      {/* Final-review finding F1: this block was never state-gated. A
+          failed/abandoned file's uploader can reach this page (migration
+          16b) but has no object in R2 to play or download — Play silently
+          fails and Download 302s into a raw R2 NoSuchKey page. The banner
+          above already explains a non-stored state; no replacement UI is
+          needed here. */}
+      {t.state === 'stored' && (
+        <p class="transport">
+          <a
+            class="play"
+            href={`/track/${t.file_id}`}
+            data-track-id={t.file_id}
+            data-label={title}
+          >▶ Play</a>
+          {' '}
+          <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
+        </p>
+      )}
+      {/* Migration 15b: download_count is a real counter (track_stats),
+          upload_count is a live count(*) over file_claims — see that
+          migration's header for why these are two different mechanisms
+          under one format-agnostic-by-design plan. */}
+      <p class="stats">
+        downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}
+        {' · '}
+        brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}
       </p>
     </header>
+
+    {/* Migration 16 — owner's verbatim ask: "give the uploader an ability
+        to add tags... at any point of time for all the tracks that he's
+        uploaded." Editable at ANY file state, uploader-only, brutalist
+        idiom — plain <form> POSTs to /api/track/[id]/tags, no island. The
+        remove form's tag_key field carries the tag's DISPLAY text, not a
+        separately-fetched key: tag_remove re-derives the same normalised
+        key from it (trim/casefold/collapse), so no extra column is needed
+        just to round-trip a delete. */}
+    <section class="tags">
+      <h2>Tags</h2>
+      {t.tags.length === 0 && <p class="explain">No tags yet.</p>}
+      <ul class="tageditor">
+        {t.tags.map((tag: string) => (
+          <li>
+            <span class="tagchip">{tag}</span>
+            {isUploader && (
+              <form class="tagform" method="post" action={tagsAction}>
+                <input type="hidden" name="intent" value="remove" />
+                <input type="hidden" name="tag_key" value={tag} />
+                <button type="submit" class="btn-danger" aria-label={`Remove tag ${tag}`}>×</button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ul>
+      {isUploader && (
+        <form class="tagform" method="post" action={tagsAction}>
+          <label>
+            <span class="sr-only">Add a tag</span>
+            <input type="text" name="tag" maxlength="32" placeholder="add a tag" required />
+          </label>
+          <button type="submit" class="btn">add tag</button>
+        </form>
+      )}
+    </section>
 
     <section class="identity">
       <h2>Identity</h2>

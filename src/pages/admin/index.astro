@@ -24,11 +24,11 @@ if (storageErr) console.error('member_storage failed:', storageErr.message)
   <h1>Members</h1>
   <AllowlistForm client:load />
   <table>
-    <thead><tr><th>Email</th><th>Role</th><th>Credits</th><th>Signed up</th><th>Status</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Email</th><th>Username</th><th>Role</th><th>Credits</th><th>Signed up</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
       {(rows ?? []).map((r: any) => (
         <tr>
-          <td>{r.email}</td><td>{r.role}</td>
+          <td>{r.email}</td><td>{r.username ?? '—'}</td><td>{r.role}</td>
           <td>{r.signed_up ? r.credits : '—'}</td>
           <td>{r.signed_up ? 'yes' : 'pending'}</td>
           <td>{r.revoked_at ? 'revoked' : 'active'}</td>

@@ -16,6 +16,24 @@
   --line: #000;
   --faint: #ddd;
   --zebra: #f4f4f4;
+
+  /* Spacing scale — breathing room only. No new colour, no radius, no
+     shadow rides along with these; see the header note above. */
+  --pad-1: 8px;
+  --pad-2: 16px;
+  --pad-3: 24px;
+
+  /* Task 8 — the ONE deliberate colour exception to the brutalist
+     monochrome above. These four values exist for .btn/.btn-secondary/
+     .btn-danger ONLY (see that block below); nothing else in this file
+     may reference them. Blue matches the owner's Safari-default-blue
+     screenshot; red is the standard "destructive action" red. Both carry
+     a slightly darker border shade so the 1px edge reads against the
+     fill instead of vanishing into it. */
+  --btn-blue: #0b57d0;
+  --btn-blue-line: #0842a0;
+  --btn-red: #c0392b;
+  --btn-red-line: #962d22;
 }
 
 *, *::before, *::after {
@@ -32,9 +50,65 @@ html {
 body {
   margin: 0 auto;
   max-width: 72rem;
-  /* Room for the fixed player bar. */
-  padding: 0 1rem 6rem;
+  /* Page margins: tighter on a phone, roomier once there is width to
+     spare. Room at the bottom for the fixed player bar either way. */
+  padding: 0 var(--pad-2) 6rem;
 }
+@media (min-width: 640px) {
+  body { padding-left: var(--pad-3); padding-right: var(--pad-3); }
+}
+
+/* Vertical rhythm between a page's top-level blocks (h1, filter form,
+   table, dropzone+ticker…) and around the shell's own nav/footer bands —
+   one rule instead of per-page margins, so every page gets the same
+   breathing room for free. */
+body > main { margin-top: var(--pad-3); }
+body > .appfoot { margin-top: var(--pad-3); }
+main > * + * { margin-top: var(--pad-3); }
+/* /login has no Shell (no session yet to build AppNav from), so it gets
+   the same page-margin body rule above but needs its own top-level
+   rhythm — it has no <main> wrapper to hang body > main off of.
+
+   Task 8 — /login and /welcome are the app's two "single card" pages:
+   centered horizontally AND vertically, full viewport height, brutalist
+   idiom kept (no card/border/shadow around the block — it is just where
+   the content sits). /login has no Shell, so the flex centering applies
+   to <body> directly; /welcome (below, `body.centerpage main`) applies it
+   to <main> instead so AppNav/footer stay in their normal top/bottom
+   position around the centered block. */
+body.loginpage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: var(--pad-3) var(--pad-2);
+  text-align: center;
+}
+body.loginpage > * + * { margin-top: var(--pad-2); }
+
+/* /welcome: Shell.astro passes `center` -> body class "centerpage". AppNav
+   and the footer stay exactly where Shell always puts them; only <main>
+   (the claim form) grows to fill the space between them and centers its
+   own content, both axes. */
+body.centerpage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+body.centerpage main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+/* A block that fills the whole flex cross-axis reads as a left-to-right
+   page, not a centered "card" — cap the readable width so the explain
+   copy and form visibly sit in the middle of a wide desktop viewport.
+   Below 30rem (mobile) this is a no-op; the block already fills 100%. */
+body.loginpage > *, body.centerpage main > * { max-width: 30rem; }
 
 a { color: var(--fg); }
 
@@ -47,8 +121,8 @@ h1, h2 { font-weight: bold; }
 .appnav {
   display: flex;
   align-items: baseline;
-  gap: 1rem;
-  padding: 0.5rem 0;
+  gap: var(--pad-2);
+  padding: var(--pad-1) 0;
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -58,8 +132,10 @@ h1, h2 { font-weight: bold; }
 
 .appfoot {
   display: flex;
-  gap: 1rem;
-  padding: 1rem 0;
+  gap: var(--pad-2);
+  /* The storage line used to sit right against this border — pad-3 puts
+     real air between the divider and the text on both sides of it. */
+  padding: var(--pad-3) 0;
   border-top: 1px solid var(--line);
   color: var(--mid);
   flex-wrap: wrap;
@@ -69,24 +145,72 @@ h1, h2 { font-weight: bold; }
 input, select, button {
   accent-color: var(--fg);
   border: 1px solid var(--line);
-  padding: 0.15rem 0.4rem;
+  padding: calc(var(--pad-1) / 2) var(--pad-1);
 }
 input[type='checkbox'], input[type='radio'] { border: none; }
+/* Buttons sitting side by side in a row (upload actions, retry rows, tag
+   remove/add) get a gap instead of relying on a stray text-node space. */
+button + button { margin-left: var(--pad-1); }
+
+/* --- Task 8: the three-tier button system ---
+   Every button/submit in the app is one of these three. Geometry (square
+   corners — border-radius: 0 is already global above — 1px border, same
+   padding) is identical across all three; only fill/text/border colour
+   differ. This is the ONE deliberate colour exception to the brutalist
+   monochrome (see the --btn-* tokens in :root above) — nothing else in
+   this file gains colour.
+     .btn           primary   — solid blue, white text, darker-blue border
+     .btn-secondary secondary — white fill, black text, black border
+     .btn-danger    danger    — solid red,  white text, darker-red border
+   The player's play/pause button stays icon-minimal and does NOT take one
+   of these classes (see src/layouts/Shell.astro). A link kept as a link
+   (e.g. the filter bar's Clear) does not take one either. */
+.btn, .btn-secondary, .btn-danger {
+  display: inline-block;
+  border-width: 1px;
+  border-style: solid;
+  padding: calc(var(--pad-1) / 2) var(--pad-2);
+  font: inherit;
+  line-height: normal;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn {
+  background: var(--btn-blue);
+  color: #fff;
+  border-color: var(--btn-blue-line);
+}
+.btn-secondary {
+  background: var(--bg);
+  color: var(--fg);
+  border-color: var(--line);
+}
+.btn-danger {
+  background: var(--btn-red);
+  color: #fff;
+  border-color: var(--btn-red-line);
+}
+.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled,
+.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'], .btn-danger[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* --- filter form --- */
 .filterbar {
   display: flex;
   align-items: end;
-  gap: 0.75rem;
+  gap: var(--pad-2);
   flex-wrap: wrap;
-  padding: 0.75rem 0;
+  padding: var(--pad-2) 0;
 }
 .filterbar fieldset {
   border: 1px solid var(--faint);
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.5rem;
+  gap: var(--pad-1);
+  padding: var(--pad-1) var(--pad-2);
 }
 .filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; }
 .filterbar input[type='number'] { width: 4.5rem; }
@@ -95,7 +219,7 @@ input[type='checkbox'], input[type='radio'] { border: none; }
 table { border-collapse: collapse; width: 100%; }
 th, td {
   text-align: left;
-  padding: 0.3rem 0.5rem;
+  padding: var(--pad-1) var(--pad-2);
   border-bottom: 1px solid var(--faint);
 }
 thead th { border-bottom: 1px solid var(--line); }
@@ -115,7 +239,11 @@ img.thumb { object-fit: cover; border: 1px solid var(--line); }
 .thumb-empty { border: 1px solid var(--faint); }
 img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 
-/* --- player bar --- */
+/* --- player bar ---
+   The <audio> element is the playback engine only — no native controls
+   attr, so browsers give it no box. The visible row is the custom
+   play/pause button, the touch-friendly range seek, and the elapsed/total
+   clock; see src/scripts/site.ts for the timeupdate/seek wiring. */
 .playerbar {
   position: fixed;
   bottom: 0;
@@ -123,13 +251,24 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   right: 0;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.5rem 1rem;
+  flex-wrap: wrap;
+  gap: var(--pad-1) var(--pad-2);
+  padding: var(--pad-1) var(--pad-2);
   background: var(--bg);
   border-top: 1px solid var(--line);
 }
-.playerbar audio { flex: 1; max-width: 32rem; }
-.playerbar .nowplaying { color: var(--mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playerbar audio { display: none; }
+.playerbar .nowplaying {
+  color: var(--mid);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+.playerbar .playertoggle { flex: none; }
+.playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
+.playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
 /* --- odds and ends --- */
 .keychip {
@@ -138,15 +277,75 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   padding: 0 0.35em;
   display: inline-block;
 }
-.empty { border: 1px solid var(--faint); padding: 1rem; color: var(--mid); }
+.myfiles-batch { margin: var(--pad-3) 0; }
+.myfiles-batch h2 { font-weight: normal; color: var(--mid); }
+.statechip { border: 1px solid var(--line); padding: 0 0.35em; display: inline-block; }
+.statebanner { margin: var(--pad-1) 0 var(--pad-2); }
+.tags { margin-left: 0.5em; }
+.tagchip {
+  border: 1px solid var(--faint);
+  color: var(--mid);
+  padding: 0 0.35em;
+  display: inline-block;
+  font-size: 0.85em;
+  margin-right: 0.25em;
+}
+.tagform { display: inline-flex; align-items: center; gap: var(--pad-1); margin: var(--pad-1) 0 0; }
+.tagform input[type='text'] { width: 12rem; }
+.tageditor {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pad-1);
+  padding: 0;
+  margin: var(--pad-1) 0 0;
+}
+.tageditor li { display: inline-flex; align-items: center; gap: 0.15rem; }
+.tageditor .tagchip { margin-right: 0; font-size: 1em; }
+.tageditor form.tagform button { padding: 0 0.35em; }
+
+/* --- /welcome: the username claim form --- */
+.claimform { display: flex; align-items: center; gap: var(--pad-1); margin-top: var(--pad-2); }
+.claimform input[type='text'] { width: 16rem; }
+
+.explain, .reason { color: var(--mid); }
+.reason { font-family: monospace; }
+.empty { border: 1px solid var(--faint); padding: var(--pad-2); color: var(--mid); }
 .empty a, .empty p { color: var(--fg); }
 .counts { color: var(--mid); }
-.pager { padding: 0.75rem 0; }
-.dropzone { border: 1px dashed var(--line); }
+.pager { padding: var(--pad-2) 0; }
+
+/* --- upload dropzone + rows: the owner's own screenshot, "text flush
+   against its dashed border" — pad-3 on the box that draws the border,
+   and vertical rhythm between the box/label/button groups below it. */
+.dropzone { border: 1px dashed var(--line); padding: var(--pad-3); }
+.upload > * + * { margin-top: var(--pad-2); }
+.rows { list-style: none; padding: 0; margin: var(--pad-2) 0 0; }
+.rows li.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pad-1) var(--pad-2);
+  padding: calc(var(--pad-1) / 2) 0;
+}
+.ticker > * + * { margin-top: var(--pad-2); }
+.ticker li.filerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pad-1) var(--pad-2);
+  padding: calc(var(--pad-1) / 2) 0;
+}
+
 .status.error { color: var(--fg); font-weight: bold; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--pad-1) var(--pad-2); }
 dt { color: var(--mid); }
 dd { margin: 0; }
+
+/* --- track detail: header block tight together, sections given the same
+   pad-3 rhythm as every other page's top-level blocks. --- */
+.trackdetail header > * + * { margin-top: var(--pad-2); }
+.trackdetail > * + * { margin-top: var(--pad-3); }
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;

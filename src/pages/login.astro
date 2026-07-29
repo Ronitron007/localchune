@@ -3,6 +3,7 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 import SourceLink from '../components/SourceLink.astro'
+import '../styles/global.css'
 const error = Astro.url.searchParams.get('error_description')
 ---
 <html lang="en">
@@ -11,10 +12,10 @@ const error = Astro.url.searchParams.get('error_description')
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>localchune</title>
 </head>
-<body>
+<body class="loginpage">
   <h1>localchune</h1>
   {error && <p role="alert"><strong>{error}</strong></p>}
-  <button id="in">Sign in with Google</button>
+  <button id="in" class="btn">Sign in with Google</button>
   <script>
     import { browserClient } from '../lib/supabase'
     document.getElementById('in')!.addEventListener('click', () => {

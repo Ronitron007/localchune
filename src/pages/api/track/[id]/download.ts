@@ -6,6 +6,7 @@
 import type { APIRoute } from 'astro'
 import { presignGet, r2ErrorResponse } from '../../../../lib/r2'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
+import { POOL_VISIBLE_STATES } from '../../../../lib/file-state'
 
 /**
  * Download serves the ORIGINAL, never the preview — the whole point of the
@@ -32,6 +33,17 @@ export const GET: APIRoute = async ({ params, locals }) => {
   const r2Key = track.r2_key
   if (!r2Key) return jsonError(404, 'not_found', 'no such track')
 
+  // Task 16b widened pool_get() to return a row for the uploader's own
+  // failed/abandoned/quarantined/rejected file too, so this route can be
+  // reached for a file whose object was never finished or was already
+  // deleted (the sweeper aborts+deletes an abandoned upload's partial
+  // object). Presigning anyway 302s the browser into a raw R2 NoSuchKey
+  // XML page. See POOL_VISIBLE_STATES's doc comment.
+  const state = track.state
+  if (!state || !POOL_VISIBLE_STATES.has(state)) {
+    return jsonError(409, 'not_available', `this file is ${state ?? 'not available'}`)
+  }
+
   const name = track.original_filename ?? 'track'
   // Two forms: a plain ASCII fallback for old clients and RFC 5987 for
   // everything else. The header value is inside the SIGNATURE, so nobody
@@ -42,6 +54,17 @@ export const GET: APIRoute = async ({ params, locals }) => {
 
   try {
     const url = await presignGet(r2Key, { contentDisposition: disposition })
+
+    // Count the download, but never let a stats failure block or delay the
+    // redirect below. The response ships the instant the signed URL is ready.
+    // waitUntil ensures the bump completes on the platform before the Worker
+    // context closes — without it, the promise chain is cancellable.
+    const bumpPromise = locals.supabase.rpc('bump_download', { p_file: id }).then(
+      ({ error }) => { if (error) console.error('bump_download failed:', error.message) },
+      (e: unknown) => { console.error('bump_download failed:', e instanceof Error ? e.message : String(e)) },
+    ) as Promise<any>
+    locals.cfContext?.waitUntil(bumpPromise)
+
     return new Response(null, {
       status: 302,
       headers: { location: url, 'cache-control': 'private, no-store' },

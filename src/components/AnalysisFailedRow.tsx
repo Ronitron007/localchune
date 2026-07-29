@@ -4,6 +4,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { Show } from 'solid-js'
+import { RETRYABLE_STATES as RETRYABLE, FAILURE_EXPLAIN as EXPLAIN } from '../lib/file-state'
 
 /**
  * A file that will not become a track, with the reason the server recorded
@@ -15,15 +16,6 @@ import { Show } from 'solid-js'
  * UploadDropzone, does not have one. A button that silently did nothing
  * would be worse than a sentence that says what to do.
  */
-const RETRYABLE = new Set(['failed', 'abandoned'])
-
-const EXPLAIN: Record<string, string> = {
-  failed: 'The upload did not finish.',
-  abandoned: 'This upload sat unfinished for a day and was cleaned up.',
-  rejected_duration: 'Longer than the 15-minute limit.',
-  rejected_redundant: 'The pool already has this recording at equal or better quality.',
-  quarantined: 'Held back: the file is not what its container claims to be.',
-}
 
 export default function AnalysisFailedRow(props: {
   name: string

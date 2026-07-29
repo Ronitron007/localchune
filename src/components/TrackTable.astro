@@ -21,13 +21,18 @@ const { tracks, query, nextCursor, poolEmpty } = Astro.props
 const HEADERS: { label: string; sort: PoolSort | null; sr?: string }[] = [
   { label: '', sort: null, sr: 'Play' },
   { label: '', sort: null, sr: 'Artwork' },
-  { label: 'Track', sort: 'artist_asc' },
+  // Task 8: artist split out of the combined "Track" column into its own,
+  // sortable column — the sk_artist sort key and artist_asc sort already
+  // existed (migration 11/12), so this is a display-layer change only.
+  { label: 'Artist', sort: 'artist_asc' },
+  { label: 'Title', sort: null },
   { label: 'BPM', sort: 'bpm_asc' },
   { label: 'Key', sort: 'key_asc' },
   { label: 'Length', sort: 'duration_asc' },
   { label: 'Quality', sort: 'tier_desc' },
   { label: 'Uploader', sort: null },
   { label: 'Added', sort: 'added_desc' },
+  { label: 'Downloads', sort: 'downloads_desc' },
   { label: '', sort: null, sr: 'Download' },
 ]
 

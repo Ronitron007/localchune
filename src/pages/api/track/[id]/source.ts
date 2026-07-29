@@ -6,6 +6,7 @@
 import type { APIRoute } from 'astro'
 import { presignGet, r2ErrorResponse } from '../../../../lib/r2'
 import { dbErrorResponse, isUuid, jsonError, rpcError } from '../../../../lib/upload-api'
+import { POOL_VISIBLE_STATES } from '../../../../lib/file-state'
 
 const MIME: Record<string, string> = {
   mp3: 'audio/mpeg', flac: 'audio/flac', wav: 'audio/wav', wave: 'audio/wav',
@@ -48,6 +49,16 @@ export const GET: APIRoute = async ({ params, locals }) => {
   // however many times it is checked.
   const r2Key = track.r2_key
   if (!r2Key) return jsonError(404, 'not_found', 'no such track')
+
+  // See download.ts / POOL_VISIBLE_STATES: a failed/abandoned/quarantined/
+  // rejected file's own uploader can reach this route (Task 16b), but its
+  // object may never have finished or may already be deleted. Refuse
+  // before presigning rather than handing back a URL that 404s in the
+  // <audio> element.
+  const state = track.state
+  if (!state || !POOL_VISIBLE_STATES.has(state)) {
+    return jsonError(409, 'not_available', `this file is ${state ?? 'not available'}`)
+  }
 
   const preview = track.preview_key
   const key = preview ? `derived/${id}/${preview}` : r2Key

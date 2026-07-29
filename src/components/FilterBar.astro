@@ -74,6 +74,8 @@ const ALL_KEYS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap((n) => [`${
 
   <GenreFacet families={[]} />
 
-  <button type="submit">Filter</button>
+  <button type="submit" class="btn">Filter</button>
+  {/* Task 8: a link, left as a link — the plan's sweep applies button
+      classes to buttons/submits only; Clear navigates, it does not act. */}
   <a class="f-reset" href="/">Clear</a>
 </form>

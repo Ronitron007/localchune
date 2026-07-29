@@ -4,13 +4,24 @@
 
 import { defineMiddleware } from 'astro:middleware'
 import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
-import { isActive } from './lib/session'
+import { isActive, isApiPath } from './lib/session'
+import { jsonError } from './lib/upload-api'
 
 const PUBLIC_PATHS = new Set([
   '/login', '/auth/callback', '/auth/signout',
   // AGPL §13: the source offer must be reachable without an account.
   '/api/build-info',
 ])
+
+// Task 7: a member with a null username must claim one at /welcome before
+// reaching anywhere else. These two paths — the claim page itself and its
+// POST target — are the ONLY app-specific additions to the fail-open set
+// below; everything else it draws in is PUBLIC_PATHS, already reachable by
+// a signed-out visitor and therefore certainly safe for a signed-in one
+// mid-claim. Deliberately NOT redefined from scratch: duplicating
+// '/auth/signout' here instead of reusing PUBLIC_PATHS would be a second
+// place the "never trap someone" list could silently drift from the first.
+const CLAIM_FLOW_PATHS = new Set(['/welcome', '/api/welcome'])
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   ctx.locals.member = null
@@ -62,6 +73,37 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   const path = new URL(ctx.request.url).pathname
   if (!ctx.locals.member && !PUBLIC_PATHS.has(path)) {
     return withAuthCookieHeaders(ctx.redirect('/login'), authHeaders)
+  }
+  // Task 7's claim-flow gate. Placed right after the login redirect and
+  // BEFORE the admin/role check below on purpose: a null-username OWNER
+  // hitting /admin must still be funneled to /welcome first (the retrofit
+  // is unconditional on role — "any page outside the claim flow"), not
+  // 404'd by the admin check or let through to see the admin page. Static
+  // assets need no entry here at all: wrangler.jsonc's `assets` binding
+  // with no `run_worker_first` serves everything under dist/client
+  // (favicon.*, /_astro/*, …) directly from Cloudflare's static-asset
+  // layer, which never invokes this Worker script — this middleware simply
+  // never runs for those requests in the first place.
+  if (
+    ctx.locals.member &&
+    ctx.locals.member.username === null &&
+    !PUBLIC_PATHS.has(path) &&
+    !CLAIM_FLOW_PATHS.has(path)
+  ) {
+    // Final-review finding F2: a redirect is a 200 text/html by the time
+    // fetch() sees it, and src/lib/uploader.ts's readJson() reads that as
+    // "session ended" — wrong message, and it kills an in-flight batch
+    // during the migration-17 deploy transition (every username goes null
+    // at once). An /api/* caller gets the repo's normal JSON error shape
+    // instead, so the ONE request fails cleanly; /welcome itself (a page
+    // navigation) still gets the redirect.
+    if (isApiPath(path)) {
+      return withAuthCookieHeaders(
+        jsonError(403, 'username_required', 'claim a username at /welcome before using the API'),
+        authHeaders,
+      )
+    }
+    return withAuthCookieHeaders(ctx.redirect('/welcome'), authHeaders)
   }
   if ((path.startsWith('/admin') || path.startsWith('/api/admin')) && ctx.locals.member?.role !== 'owner') {
     return withAuthCookieHeaders(new Response('Not found', { status: 404 }), authHeaders)

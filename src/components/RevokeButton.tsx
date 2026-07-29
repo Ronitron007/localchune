@@ -27,7 +27,7 @@ export default function RevokeButton(props: { email: string }) {
 
   return (
     <span>
-      <button type="button" onClick={revoke}>Revoke</button>
+      <button type="button" class="btn-danger" onClick={revoke}>Revoke</button>
       <StatusRegion message={status()} />
     </span>
   )

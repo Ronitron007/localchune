@@ -184,6 +184,29 @@ export function parseFileIdParam(url: URL): Parsed<string> {
   return isUuid(v) ? { ok: true, value: v } : bad('file_id must be a uuid')
 }
 
+export type TagFormRequest =
+  | { intent: 'add'; tag: string }
+  | { intent: 'remove'; tagKey: string }
+
+/**
+ * The tags API route's only body shape: a plain <form> POST, never JSON —
+ * the brutalist idiom has no island to fetch() from. Only presence and
+ * type are checked here. tag_key derivation (trim, casefold, collapse
+ * whitespace) and the 32-char/20-tag caps live ONLY in tag_add/tag_remove
+ * (migration 16) — duplicating either here would fork the one true
+ * definition into a second place that can drift from it.
+ */
+export function parseTagForm(form: FormData): Parsed<TagFormRequest> {
+  if (form.get('intent') === 'remove') {
+    const raw = form.get('tag_key')
+    if (typeof raw !== 'string' || raw.trim() === '') return bad('tag_key is required')
+    return { ok: true, value: { intent: 'remove', tagKey: raw } }
+  }
+  const raw = form.get('tag')
+  if (typeof raw !== 'string' || raw.trim() === '') return bad('tag is required')
+  return { ok: true, value: { intent: 'add', tag: raw } }
+}
+
 // ------------------------------------------------------------- ownership
 
 export type OwnedJob = {

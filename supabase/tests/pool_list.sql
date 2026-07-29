@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(25);
 
 -- allowlist BEFORE auth.users; the on_auth_user_created trigger provisions
 -- public.members, so members rows are only ever updated here.
@@ -133,6 +133,22 @@ select is( (select array_agg(x.key_camelot order by x.rn)
            array['1B','2A','5A'],
            'key_asc sorts 1B, 2A, 5A -- 10A is fourth, not second, so the composite sort works' );
 
+-- ---- Task 8: artist_asc, case-insensitive, tie-broken by file_id ----
+-- Artists (from the filename fallback, since none of these have raw_tags):
+-- Aphex Twin(a1), Goldie(a2), Bleep(a3), House(a4), Edge(a5), Edge(a6).
+-- Case-insensitive alpha order: Aphex Twin, Bleep, Edge, Edge, Goldie, House
+-- -- a5/a6 tie on "edge" and fall back to file_id order (...a5 < ...a6).
+select is( (select array_agg(x.file_id order by x.rn)
+              from (select k.file_id, row_number() over () as rn
+                      from public.pool_list(p_sort => 'artist_asc', p_limit => 6) k) x),
+           array['00000000-0000-0000-0000-0000000000a1',
+                 '00000000-0000-0000-0000-0000000000a3',
+                 '00000000-0000-0000-0000-0000000000a5',
+                 '00000000-0000-0000-0000-0000000000a6',
+                 '00000000-0000-0000-0000-0000000000a2',
+                 '00000000-0000-0000-0000-0000000000a4']::uuid[],
+           'artist_asc orders case-insensitively by display_artist, tied artists tie-broken by file_id' );
+
 -- ---- cursor paging ----
 -- sk_added is fixed width, so max(row_cursor) is exactly the last row of
 -- page one in (sk, file_id) order.
@@ -158,6 +174,83 @@ set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000ee"}';
 select throws_ok( $$ select * from public.pool_list() $$,
                   '42501', null::text,
                   'an expired member is refused in the database, not in the Worker' );
+
+-- ---- migration 16b: LEFT JOIN null-safety ----
+-- reset role first: 'authenticated' has no INSERT on files (see
+-- ingest_state_machine.sql's identical comment) -- these two fixture rows
+-- are written the same way every other file/analysis row in this file was,
+-- just deferred so they cannot shift the "six stored files" counts every
+-- earlier assertion in this file already depends on.
+reset role;
+
+-- A failed file with NO audio_analysis row at all (analysis_fail() never
+-- writes one) -- confirms pool_list's exclusion is keyed on state alone
+-- and never depended on an analysis row existing to filter through.
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-0000000000a7','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000e1',
+   'audio/00000000-0000-0000-0000-0000000000e1/00000000-0000-0000-0000-0000000000a7.mp3',
+   'Broken - No Analysis At All.mp3', 1000000, 'mp3', 'failed');
+
+-- A 'stored' file with no audio_analysis row is a combination the ingest
+-- pipeline should never produce (analysis_persist() is what sets 'stored'
+-- and it always writes the row in the same transaction) -- but the sort
+-- keys must be defensively correct regardless, not merely correct for the
+-- shapes the pipeline happens to produce today.
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-0000000000a8','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000e1',
+   'audio/00000000-0000-0000-0000-0000000000e1/00000000-0000-0000-0000-0000000000a8.mp3',
+   'Zzz - Stored With No Analysis.mp3', 1000000, 'mp3', 'stored');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
+
+select is( (select count(*)::int from public.pool_list(p_q => 'No Analysis At All')), 0,
+           'a failed file with no analysis row is still excluded from the general pool' );
+
+-- max(row_cursor) is the last row bpm_asc actually emits (sk_bpm is fixed-
+-- width and "C"-collated, so string-max and emission-order-max agree) --
+-- this checks pool_list's OWN ordering, not a client-side re-sort.
+select is(
+  (select p.file_id from public.pool_list(p_sort => 'bpm_asc', p_limit => 100) p
+    where p.row_cursor = (select max(l.row_cursor)
+                             from public.pool_list(p_sort => 'bpm_asc', p_limit => 100) l)),
+  '00000000-0000-0000-0000-0000000000a8'::uuid,
+  'a stored file with no analysis row sorts LAST under bpm_asc, same sentinel as a null bpm' );
+
+-- ---- Task 8: q matches display_artist specifically, not merely the
+-- filename/title it is usually derived from ----
+-- a10's artist comes from a raw_tags 'artist' key; its filename carries no
+-- artist substring at all ("Track7.mp3"), so a p_q hit for the artist name
+-- can only be explained by display_artist being part of the search, not by
+-- original_filename/display_title incidentally containing the same text
+-- (which is what every other fixture row in this file would let slide).
+-- reset role first -- 'authenticated' (still in effect from above) has no
+-- INSERT grant on files/audio_analysis, same reasoning as a7/a8 above.
+reset role;
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-0000000000aa','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000e1',
+   'audio/00000000-0000-0000-0000-0000000000e1/00000000-0000-0000-0000-0000000000aa.mp3',
+   'Track7.mp3', 5000000, 'mp3', 'stored');
+insert into public.audio_analysis (file_id, analysis_version, duration_ms, bpm, key_camelot, raw_tags)
+values ('00000000-0000-0000-0000-0000000000aa','v1', 200000, 120, '6A',
+        '{"artist":"Boards of Canada"}'::jsonb);
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
+
+select is( (select count(*)::int from public.pool_list(p_q => 'Boards of Canada')), 1,
+           'q matches display_artist sourced from a raw_tags artist key, absent from the filename entirely' );
+select is( (select count(*)::int from public.pool_list(p_q => 'Track7')), 1,
+           'q still matches the filename too -- the artist match is additive, not a replacement' );
 
 select * from finish();
 rollback;

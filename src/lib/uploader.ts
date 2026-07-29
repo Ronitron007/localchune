@@ -312,10 +312,18 @@ export interface UploadApi {
 }
 
 async function readJson<T>(res: Response): Promise<T> {
-  // src/middleware.ts redirects any request without a live member to /login,
-  // and fetch follows the redirect, so a dead session arrives here as 200
-  // text/html — never as a 401. Detect it by content type, or 200 files fail
-  // with an unparseable-JSON error nobody can read.
+  // src/middleware.ts's auth gate redirects any request without a live
+  // member to /login, and fetch follows the redirect, so a dead session
+  // arrives here as 200 text/html — never as a 401. Detect it by content
+  // type, or 200 files fail with an unparseable-JSON error nobody can read.
+  //
+  // The username-claim gate (same file) used to redirect /api/* the same
+  // way — a null username (e.g. mid-rollout of migration 17, which nulls
+  // every username at once) read as "session ended" here and aborted the
+  // whole in-flight batch instead of failing one file. It now returns a
+  // JSON 403 for /api/* paths instead of redirecting (see isApiPath in
+  // src/lib/session.ts), so /login's redirect is the only remaining path
+  // that lands a request here as non-JSON.
   const type = res.headers.get('content-type') ?? ''
   if (!type.includes('application/json')) throw new SessionExpiredError()
   const body = (await res.json()) as T & { error?: string }

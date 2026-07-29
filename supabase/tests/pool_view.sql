@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(23);
 
 -- allowlist BEFORE auth.users: handle_new_user() raises 'not allowlisted'
 -- otherwise, and the on_auth_user_created trigger provisions public.members
@@ -72,6 +72,47 @@ select is( (select camelot_sort from public.pool_tracks
 select is( (select uploader_name from public.pool_tracks
              where file_id = '00000000-0000-0000-0000-00000000df01'), 'pv1',
            'uploader_name is the email local part, not the address' );
+
+-- ---- Task 8: display_artist reaches the view (and therefore pool_list/
+-- pool_get) as its own column -- df01's raw_tags is '{}' so this is the
+-- filename-fallback path (display_artist() itself is already proven above
+-- at the pure-function level; this proves the SAME derivation is what the
+-- view actually exposes for a real row, not a parallel implementation). ----
+select is( (select display_artist from public.pool_tracks
+             where file_id = '00000000-0000-0000-0000-00000000df01'), 'Aphex Twin',
+           'pool_tracks populates display_artist via the filename fallback when raw_tags has no artist tag' );
+
+-- ---- migration 16b: a failed file has no audio_analysis row at all ----
+-- analysis_fail() never inserts one -- df03 has none, on purpose.
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-00000000df03','00000000-0000-0000-0000-0000000000db',
+   '00000000-0000-0000-0000-0000000000d1',
+   'audio/00000000-0000-0000-0000-0000000000d1/00000000-0000-0000-0000-00000000df03.mp3',
+   'Broken - Never Analysed.mp3', 500000, 'mp3', 'failed');
+
+select is( (select count(*)::int from public.pool_tracks
+             where file_id = '00000000-0000-0000-0000-00000000df03'), 1,
+           'pool_tracks includes a failed file with no analysis row -- LEFT JOIN, not INNER' );
+select is( (select bpm from public.pool_tracks
+             where file_id = '00000000-0000-0000-0000-00000000df03'), null,
+           'bpm reads back NULL for a failed file with no analysis row, not an absent row' );
+
+-- ---- pool_get: the uploader-only failed-file path (migration 16b) ----
+-- Before the LEFT JOIN fix, pool_tracks silently excluded df03 and pool_get
+-- returned zero rows for EVERYONE, including df03's own uploader -- the
+-- exact bug this migration exists to close.
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d1"}';
+select is( (select count(*)::int from public.pool_get('00000000-0000-0000-0000-00000000df03')), 1,
+           'the uploader''s pool_get returns their own failed file even though it has no analysis row' );
+select is( (select bpm from public.pool_get('00000000-0000-0000-0000-00000000df03')), null,
+           'pool_get exposes bpm as NULL for the failed file rather than erroring' );
+
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000d2"}';
+select is( (select count(*)::int from public.pool_get('00000000-0000-0000-0000-00000000df03')), 0,
+           'a different active member gets zero rows for someone else''s failed file -- visibility did not widen' );
 
 -- ---- audio_analysis is reachable and correctly gated ----
 set local role authenticated;

@@ -34,6 +34,9 @@
 - Each Worker deploys separately. `npm run deploy` deploys the app Worker
   only; `npm run deploy:maintenance` and `npm run deploy:analysis` the other
   two.
+- Pool-ux and later: apply migrations BEFORE `npm run deploy` — the claim
+  gate fails open (username undefined) on the old schema, and `/welcome`
+  would 500 without `username_set()`.
 
 ### Hosted Supabase grants every table to `anon` and `authenticated`
 
