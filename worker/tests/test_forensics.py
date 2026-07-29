@@ -187,3 +187,123 @@ def test_real_untouched_lossless_noise_is_none(tmp_path):
     verdict = classify_ancestor(cutoff_hz=cutoff, cliff_db=cliff, lame_lowpass_hz=None,
                                 usable_windows=len(w), hf_ref_delta_db=-10.0)
     assert verdict == 'none'
+
+
+# --- Task 1 (M4): the three producers classify_ancestor and quality_tier
+# --- have always needed and nothing has ever computed.
+#
+# measure_spectrum() is an EXTRACTION from measure_cutoff(), so the first
+# test below is the regression pin: the public signature and the numbers it
+# returns must survive the refactor untouched.
+
+import os
+from app import forensics
+
+
+def _stereo(x: np.ndarray) -> np.ndarray:
+    return np.stack([x, x], axis=1)
+
+
+def _brickwall_windows(sr: int, cutoff: int) -> list[np.ndarray]:
+    return [_band_limited(cutoff, sr=sr)]
+
+
+def _dark_windows(sr: int) -> list[np.ndarray]:
+    """A dark master: real energy through the 1-4 kHz reference band, and
+    NOTHING at 14-16 kHz.
+
+    Deviation from the brief, which built this from 220 Hz + 440 Hz tones and
+    called it 'nothing above 1 kHz'. Two pure tones leave the 1-4 kHz
+    REFERENCE band at the numerical noise floor as well, so the delta the
+    test asserts on would be a ratio of two leakage floors — a number decided
+    by float32 rounding, not by the audio. A hard 5 kHz brickwall is the
+    honest fixture: the reference band is real signal, the 14-16 kHz band is
+    genuinely empty, and the delta means what classify_ancestor() reads it to
+    mean.
+    """
+    return [_band_limited(5000, sr=sr)]
+
+
+def _noise_windows(sr: int, seed: int) -> list[np.ndarray]:
+    rng = np.random.default_rng(seed)
+    return [_stereo(rng.standard_normal(sr * 10).astype(np.float32))]
+
+
+def _write_wav(tmp_path, bits: int, sr: int = 44100, dither: bool = False) -> str:
+    fmt = {16: 'pcm_s16le', 24: 'pcm_s24le'}[bits]
+    out = str(tmp_path / f'src{bits}.wav')
+    _run('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi',
+         '-i', f'anoisesrc=color=white:duration=4:sample_rate={sr}:seed=5',
+         '-ac', '2', '-c:a', fmt, out)
+    return out
+
+
+def test_hf_ref_delta_db_is_negative_and_large_for_a_dark_master():
+    # classify_ancestor abstains below -60 dB. That gate is the difference
+    # between "we could not tell" and "we accuse you", so its input has to
+    # be a real measurement, not a constant.
+    sr = 44100
+    spec = forensics.measure_spectrum(_dark_windows(sr), sr)
+    assert forensics.hf_ref_delta_db(spec) < -60
+
+
+def test_hf_ref_delta_db_is_near_zero_for_full_band_noise():
+    sr = 44100
+    spec = forensics.measure_spectrum(_noise_windows(sr, seed=7), sr)
+    assert -12 < forensics.hf_ref_delta_db(spec) < 6
+
+
+def test_hf_ref_delta_db_of_nothing_abstains_rather_than_crashing():
+    """measure_spectrum returns None when there are no usable windows — a
+    zero-length decode, a file that is all silence. classify_ancestor must
+    receive a number that lands it in 'abstain', not a TypeError."""
+    assert forensics.hf_ref_delta_db(None) < -60
+    assert forensics.measure_spectrum([], 44100) is None
+
+
+def test_measure_cutoff_is_unchanged_by_the_refactor():
+    # measure_spectrum() is extracted FROM measure_cutoff(); the public
+    # signature and every existing assertion must survive untouched.
+    sr = 44100
+    wins = _brickwall_windows(sr, cutoff=16800)
+    assert abs(forensics.measure_cutoff(wins, sr)[0] - 16800) <= 400
+
+
+def test_effective_bit_depth_sees_through_a_padded_flac(tmp_path):
+    # A 16-bit master rewrapped as 24-bit FLAC leaves its low 8 bits at
+    # zero. This is the cheapest fake-hi-res detector there is.
+    src16 = _write_wav(tmp_path, bits=16, sr=44100)
+    padded = str(tmp_path / 'padded.flac')
+    _run('ffmpeg', '-v', 'error', '-y', '-i', src16, '-sample_fmt', 's32', padded)
+    assert forensics.effective_bit_depth(padded) == 16
+
+
+def test_effective_bit_depth_reports_24_for_a_real_24_bit_source(tmp_path):
+    src24 = _write_wav(tmp_path, bits=24, sr=44100, dither=True)
+    assert forensics.effective_bit_depth(src24) == 24
+
+
+def test_effective_bit_depth_reports_zero_for_digital_silence(tmp_path):
+    """No evidence either way. Reporting 0 rather than guessing keeps it out
+    of quality_tier's `eff_bits >= 16` gate instead of inventing a pass."""
+    out = str(tmp_path / 'silence.wav')
+    _run('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi',
+         '-i', 'anullsrc=r=44100:cl=stereo', '-t', '2', out)
+    assert forensics.effective_bit_depth(out) == 0
+
+
+def test_effective_sample_rate_demotes_a_96k_file_brickwalled_at_20k():
+    # 96 kHz container, no content above 20.5 kHz => it was 44.1 once.
+    assert forensics.effective_sample_rate(96000, 20500) == 44100
+
+
+def test_effective_sample_rate_keeps_the_declared_rate_when_content_reaches_nyquist():
+    assert forensics.effective_sample_rate(44100, 21800) == 44100
+
+
+def test_effective_sample_rate_never_over_reports_the_container():
+    """The container can over-report, never under-report: a 44.1 kHz file
+    cannot secretly hold 96 kHz content."""
+    assert forensics.effective_sample_rate(44100, 3000) <= 44100
+    assert forensics.effective_sample_rate(0, 20000) == 0
+    assert forensics.effective_sample_rate(44100, 0) == 44100

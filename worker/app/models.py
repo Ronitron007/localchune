@@ -93,4 +93,14 @@ class AnalyzeResponse(BaseModel):
     preview_key: Optional[str] = None
     artwork_key: Optional[str] = None
     thumb_key: Optional[str] = None
+    content_sha256: str = ''
+    """PRD §6 layer 0, hex. Empty when the analysis failed before hashing.
+
+    Lower-case hex rather than bytes because this rides a JSON payload into
+    analysis_persist(), which decodes it with `decode(..., 'hex')` into the
+    bytea column. The DEFAULT MATTERS: '' is what analysis_persist() checks
+    for before touching files.content_sha256, so an old container answering a
+    new schema leaves the column alone instead of writing an empty digest
+    that would then collide with the next empty digest on a UNIQUE index.
+    """
     cpu_seconds: float = 0.0

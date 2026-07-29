@@ -24,9 +24,10 @@ import shutil
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from app import decode, fingerprint, forensics, key, loudness, peaks, tags
+from app import (decode, fingerprint, forensics, hashing, key, lametag,
+                 loudness, peaks, tags)
 from app.beats import analyze_beats
-from app.models import AnalyzeRequest, AnalyzeResponse
+from app.models import AnalyzeRequest, AnalyzeResponse, Forensics
 
 log = logging.getLogger("analysis")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -204,28 +205,85 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
 
         container = info["format"]["format_name"].split(",")[0]
         codec = stream.get("codec_name", "")
+        # The digest is taken from the name PUT wrote, before `src` is
+        # rebound below. Same inode as the hard link, so the bytes and the
+        # digest are identical either way — but a reader should not have to
+        # prove that to themselves to trust a dedup key.
+        raw_src = src
         # Everything downstream runs against the extension-bearing name — not
         # only Essentia, since any other tool that sniffs a suffix gets the
         # right answer for free.
         src = _link_with_extension(src, _extension_for(info["format"]["format_name"]))
 
-        # Forensic measurement runs and is LOGGED, but no verdict is
-        # synthesised: `forensics` stays None in the response. Reason —
-        # classify_ancestor() needs `hf_ref_delta_db`, and Forensics needs a
-        # MEASURED effective bit depth and sample rate. Nothing in app/
-        # produces any of the three. Task 7 recorded that gap and asked
-        # Task 8/9 to re-verify once a real caller existed; this is that
-        # check, and the answer is that the producers are still missing.
-        # Emitting a `tier` and `quality_score` derived from ffprobe's
-        # DECLARED bit depth plus a hardcoded 'abstain' would put a
-        # fabricated grade in the database wearing the clothes of a
-        # measurement. The two genuinely measured numbers are computed and
-        # logged, so the CPU figure below stays representative of the real
-        # pipeline and the values are observable in `wrangler tail`.
+        # FORENSICS, WIRED. M3 shipped this block computing cutoff and cliff
+        # and then throwing the verdict away, because classify_ancestor()
+        # needed an hf_ref_delta_db and Forensics needed a MEASURED effective
+        # bit depth, and nothing produced either. Both exist now.
+        #
+        # measure_spectrum() runs the FFT pass ONCE and cutoff, cliff and the
+        # abstain gate are all read off the same spectrum, so the measured
+        # cost is unchanged from M3's ~0.5 s.
         wins = decode.windows(src, duration_s=duration_ms / 1000)
-        cutoff_hz, cliff_db = forensics.measure_cutoff(wins, sr)
-        log.info("forensics(unwired) file=%s cutoff_hz=%s cliff_db_500=%s windows=%d",
-                 req.file_id, cutoff_hz, cliff_db, len(wins))
+        spec = forensics.measure_spectrum(wins, sr)
+        cutoff_hz, cliff_db = forensics.cutoff_from_spectrum(spec)
+        hf_delta = forensics.hf_ref_delta_db(spec)
+        lame = lametag.read_lame_tag(src)
+        # effective_bit_depth() reads the DECODER's output precision, and a
+        # lossy decoder emits full-precision samples: MEASURED, every MP3
+        # here reads 32, at 128 kbps as readily as at 320. There is no 32-bit
+        # master behind that number — it is an artifact of the decode — and
+        # feeding it to quality_score() hands every lossy file the full
+        # 6-point "better than 16-bit" bonus, which is three quarters of the
+        # 8-point margin is_upgrade() needs before it will prefer a real
+        # FLAC. The measurement only means something where there is a CLAIM
+        # to test, i.e. a lossless container. Elsewhere 0 is the honest
+        # answer — "no evidence", the same answer digital silence gets — and
+        # it scores identically to 16 because quality_score clamps that term
+        # at zero.
+        lossless = (container.lower() in forensics.LOSSLESS
+                    or codec.lower() in forensics.LOSSLESS)
+        eff_bits = forensics.effective_bit_depth(src) if lossless else 0
+        declared_sr = int(stream.get("sample_rate", 0) or 0)
+        eff_sr = forensics.effective_sample_rate(declared_sr, cutoff_hz)
+
+        ancestor = forensics.classify_ancestor(
+            cutoff_hz, cliff_db,
+            lame.lowpass_hz if lame else None,
+            len(wins), hf_delta)
+        tier = forensics.quality_tier(container, ancestor, cutoff_hz, eff_bits)
+        # Moved ABOVE the score so its clipped_pct and true_peak can feed it.
+        # The same single call, relocated — the loudness pass costs 3.4
+        # vCPU-s and running it twice would be visible in the budget.
+        loud = loudness.analyze_loudness(src)
+        inferred = forensics.CUTOFF_TABLE.get(
+            min(forensics.CUTOFF_TABLE, key=lambda t: abs(t - cutoff_hz))) \
+            if ancestor in ('confirmed', 'suspected') else None
+        lame_disagrees = bool(
+            lame and abs(lame.lowpass_hz - cutoff_hz) > 1500)
+        score = forensics.quality_score(
+            tier=tier, cutoff_hz=cutoff_hz, eff_bits=eff_bits, eff_sr=eff_sr,
+            inferred_kbps=inferred or 0, lame_disagrees=lame_disagrees,
+            # clipped_pct is a peak-RECURRENCE proxy, not a clip count
+            # (M3 Task 6). quality_score() already treats it as a threshold.
+            clipped_pct=loud.clipped_pct / 100.0,
+            true_peak=loud.true_peak_dbtp,
+            mono_vs_stereo=int(stream.get("channels", 2) or 2) < 2,
+            decode_errors=False)
+
+        forensics_out = Forensics(
+            meas_cutoff_hz=cutoff_hz, meas_cliff_db_500=cliff_db,
+            meas_eff_bit_depth=eff_bits, meas_eff_sample_rate=eff_sr,
+            lame_tag_present=lame is not None,
+            lame_lowpass_hz=lame.lowpass_hz if lame else None,
+            lame_vbr_method=lame.vbr_method if lame else None,
+            encoder_string=lame.encoder_string if lame else None,
+            lossy_ancestor=ancestor, inferred_source_kbps=inferred,
+            tier=tier, quality_score=score)
+        log.info(
+            "forensics file=%s cutoff_hz=%s cliff_db_500=%s hf_ref_delta_db=%s "
+            "eff_bits=%s eff_sr=%s lame=%s ancestor=%s tier=%s score=%s windows=%d",
+            req.file_id, cutoff_hz, cliff_db, hf_delta, eff_bits, eff_sr,
+            lame.lowpass_hz if lame else None, ancestor, tier, score, len(wins))
 
         with open(os.path.join(d, "peaks.json"), "w") as fh:
             json.dump(peaks.compute_peaks(pcm), fh)
@@ -235,7 +293,7 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
         # a strictly worse copy of an already-lossy file; the original streams
         # as-is instead.
         preview_key = None
-        if container.lower() in forensics.LOSSLESS or codec.lower() in forensics.LOSSLESS:
+        if lossless:
             try:
                 loudness.make_preview(src, os.path.join(d, "preview.opus"))
                 preview_key = "preview.opus"
@@ -264,12 +322,14 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             fingerprint=fingerprint.fingerprint(src),
             beats=analyze_beats(pcm, sr),
             key=key.analyze_key(src),
-            loudness=loudness.analyze_loudness(src),
+            loudness=loud,
+            forensics=forensics_out,
             tags=tags.read_tags(src),
             peaks_key=peaks_key,
             preview_key=preview_key,
             artwork_key=artwork_key,
             thumb_key=thumb_key,
+            content_sha256=hashing.content_sha256(raw_src),
             cpu_seconds=round(_cpu_now() - t0, 2),
         )
     except Exception as e:  # noqa: BLE001
