@@ -228,16 +228,24 @@ export class AnalysisContainer extends Container<Env> {
  * Instance pool. Containers are addressed by DO name, so the name IS the
  * routing decision: a fresh name per file would cold-start an image on every
  * single track, and one shared name would serialise a backfill through a
- * single box. POOL is kept below `max_instances` (8) so a burst can never
- * trip the limit — `max_instances` ERRORS when exceeded, it does not queue.
+ * single box. POOL is kept below `max_instances` (12, wrangler.jsonc) so a
+ * burst can never trip the limit — `max_instances` ERRORS when exceeded, it
+ * does not queue.
  *
  * Hashing the file id rather than picking at random also gives a retry the
  * SAME instance, which is warm and already holds the model. Idempotency does
  * not depend on that — it is enforced by analysis_persist()'s upsert on
  * file_id — and a pool collision serialises on the container's own
  * asyncio.Lock instead of doubling RSS.
+ *
+ * 8, raised from 4 on 2026-07-29 for M4's backfill: every file in the pool
+ * has to be re-analysed at ~45 vCPU-s each, and four at a time made that a
+ * multi-hour wall-clock job. Horizontal only — the instance stays at
+ * 1 vCPU / 3 GiB, because Essentia and Beat-This are both single-threaded
+ * here (see worker/Dockerfile's thread pins) and a second vCPU per box would
+ * bill for a core nothing runs on.
  */
-const POOL = 4
+const POOL = 8
 
 export function containerFor(env: Env, fileId: string) {
   let h = 0
