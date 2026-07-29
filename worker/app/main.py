@@ -240,8 +240,7 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
         # answer — "no evidence", the same answer digital silence gets — and
         # it scores identically to 16 because quality_score clamps that term
         # at zero.
-        lossless = (container.lower() in forensics.LOSSLESS
-                    or codec.lower() in forensics.LOSSLESS)
+        lossless = forensics.is_lossless(container, codec)
         eff_bits = forensics.effective_bit_depth(src) if lossless else 0
         declared_sr = int(stream.get("sample_rate", 0) or 0)
         eff_sr = forensics.effective_sample_rate(declared_sr, cutoff_hz)
@@ -250,7 +249,7 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             cutoff_hz, cliff_db,
             lame.lowpass_hz if lame else None,
             len(wins), hf_delta)
-        tier = forensics.quality_tier(container, ancestor, cutoff_hz, eff_bits)
+        tier = forensics.quality_tier(container, ancestor, cutoff_hz, eff_bits, codec)
         # Moved ABOVE the score so its clipped_pct and true_peak can feed it.
         # The same single call, relocated — the loudness pass costs 3.4
         # vCPU-s and running it twice would be visible in the budget.

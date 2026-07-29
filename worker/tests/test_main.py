@@ -242,3 +242,42 @@ def test_a_real_flac_still_outscores_a_320_mp3_on_bit_depth(staged, real_flac, r
     flac = staged('f1', real_flac).forensics
     mp3 = staged('f4', real_mp3).forensics
     assert flac.quality_score > mp3.quality_score
+
+
+@pytest.fixture
+def alac_m4a(tmp_path):
+    """Real ALAC in a real mov/m4a container — ffprobe calls the container
+    'mov' and only the codec says it is lossless."""
+    wav = str(tmp_path / 'a.wav')
+    out = str(tmp_path / 'a.m4a')
+    _noise_wav(wav, seconds=45, seed=21)
+    _run('ffmpeg', '-y', '-v', 'error', '-i', wav, '-c:a', 'alac', out)
+    return out
+
+
+@pytest.fixture
+def aac_m4a(tmp_path):
+    wav = str(tmp_path / 'b.wav')
+    out = str(tmp_path / 'b.m4a')
+    _noise_wav(wav, seconds=45, seed=22)
+    _run('ffmpeg', '-y', '-v', 'error', '-i', wav, '-c:a', 'aac', '-b:a', '256k', out)
+    return out
+
+
+def test_alac_in_an_m4a_is_judged_by_its_codec_not_its_container(staged, alac_m4a):
+    """334 of production's 549 files report container 'mov'. That family
+    carries AAC or ALAC, and only the codec tells them apart."""
+    r = staged('f5', alac_m4a)
+    assert r.ok, r.error
+    assert r.container == 'mov' and r.codec == 'alac'
+    assert r.forensics.meas_eff_bit_depth == 16, \
+        'a lossless codec must get a MEASURED bit depth, not the lossy 0'
+    assert r.forensics.tier == 5
+
+
+def test_aac_in_the_same_container_is_not_promoted_by_the_same_change(staged, aac_m4a):
+    r = staged('f6', aac_m4a)
+    assert r.ok, r.error
+    assert r.container == 'mov' and r.codec == 'aac'
+    assert r.forensics.meas_eff_bit_depth == 0
+    assert r.forensics.tier <= 3

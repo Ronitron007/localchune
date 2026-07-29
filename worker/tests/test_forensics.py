@@ -307,3 +307,37 @@ def test_effective_sample_rate_never_over_reports_the_container():
     assert forensics.effective_sample_rate(44100, 3000) <= 44100
     assert forensics.effective_sample_rate(0, 20000) == 0
     assert forensics.effective_sample_rate(44100, 0) == 44100
+
+
+# --- ALAC hides inside an mov/m4a container.
+#
+# Measured on production 2026-07-29: 334 of 549 files report container
+# 'mov' — ffprobe's name for the MP4/M4A family, which carries EITHER AAC
+# (lossy) or ALAC (lossless). All 334 are AAC today, so nothing has been
+# misjudged; the first ALAC upload would have been capped at tier 3 forever,
+# silently, because 'mov' is not in LOSSLESS and nothing looked at the codec.
+
+def test_alac_in_an_mov_container_is_lossless():
+    assert forensics.is_lossless('mov', 'alac') is True
+    assert forensics.is_lossless('mov', 'aac') is False
+    # The container alone still answers for the formats that name themselves.
+    assert forensics.is_lossless('flac', 'flac') is True
+    assert forensics.is_lossless('mp3', 'mp3') is False
+    # And the codec alone answers when the container is unhelpful.
+    assert forensics.is_lossless('', 'flac') is True
+
+
+def test_alac_in_an_mov_container_can_still_reach_tier_five():
+    assert forensics.quality_tier(container='mov', ancestor='none',
+                                  cutoff_hz=21500, eff_bits=16, codec='alac') == 5
+    assert forensics.quality_tier(container='mov', ancestor='abstain',
+                                  cutoff_hz=15000, eff_bits=16, codec='alac') == 4
+
+
+def test_aac_in_the_same_container_is_still_capped_at_its_bandwidth():
+    """The tier gate has to keep saying no to the lossy half of the family,
+    or making it codec-aware would have handed every AAC file a tier 5."""
+    assert forensics.quality_tier(container='mov', ancestor='none',
+                                  cutoff_hz=21500, eff_bits=16, codec='aac') == 3
+    assert forensics.quality_tier(container='mov', ancestor='abstain',
+                                  cutoff_hz=15000, eff_bits=16, codec='aac') == 1

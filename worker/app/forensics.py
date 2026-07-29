@@ -285,8 +285,31 @@ def classify_ancestor(cutoff_hz: int, cliff_db: float, lame_lowpass_hz: int | No
     return 'none'
 
 
-def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int) -> int:
-    lossless = container.lower() in LOSSLESS
+def is_lossless(container: str, codec: str = '') -> bool:
+    """Is this really a lossless file?
+
+    THE CONTAINER IS NOT ENOUGH, and on this pool it is not even usually
+    enough: 334 of the 549 files in production report container 'mov', which
+    is ffprobe's name for the MP4/M4A family — and that family carries
+    either AAC (lossy) or ALAC (lossless). Every one of those 334 happens to
+    be AAC today, so nothing has been misjudged yet; the first ALAC upload
+    would have been capped at tier 3 forever, silently, because 'mov' is not
+    in LOSSLESS and nothing looked at the codec.
+
+    The codec is the honest answer wherever the two disagree, so either
+    naming a lossless format is enough. A lossy codec in a lossless
+    container (there is no such thing) and a lossless codec in a lossy one
+    (nor that) are both impossible, so there is no case where this is too
+    generous.
+    """
+    return container.lower() in LOSSLESS or codec.lower() in LOSSLESS
+
+
+def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int,
+                 codec: str = '') -> int:
+    # codec is optional and LAST so every existing caller and test keeps
+    # working unchanged; main.py always passes it.
+    lossless = is_lossless(container, codec)
     if lossless and ancestor == 'none' and cutoff_hz >= 20800 and eff_bits >= 16:
         return 5
     if lossless and ancestor == 'abstain':
