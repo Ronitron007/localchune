@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -87,6 +88,23 @@ def _extension_for(format_name: str) -> str:
     """
     first = format_name.split(",")[0].strip().lower()
     return _EXT_OVERRIDE.get(first, first) or "bin"
+
+
+def _leading_zeros(path: str, n: int = 65536) -> bool:
+    """True when the file starts with a non-empty run of all-zero bytes.
+
+    The signature of a partially-downloaded source file: the full length was
+    pre-allocated, data landed only in some aligned pieces near the end, and
+    everything before them — including the container magic — is zeros. Seen
+    in production 2026-07-29: 14 FLACs with data only in the final 2 MiB
+    piece. 64 KiB is far past any real container's magic bytes.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(n)
+    except OSError:
+        return False
+    return bool(head) and head.strip(b"\x00") == b""
 
 
 def _link_with_extension(src: str, ext: str) -> str:
@@ -188,8 +206,25 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
     if not os.path.isfile(src):
         return fail("no_file: PUT /file/{id} first")
 
+    # Probed separately from the pipeline below: when ffprobe itself cannot
+    # read the bytes, the stored error must diagnose the FILE, not the
+    # subprocess. The 2026-07-29 incident put a raw CalledProcessError — argv,
+    # exit status, /tmp path — in ingest_jobs.last_error for 28 uploads whose
+    # source files were partially-downloaded. The uploader could act on none
+    # of it. Full technical detail goes to the worker log only.
     try:
         info = decode.probe(src)
+    except subprocess.CalledProcessError as e:
+        log.error("ffprobe failed for %s: %s | stderr: %s",
+                  req.file_id, e, (e.stderr or "").strip())
+        if _leading_zeros(src):
+            return fail("this file could not be decoded; its leading bytes are "
+                        "all zero, which usually means the download that "
+                        "produced it never completed")
+        return fail("this file could not be decoded; "
+                    "it may be incomplete or corrupt")
+
+    try:
         stream = next(
             (s for s in info.get("streams", []) if s.get("codec_type") == "audio"), None)
         if stream is None:
