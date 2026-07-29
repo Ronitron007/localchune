@@ -4,7 +4,7 @@
 // worker includes Essentia. LICENSE explains why.
 
 import type { APIRoute } from 'astro'
-import { jsonError, rpcError } from '../../lib/upload-api'
+import { dbErrorResponse, jsonError, rpcError } from '../../lib/upload-api'
 
 /**
  * Crate creation. /crates.astro's "+ new crate" is a plain
@@ -35,8 +35,14 @@ export const POST: APIRoute = async ({ request, locals, redirect }) => {
   const raw = form.get('name')
   const name = typeof raw === 'string' ? raw : ''
 
-  const { data, error } = await locals.supabase.rpc('crate_create', { p_name: name })
-  if (error) return rpcError(error)
+  let data: string | undefined
+  try {
+    const result = await locals.supabase.rpc('crate_create', { p_name: name })
+    if (result.error) return rpcError(result.error)
+    data = result.data
+  } catch (e) {
+    return dbErrorResponse(e instanceof Error ? e.message : String(e))
+  }
 
   const wantsJson = (request.headers.get('accept') ?? '').includes('application/json')
   if (wantsJson) {
