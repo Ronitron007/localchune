@@ -6,6 +6,7 @@
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
 import { SessionExpiredError, toggleLike } from '../lib/org-api'
+import { createPlayMeter } from '../lib/play-meter'
 
 /**
  * The whole client: play-link delegation into the one persisted <audio>,
@@ -35,6 +36,29 @@ const seek = document.getElementById('player-seek') as HTMLInputElement | null
 // updates to seek.value are suppressed for that span so they never fight
 // the thumb the user is actively moving.
 let seeking = false
+
+// The play-link click handler below is the one place `audio.src` is ever
+// assigned, so it is also the one place that knows which track is loaded.
+// Kept as a module var (not local to that handler) because the play meter's
+// `onQualify` — wired up next — needs it too, and the meter itself must stay
+// DOM-free per play-meter.ts's testability contract, so it cannot look this
+// up on its own.
+let currentTrackId: string | null = null
+
+/**
+ * M6a Task 4 — anti-scrub play counting. One meter for the one persisted
+ * `<audio>` element; `onQualify` fires at most once per track (play-meter.ts
+ * guarantees that) and does a fire-and-forget POST to `/api/track/:id/play`.
+ * Errors are swallowed on purpose: a lost play count must never surface in
+ * the UI, unlike a lost like (org-api.ts's `toggleLike`) or a lost track
+ * load, both of which report failure through `#player-label`.
+ */
+const playMeter = createPlayMeter({
+  onQualify: () => {
+    if (currentTrackId === null) return
+    void fetch(`/api/track/${currentTrackId}/play`, { method: 'POST' }).catch(() => {})
+  },
+})
 
 function updateToggle() {
   if (!toggle || !audio) return
@@ -97,6 +121,7 @@ if (audio) {
     lastTick = tick
     updateTime()
     updateSeekRange()
+    playMeter.tick(audio.currentTime)
   })
 }
 
@@ -119,6 +144,8 @@ document.addEventListener('click', (e) => {
       return
     }
     audio.src = body.url
+    currentTrackId = a.dataset.trackId ?? null
+    playMeter.reset()
     if (label) label.textContent = a.dataset.label ?? ''
     // Clear the previous track's elapsed/total and seek position rather
     // than leaving them on screen until the new track's first timeupdate —
