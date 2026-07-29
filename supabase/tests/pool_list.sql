@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(22);
 
 -- allowlist BEFORE auth.users; the on_auth_user_created trigger provisions
 -- public.members, so members rows are only ever updated here.
@@ -158,6 +158,54 @@ set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000ee"}';
 select throws_ok( $$ select * from public.pool_list() $$,
                   '42501', null::text,
                   'an expired member is refused in the database, not in the Worker' );
+
+-- ---- migration 16b: LEFT JOIN null-safety ----
+-- reset role first: 'authenticated' has no INSERT on files (see
+-- ingest_state_machine.sql's identical comment) -- these two fixture rows
+-- are written the same way every other file/analysis row in this file was,
+-- just deferred so they cannot shift the "six stored files" counts every
+-- earlier assertion in this file already depends on.
+reset role;
+
+-- A failed file with NO audio_analysis row at all (analysis_fail() never
+-- writes one) -- confirms pool_list's exclusion is keyed on state alone
+-- and never depended on an analysis row existing to filter through.
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-0000000000a7','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000e1',
+   'audio/00000000-0000-0000-0000-0000000000e1/00000000-0000-0000-0000-0000000000a7.mp3',
+   'Broken - No Analysis At All.mp3', 1000000, 'mp3', 'failed');
+
+-- A 'stored' file with no audio_analysis row is a combination the ingest
+-- pipeline should never produce (analysis_persist() is what sets 'stored'
+-- and it always writes the row in the same transaction) -- but the sort
+-- keys must be defensively correct regardless, not merely correct for the
+-- shapes the pipeline happens to produce today.
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+values
+  ('00000000-0000-0000-0000-0000000000a8','00000000-0000-0000-0000-0000000000ba',
+   '00000000-0000-0000-0000-0000000000e1',
+   'audio/00000000-0000-0000-0000-0000000000e1/00000000-0000-0000-0000-0000000000a8.mp3',
+   'Zzz - Stored With No Analysis.mp3', 1000000, 'mp3', 'stored');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
+
+select is( (select count(*)::int from public.pool_list(p_q => 'No Analysis At All')), 0,
+           'a failed file with no analysis row is still excluded from the general pool' );
+
+-- max(row_cursor) is the last row bpm_asc actually emits (sk_bpm is fixed-
+-- width and "C"-collated, so string-max and emission-order-max agree) --
+-- this checks pool_list's OWN ordering, not a client-side re-sort.
+select is(
+  (select p.file_id from public.pool_list(p_sort => 'bpm_asc', p_limit => 100) p
+    where p.row_cursor = (select max(l.row_cursor)
+                             from public.pool_list(p_sort => 'bpm_asc', p_limit => 100) l)),
+  '00000000-0000-0000-0000-0000000000a8'::uuid,
+  'a stored file with no analysis row sorts LAST under bpm_asc, same sentinel as a null bpm' );
 
 select * from finish();
 rollback;

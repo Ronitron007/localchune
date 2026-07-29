@@ -141,6 +141,7 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .myfiles-batch { margin: 1.5rem 0; }
 .myfiles-batch h2 { font-weight: normal; color: var(--mid); }
 .statechip { border: 1px solid var(--line); padding: 0 0.35em; display: inline-block; }
+.statebanner { margin: 0.5rem 0 1rem; }
 .tags { margin-left: 0.5em; }
 .tagchip {
   border: 1px solid var(--faint);

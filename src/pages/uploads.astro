@@ -59,9 +59,12 @@ const added = (iso: string) => new Date(iso).toISOString().slice(0, 10)
               return (
                 <tr class={`filerow ${f.state}`}>
                   <td class="name">
-                    {f.state === 'stored'
-                      ? <a href={`/track/${f.file_id}`}>{f.original_filename}</a>
-                      : f.original_filename}
+                    {/* Every row links, regardless of state -- pool_get's
+                        own-uploader-any-state path (migration 16b) means
+                        /track/[id] always has something to render for the
+                        uploader, even a bare state chip and last_error for
+                        a file that never finished analysis. */}
+                    <a href={`/track/${f.file_id}`}>{f.original_filename}</a>
                   </td>
                   <td>
                     <span class="statechip">{stateLabel(f.state)}</span>
