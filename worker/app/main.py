@@ -292,6 +292,15 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             if ancestor in ('confirmed', 'suspected') else None
         lame_disagrees = bool(
             lame and abs(lame.lowpass_hz - cutoff_hz) > 1500)
+        # Bound to names rather than inlined into the quality_score() call,
+        # because they now travel on the response too: is_upgrade() needs all
+        # ten of quality_score()'s inputs and three of them used to die here.
+        mono_vs_stereo = int(stream.get("channels", 2) or 2) < 2
+        # Always False today. ffmpeg's decode is not error-checked anywhere in
+        # this pass, so reporting anything else would be an invention. Carried
+        # as a field so the -25 branch of quality_score() has a real input the
+        # day something does check.
+        decode_errors = False
         score = forensics.quality_score(
             tier=tier, cutoff_hz=cutoff_hz, eff_bits=eff_bits, eff_sr=eff_sr,
             inferred_kbps=inferred or 0, lame_disagrees=lame_disagrees,
@@ -299,8 +308,8 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             # (M3 Task 6). quality_score() already treats it as a threshold.
             clipped_pct=loud.clipped_pct / 100.0,
             true_peak=loud.true_peak_dbtp,
-            mono_vs_stereo=int(stream.get("channels", 2) or 2) < 2,
-            decode_errors=False)
+            mono_vs_stereo=mono_vs_stereo,
+            decode_errors=decode_errors)
 
         forensics_out = Forensics(
             meas_cutoff_hz=cutoff_hz, meas_cliff_db_500=cliff_db,
@@ -310,7 +319,9 @@ def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
             lame_vbr_method=lame.vbr_method if lame else None,
             encoder_string=lame.encoder_string if lame else None,
             lossy_ancestor=ancestor, inferred_source_kbps=inferred,
-            tier=tier, quality_score=score)
+            tier=tier, quality_score=score,
+            lame_disagrees=lame_disagrees, mono_vs_stereo=mono_vs_stereo,
+            decode_errors=decode_errors)
         log.info(
             "forensics file=%s cutoff_hz=%s cliff_db_500=%s hf_ref_delta_db=%s "
             "eff_bits=%s eff_sr=%s lame=%s ancestor=%s tier=%s score=%s windows=%d",

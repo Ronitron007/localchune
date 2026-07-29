@@ -71,6 +71,21 @@ class Forensics(BaseModel):
     quality_score: float
     spectrogram_key: Optional[str] = None   # only written on a suspect verdict
 
+    # The three quality_score() inputs that used to be computed in main.py,
+    # fed to quality_score(), and then thrown away. is_upgrade() (PRD §11's
+    # keep-if-better rule) takes TEN inputs; without these three a caller
+    # rebuilding them from audio_analysis scores with neutral defaults and
+    # loses the fake-FLAC branch entirely. M4 Task 4 recorded that as a
+    # schema gap; this is the producer half of the fix, and migration 25 is
+    # the storage half.
+    #
+    # Defaulted rather than required, so an OLD stored response still
+    # validates and so a partial forensics pass cannot fail the whole
+    # analysis over a boolean.
+    lame_disagrees: bool = False
+    mono_vs_stereo: bool = False
+    decode_errors: bool = False
+
 
 class AnalyzeResponse(BaseModel):
     file_id: str

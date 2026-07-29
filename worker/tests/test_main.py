@@ -218,6 +218,66 @@ def test_the_quality_score_is_a_number_not_a_placeholder(staged, real_flac, fake
         'is_upgrade needs an 8-point margin to be able to prefer the real one'
 
 
+def test_forensics_reports_every_input_its_own_score_was_built_from(
+        staged, real_flac, fake_flac):
+    """M4 Task 4's concern 2, closed at the producer.
+
+    quality_score() takes ten inputs. Three of them — lame_disagrees,
+    mono_vs_stereo, decode_errors — were computed here and then dropped, so
+    nothing downstream could rebuild the score or run is_upgrade() on it.
+    They travel on the response now. The assertion that matters is the last
+    one: the reported inputs must REPRODUCE the reported score, or they are
+    decoration.
+    """
+    from app import forensics
+    for f, src in (('f1', real_flac), ('f2', fake_flac)):
+        r = staged(f, src)
+        fo = r.forensics
+        assert isinstance(fo.lame_disagrees, bool)
+        assert isinstance(fo.mono_vs_stereo, bool)
+        assert fo.decode_errors is False
+        assert fo.mono_vs_stereo is (r.channels < 2)
+        assert forensics.quality_score(
+            tier=fo.tier, cutoff_hz=fo.meas_cutoff_hz,
+            eff_bits=fo.meas_eff_bit_depth, eff_sr=fo.meas_eff_sample_rate,
+            inferred_kbps=fo.inferred_source_kbps or 0,
+            lame_disagrees=fo.lame_disagrees,
+            clipped_pct=r.loudness.clipped_pct / 100.0,
+            true_peak=r.loudness.true_peak_dbtp,
+            mono_vs_stereo=fo.mono_vs_stereo,
+            decode_errors=fo.decode_errors,
+        ) == fo.quality_score
+
+
+def test_lame_disagrees_says_the_same_thing_the_tag_and_the_spectrum_do(
+        staged, real_mp3, fake_flac):
+    """lame_disagrees is the -6 term in the score AND is_upgrade()'s
+    fake-FLAC veto, so it has to mean one thing.
+
+    Two cases, and the second is the one worth writing down: re-encoding an
+    MP3 to FLAC does NOT carry the LAME tag across — the tag lives in the
+    MP3 bitstream and the FLAC has no bitstream. So the fake FLAC is
+    convicted by its cutoff alone, with lame_disagrees False, and a caller
+    that read that boolean as "this is honest" would be wrong. It is
+    "nothing to disagree with".
+    """
+    for f, src in (('f4', real_mp3), ('f2', fake_flac)):
+        fo = staged(f, src).forensics
+        if fo.lame_tag_present:
+            assert fo.lame_disagrees is (
+                abs(fo.lame_lowpass_hz - fo.meas_cutoff_hz) > 1500)
+        else:
+            assert fo.lame_disagrees is False, \
+                'no tag means nothing to disagree with, never "it disagrees"'
+
+    flac = staged('f2', fake_flac).forensics
+    assert flac.lame_tag_present is False, \
+        'ffmpeg -c:a libmp3lame writes no LAME tag (test_lametag.py), and a ' \
+        'FLAC re-encode would not carry one across anyway'
+    assert flac.lossy_ancestor == 'confirmed', \
+        'the cutoff convicts it; the absent tag neither helps nor hurts'
+
+
 @pytest.fixture
 def real_mp3(tmp_path):
     wav = str(tmp_path / 'm.wav')
