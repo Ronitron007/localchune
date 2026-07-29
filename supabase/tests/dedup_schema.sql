@@ -201,8 +201,13 @@ select throws_ok(
   'the pair must be stored lo < hi, so one pair has exactly one spelling');
 
 -- ---------- thresholds, honestly labelled ----------
-select is((select source from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025'),
-          'PRD §6 constants — NOT calibrated',
+-- The INTENT, not the exact sentence. Migration 25 rewrote this string when
+-- it raised t_related over the measured unrelated floor, and it will be
+-- rewritten again by M4.8's real calibration. What must survive every one of
+-- those edits is the admission: whoever reads dedup_config has to be able to
+-- see, from the row itself, whether the numbers came from evidence.
+select ok((select source from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025')
+            like '%NOT calibrated%',
           'the shipped thresholds say plainly that they are guesses');
 select is((select t_same from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025'),
           0.90::real, 'auto-merge band seeded at 0.90');
