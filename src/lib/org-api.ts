@@ -15,7 +15,12 @@
  * follows that redirect itself, so a dead session lands here as a 200
  * text/html — never a 401. Content-type is the only way to tell that apart
  * from a real JSON response, so it is checked BEFORE the body is parsed.
+ *
+ * M6a Task 6 adds crateHref/formatCrateMeta/CrateCard — pure formatting
+ * helpers for /crates.astro, which calls crate_list() (migration 20)
+ * server-side and needs no fetch wrapper of its own.
  */
+import { formatDuration } from './format'
 
 /** Middleware redirected the request to /login — the session is gone. */
 export class SessionExpiredError extends Error {
@@ -47,4 +52,35 @@ export async function toggleLike(fileId: string): Promise<ToggleLikeResult> {
   const body = (await res.json()) as Partial<ToggleLikeResult> & { error?: string; message?: string }
   if (!res.ok) throw new Error(body.message ?? body.error ?? `request failed (${res.status})`)
   return { like_count: body.like_count ?? 0, liked: body.liked ?? false }
+}
+
+/** Mirrors crate_list()'s (migration 20) row shape, column for column. */
+export type CrateCard = {
+  id: string
+  name: string
+  owner_id: string
+  owner_name: string
+  is_mine: boolean
+  is_public: boolean
+  /** Pool-visible items only — see crate_list()'s comment. Never null. */
+  track_count: number
+  /** Pool-visible items only, ms. Never null. */
+  total_duration_ms: number
+  updated_at: string
+}
+
+/** /crates.astro's and /crate/[id]'s only link builder for a crate. */
+export function crateHref(id: string): string {
+  return `/crate/${id}`
+}
+
+/**
+ * "12 tracks · 48:31" — 0 tracks reads as "empty" rather than "0 tracks ·
+ * --:--", and 1 track gets the singular noun. Reuses formatDuration so a
+ * crate's total reads exactly like a track row's own duration cell.
+ */
+export function formatCrateMeta(card: Pick<CrateCard, 'track_count' | 'total_duration_ms'>): string {
+  if (card.track_count === 0) return 'empty'
+  const noun = card.track_count === 1 ? 'track' : 'tracks'
+  return `${card.track_count} ${noun} · ${formatDuration(card.total_duration_ms)}`
 }

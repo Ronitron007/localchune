@@ -4,9 +4,24 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SessionExpiredError, toggleLike } from './org-api'
+import { crateHref, formatCrateMeta, SessionExpiredError, toggleLike, type CrateCard } from './org-api'
 
 const FILE_ID = '11111111-1111-1111-1111-111111111111'
+const CRATE_ID = '22222222-2222-2222-2222-222222222222'
+
+// A full crate_list() row (migration 20) — only track_count/total_duration_ms
+// vary between the formatCrateMeta cases below, so this is the shared base.
+const CARD: CrateCard = {
+  id: CRATE_ID,
+  name: 'warehouse',
+  owner_id: '33333333-3333-3333-3333-333333333333',
+  owner_name: 'dj',
+  is_mine: true,
+  is_public: false,
+  track_count: 0,
+  total_duration_ms: 0,
+  updated_at: '2026-07-29T00:00:00Z',
+}
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -54,5 +69,28 @@ describe('toggleLike', () => {
     ))
 
     await expect(toggleLike(FILE_ID)).rejects.toThrow('forbidden')
+  })
+})
+
+describe('crateHref', () => {
+  it('builds /crate/<id>', () => {
+    expect(crateHref(CRATE_ID)).toBe(`/crate/${CRATE_ID}`)
+  })
+})
+
+describe('formatCrateMeta', () => {
+  it('renders "N tracks · duration" for the plural case', () => {
+    // 48:31 == 48*60+31 seconds == 2911000 ms.
+    expect(formatCrateMeta({ ...CARD, track_count: 12, total_duration_ms: 2_911_000 }))
+      .toBe('12 tracks · 48:31')
+  })
+
+  it('uses the singular noun for exactly one track', () => {
+    expect(formatCrateMeta({ ...CARD, track_count: 1, total_duration_ms: 225_000 }))
+      .toBe('1 track · 3:45')
+  })
+
+  it('renders "empty" for zero tracks, regardless of total_duration_ms', () => {
+    expect(formatCrateMeta({ ...CARD, track_count: 0, total_duration_ms: 0 })).toBe('empty')
   })
 })

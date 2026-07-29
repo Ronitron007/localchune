@@ -349,6 +349,28 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .counts { color: var(--mid); }
 .pager { padding: var(--pad-2) 0; }
 
+/* --- /crates: create form + the Mine/Pool card lists (M6a Task 6) --- */
+.cratecreate { display: flex; align-items: center; gap: var(--pad-1); }
+.cratecreate input[type='text'] { width: 16rem; }
+.crates-section h2 { font-weight: normal; color: var(--mid); }
+.cratelist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-1);
+  padding: 0;
+  margin: var(--pad-1) 0 0;
+}
+.cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
+.cratecard .explain { margin-top: 0.15em; }
+.privatechip {
+  border: 1px solid var(--line);
+  padding: 0 0.35em;
+  display: inline-block;
+  margin-left: 0.5em;
+  font-size: 0.85em;
+}
+
 /* --- upload dropzone + rows: the owner's own screenshot, "text flush
    against its dashed border" — pad-3 on the box that draws the border,
    and vertical rhythm between the box/label/button groups below it. */
