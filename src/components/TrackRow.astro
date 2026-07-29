@@ -13,19 +13,32 @@
 // still works. The thumb <img> only renders when thumb.jpg exists — rows
 // never load full-size art, and a missing thumb is a bordered empty box,
 // never a broken image.
+//
+// M6a Task 7: two optional, backward-compatible additions for
+// /crate/[id].astro's owner view — every existing caller (the pool table)
+// leaves both at their defaults and renders byte-for-byte as before.
+// `reorderable` puts `draggable`/`data-file-id` on the row itself, which is
+// all site.ts's drag-to-reorder delegation needs to pick it up; the named
+// `controls` slot lets the crate page append one trailing <td> (↑ ↓ ✕)
+// without this component knowing anything about crates — it renders
+// nothing when the caller passes no slotted content.
 import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
 import { formatBpm } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
 import type { PoolTrack } from '../lib/pool-api'
 
-interface Props { track: PoolTrack }
-const { track } = Astro.props
+interface Props { track: PoolTrack; reorderable?: boolean }
+const { track, reorderable = false } = Astro.props
 const artist = track.display_artist ?? 'Unknown artist'
 const noBeat = track.bpm === null || track.bpm <= 0
 const added = new Date(track.created_at).toISOString().slice(0, 10)
 ---
-<tr class="trackrow">
+<tr
+  class="trackrow"
+  draggable={reorderable ? 'true' : undefined}
+  data-file-id={reorderable ? track.file_id : undefined}
+>
   <td class="controls">
     <a
       class="play"
@@ -89,4 +102,5 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="download">
     <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
   </td>
+  <slot name="controls" />
 </tr>

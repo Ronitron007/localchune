@@ -215,6 +215,86 @@ document.addEventListener('submit', (e) => {
   })()
 })
 
+/**
+ * M6a Task 7 — crate drag-to-reorder. TrackRow.astro's rows render
+ * `draggable`/`data-file-id` only when the page passes `reorderable`
+ * (crate/[id].astro's owner view), inside a `[data-reorder]` container
+ * that carries the crate id itself. No such container exists on the pool
+ * table or the track page, so every listener below is a silent no-op
+ * there — the same "degrade to nothing" contract every other document-
+ * level delegation in this file already has.
+ *
+ * Native HTML5 drag-and-drop, not a pointer-capture reimplementation:
+ * `dragover` moves the dragged row's actual DOM node — before or after
+ * the row under the cursor, chosen by which half of it the pointer is
+ * over — so the visible order IS the pending order, with no separate
+ * "ghost" state to keep in sync. `drop` reads that same DOM order straight
+ * back out via each row's `data-file-id` and POSTs it to `.../reorder`.
+ * The server (`crate_reorder`, migration 20) is the only authority on
+ * whether the result is legal — on any failure the page reloads, so the
+ * visible order snaps back to whatever the database actually has rather
+ * than leaving a client-side order the server never accepted.
+ *
+ * Keyboard users are covered by a separate mechanism, not an afterthought:
+ * the always-present ↑/↓ button forms next to each row (real
+ * `<button type="submit">`s, tabbable and Enter/Space-activatable with
+ * zero JS) POST to `/api/crate/[id]/move`, which reorders with the same
+ * `moveInList()` `org-api.ts` exports. Native drag-and-drop has no
+ * keyboard path of its own — that pair of buttons is it.
+ */
+let draggingRow: HTMLTableRowElement | null = null
+
+document.addEventListener('dragstart', (e) => {
+  const row = (e.target as Element).closest?.('tr[draggable="true"][data-file-id]')
+  if (!(row instanceof HTMLTableRowElement) || !row.closest('[data-reorder]')) return
+  draggingRow = row
+  e.dataTransfer?.setData('text/plain', row.dataset.fileId ?? '')
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+})
+
+document.addEventListener('dragover', (e) => {
+  if (draggingRow === null) return
+  const container = (e.target as Element).closest?.('[data-reorder]')
+  if (!container || !container.contains(draggingRow)) return
+  e.preventDefault() // allow drop
+  const overRow = (e.target as Element).closest?.('tr[data-file-id]')
+  if (!(overRow instanceof HTMLTableRowElement) || overRow === draggingRow) return
+  const rect = overRow.getBoundingClientRect()
+  const before = e.clientY < rect.top + rect.height / 2
+  overRow.parentElement?.insertBefore(draggingRow, before ? overRow : overRow.nextSibling)
+})
+
+document.addEventListener('drop', (e) => {
+  if (draggingRow === null) return
+  e.preventDefault()
+  const container = draggingRow.closest('[data-reorder]')
+  draggingRow = null
+  if (container instanceof HTMLElement) void submitCrateOrder(container)
+})
+
+document.addEventListener('dragend', () => { draggingRow = null })
+
+async function submitCrateOrder(container: HTMLElement) {
+  const crateId = container.dataset.reorder
+  if (!crateId) return
+  const fileIds = Array.from(container.querySelectorAll<HTMLElement>('tr[data-file-id]'))
+    .map((row) => row.dataset.fileId)
+    .filter((v): v is string => typeof v === 'string')
+  try {
+    const res = await fetch(`/api/crate/${crateId}/reorder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ file_ids: fileIds }),
+    })
+    if (!res.ok) throw new Error('reorder failed')
+  } catch {
+    // Server rejected it (not a valid permutation, not the owner any
+    // more, a dropped connection) — reload rather than leave the DOM
+    // showing an order the database never committed.
+    window.location.reload()
+  }
+}
+
 const autosubmit = debounce((form: HTMLFormElement) => form.requestSubmit(), 300)
 document.addEventListener('input', (e) => {
   const el = e.target

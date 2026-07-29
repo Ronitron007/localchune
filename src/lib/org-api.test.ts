@@ -4,7 +4,10 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { crateHref, formatCrateMeta, SessionExpiredError, toggleLike, type CrateCard } from './org-api'
+import {
+  crateHref, crateItemToPoolTrack, formatCrateMeta, moveInList, sameOriginRedirectTarget,
+  SessionExpiredError, toggleLike, type CrateCard, type CrateItem,
+} from './org-api'
 
 const FILE_ID = '11111111-1111-1111-1111-111111111111'
 const CRATE_ID = '22222222-2222-2222-2222-222222222222'
@@ -72,6 +75,27 @@ describe('toggleLike', () => {
   })
 })
 
+describe('sameOriginRedirectTarget', () => {
+  const REQUEST_URL = 'https://localchune.example/api/crate/22222222-2222-2222-2222-222222222222/move'
+
+  it('returns the fallback when there is no Referer', () => {
+    expect(sameOriginRedirectTarget(null, REQUEST_URL, '/crate/x')).toBe('/crate/x')
+  })
+
+  it('returns the same-origin Referer path + search', () => {
+    expect(sameOriginRedirectTarget('https://localchune.example/crate/x?foo=bar', REQUEST_URL, '/crate/y'))
+      .toBe('/crate/x?foo=bar')
+  })
+
+  it('falls back on a cross-origin Referer — no open redirect', () => {
+    expect(sameOriginRedirectTarget('https://evil.example/', REQUEST_URL, '/crate/x')).toBe('/crate/x')
+  })
+
+  it('falls back on a malformed Referer', () => {
+    expect(sameOriginRedirectTarget('http://[', REQUEST_URL, '/crate/x')).toBe('/crate/x')
+  })
+})
+
 describe('crateHref', () => {
   it('builds /crate/<id>', () => {
     expect(crateHref(CRATE_ID)).toBe(`/crate/${CRATE_ID}`)
@@ -92,5 +116,91 @@ describe('formatCrateMeta', () => {
 
   it('renders "empty" for zero tracks, regardless of total_duration_ms', () => {
     expect(formatCrateMeta({ ...CARD, track_count: 0, total_duration_ms: 0 })).toBe('empty')
+  })
+})
+
+describe('moveInList', () => {
+  it('swaps with the previous item on "up"', () => {
+    expect(moveInList(['a', 'b', 'c'], 1, 'up')).toEqual(['b', 'a', 'c'])
+  })
+
+  it('swaps with the next item on "down"', () => {
+    expect(moveInList(['a', 'b', 'c'], 1, 'down')).toEqual(['a', 'c', 'b'])
+  })
+
+  it('is a no-op when the first item moves up', () => {
+    expect(moveInList(['a', 'b', 'c'], 0, 'up')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('is a no-op when the last item moves down', () => {
+    expect(moveInList(['a', 'b', 'c'], 2, 'down')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('never mutates the input array', () => {
+    const original = ['a', 'b', 'c']
+    const copy = [...original]
+    moveInList(original, 1, 'up')
+    expect(original).toEqual(copy)
+  })
+
+  it('returns a new array, not the same reference, even on a no-op move', () => {
+    const original = ['a', 'b', 'c']
+    expect(moveInList(original, 0, 'up')).not.toBe(original)
+  })
+})
+
+describe('crateItemToPoolTrack', () => {
+  // A full crate_get() row (migration 20) -- position + pool_get's entire
+  // column list. Only the fields TrackRow/PoolTrack reads are populated
+  // here; every other pool_get column is irrelevant to the adapter.
+  const ITEM: CrateItem = {
+    position: 1,
+    file_id: FILE_ID,
+    track_id: null,
+    uploaded_by: '33333333-3333-3333-3333-333333333333',
+    uploader_name: 'dj',
+    original_filename: 'track.wav',
+    display_artist: 'Artist',
+    display_title: 'Title',
+    container: 'wav',
+    byte_size: 1000,
+    duration_ms: 180_000,
+    bpm: 128,
+    ibi_std_ms: 2,
+    key_camelot: '8A',
+    key_open: null,
+    key_musical: null,
+    quality_tier: 5,
+    lossy_ancestor: null,
+    meas_cutoff_hz: null,
+    integrated_lufs: -9,
+    preview_key: 'preview/key',
+    peaks_key: null,
+    thumb_key: 'thumb/key',
+    created_at: '2026-07-29T00:00:00Z',
+    download_count: 3,
+    tags: ['house'],
+    like_count: 2,
+    liked_by_me: true,
+    play_count: 10,
+  }
+
+  it('derives has_preview/has_peaks/has_thumb from the *_key columns', () => {
+    const track = crateItemToPoolTrack(ITEM)
+    expect(track.has_preview).toBe(true)
+    expect(track.has_peaks).toBe(false)
+    expect(track.has_thumb).toBe(true)
+  })
+
+  it('carries every other TrackRow-relevant field through unchanged', () => {
+    const track = crateItemToPoolTrack(ITEM)
+    expect(track.file_id).toBe(ITEM.file_id)
+    expect(track.display_artist).toBe(ITEM.display_artist)
+    expect(track.display_title).toBe(ITEM.display_title)
+    expect(track.bpm).toBe(ITEM.bpm)
+    expect(track.like_count).toBe(ITEM.like_count)
+    expect(track.liked_by_me).toBe(ITEM.liked_by_me)
+    expect(track.play_count).toBe(ITEM.play_count)
+    expect(track.tags).toEqual(ITEM.tags)
   })
 })

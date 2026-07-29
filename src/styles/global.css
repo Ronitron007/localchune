@@ -371,6 +371,31 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   font-size: 0.85em;
 }
 
+/* --- /crate/[id]: header management forms + the ↑ ↓ ✕ controls cell
+   (M6a Task 7). Same three-tier button system as everywhere else in the
+   app — no new colour, radius or shadow. --- */
+.cratehead > * + * { margin-top: var(--pad-1); }
+.cratemanage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-1) var(--pad-2);
+}
+.renameform { display: inline-flex; align-items: center; gap: var(--pad-1); }
+.renameform input[type='text'] { width: 16rem; }
+.cratecontrols {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  white-space: nowrap;
+}
+.cratecontrols form { display: inline-block; }
+.cratecontrols button { padding: 0 0.5em; }
+/* A draggable row gets a grab cursor as the only affordance — no drop
+   shadow or lift-on-drag effect (the brutalist monochrome rule again). */
+tr[draggable='true'] { cursor: grab; }
+tr[draggable='true']:active { cursor: grabbing; }
+
 /* --- upload dropzone + rows: the owner's own screenshot, "text flush
    against its dashed border" — pad-3 on the box that draws the border,
    and vertical rhythm between the box/label/button groups below it. */
