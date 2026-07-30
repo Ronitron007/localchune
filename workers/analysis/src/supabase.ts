@@ -126,6 +126,20 @@ export function analysisFail(env: SupabaseEnv, fileId: string, reason: string): 
   return rpc<string>(env, 'analysis_fail', { p_file_id: fileId, p_reason: reason })
 }
 
+/**
+ * The claim, read without being taken. Only the dead-letter handler needs
+ * it — see handleDeadLetter's header for the healthy-file-marked-failed
+ * hole it closes. `returns table` over PostgREST is an array, and an empty
+ * one means the row is gone.
+ */
+export async function analysisFileState(
+  env: SupabaseEnv, fileId: string,
+): Promise<{ state: string; state_changed_at: string } | null> {
+  const rows = await rpc<Array<{ state: string; state_changed_at: string }>>(
+    env, 'analysis_file_state', { p_file_id: fileId })
+  return rows.length > 0 ? rows[0] : null
+}
+
 export interface StuckRow {
   file_id: string
   r2_key: string

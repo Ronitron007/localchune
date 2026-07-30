@@ -19,6 +19,9 @@ Two moral commitments, both enforced by the tests in test_forensics.py:
    'abstain', never in 'suspected'/'confirmed'. Getting this wrong means
    accusing a friend's legitimately quiet master of being a fake.
 """
+import subprocess
+from dataclasses import dataclass
+
 import numpy as np
 
 # The 128kbps entry is 16800, not the textbook 16000: verified against four
@@ -34,15 +37,29 @@ CUTOFF_TABLE = {11000: 64, 15000: 96, 16800: 128, 17250: 160,
 LOSSLESS = {'flac', 'wav', 'aiff', 'alac'}
 
 
-def measure_cutoff(windows: list[np.ndarray], sr: int) -> tuple[int, float]:
-    """Highest frequency with real energy, plus cliff sharpness in dB/500Hz.
+@dataclass(frozen=True)
+class Spectrum:
+    """One max-hold power spectrum in dB, plus its bin frequencies.
 
-    MAX-HOLD across windows, never mean: the encoder lowpass is a hard ceiling
-    on the whole file, and averaging drags the apparent cutoff down during quiet
-    passages, manufacturing false positives.
+    MAX-HOLD across every window and every channel, never a mean: the
+    encoder lowpass is a hard ceiling on the WHOLE file, and averaging drags
+    the apparent cutoff down during quiet passages, manufacturing false
+    positives. Channels are never downmixed — MP3 intensity stereo folds HF
+    into a shared channel and a downmix destroys that evidence.
+    """
+    db: np.ndarray
+    freqs: np.ndarray
+    ref_db: float
+    windows: int
 
-    Channels are analysed separately and NOT downmixed: MP3 intensity stereo
-    folds HF into a shared mono channel, and a downmix destroys that evidence.
+
+def measure_spectrum(windows: list[np.ndarray], sr: int) -> Spectrum | None:
+    """The single FFT pass that cutoff, cliff and the abstain gate share.
+
+    Extracted from measure_cutoff() rather than added beside it: the pass is
+    the expensive part (~1600 max-held frames on a real forensic sample), and
+    computing it twice to get one more number off it would double the only
+    part of this module that costs anything.
     """
     n_fft = 8192
     maxhold = None
@@ -56,11 +73,54 @@ def measure_cutoff(windows: list[np.ndarray], sr: int) -> tuple[int, float]:
                 p = np.abs(np.fft.rfft(seg * np.hanning(n_fft))) ** 2
                 maxhold = p if maxhold is None else np.maximum(maxhold, p)
     if maxhold is None:
-        return 0, 0.0
-
+        return None
     freqs = np.fft.rfftfreq(n_fft, 1 / sr)
-    S = 10 * np.log10(maxhold + 1e-20)
-    ref = S[(freqs >= 1000) & (freqs <= 4000)].mean()
+    db = 10 * np.log10(maxhold + 1e-20)
+    ref = float(db[(freqs >= 1000) & (freqs <= 4000)].mean())
+    return Spectrum(db=db, freqs=freqs, ref_db=ref, windows=len(windows))
+
+
+def hf_ref_delta_db(spec: Spectrum | None) -> float:
+    """14-16 kHz energy relative to the 1-4 kHz reference.
+
+    PRD §7.2's abstain gate: below -60 dB the track is dark or sparse and the
+    detector has nothing to work with. Returning a fixed number here instead
+    of measuring it is how a legitimately quiet master gets called a fake —
+    which is the one error this module is tuned to avoid, because a false
+    accept costs one wrongly-awarded credit and a false reject costs a
+    contributor.
+    """
+    if spec is None:
+        return -200.0
+    hf = spec.db[(spec.freqs >= 14000) & (spec.freqs <= 16000)]
+    if hf.size == 0:
+        return -200.0
+    return round(float(hf.mean() - spec.ref_db), 2)
+
+
+def measure_cutoff(windows: list[np.ndarray], sr: int) -> tuple[int, float]:
+    """Highest frequency with real energy, plus cliff sharpness in dB/500Hz.
+
+    MAX-HOLD across windows, never mean: the encoder lowpass is a hard ceiling
+    on the whole file, and averaging drags the apparent cutoff down during quiet
+    passages, manufacturing false positives.
+
+    Channels are analysed separately and NOT downmixed: MP3 intensity stereo
+    folds HF into a shared mono channel, and a downmix destroys that evidence.
+    """
+    return cutoff_from_spectrum(measure_spectrum(windows, sr))
+
+
+def cutoff_from_spectrum(spec: Spectrum | None) -> tuple[int, float]:
+    """measure_cutoff()'s threshold and cliff logic, off an existing pass.
+
+    main.py calls measure_spectrum() once and reads cutoff, cliff and the
+    abstain gate off the same Spectrum. measure_cutoff() above is kept as-is
+    for every existing caller and test.
+    """
+    if spec is None:
+        return 0, 0.0
+    freqs, S, ref = spec.freqs, spec.db, spec.ref_db
     thresh = ref - 50.0
 
     # Adaptive noise-floor threshold. The fixed ref-50dB threshold above is a
@@ -135,6 +195,79 @@ def measure_cutoff(windows: list[np.ndarray], sr: int) -> tuple[int, float]:
     return int(round(f_c)), round(float(cliff), 2)
 
 
+# Standard rates, ascending. A file is demoted to the LOWEST rate whose
+# Nyquist still comfortably contains the measured content.
+_STANDARD_RATES = (22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000)
+
+# Fraction of Nyquist the measured content must fit inside before a file is
+# demoted to that rate.
+#
+# 0.93, NOT the brief's 0.90: the brief's own test asserts that a 96 kHz
+# container brickwalled at 20500 Hz is really 44.1 kHz, and 0.90 puts 44.1's
+# bar at 19845 Hz — below 20500 — so it would answer 48000 and fail. 0.93
+# puts the bar at 20506 Hz, which clears a real CD master's ~20.5 kHz
+# rolloff by 6 Hz and clears 48 kHz's bar (22320 Hz) by a wide margin. Any
+# value in [0.930, 0.988] satisfies both published tests; 0.93 is the low
+# end, i.e. the most reluctant to demote.
+_NYQUIST_FRACTION = 0.93
+
+
+def effective_sample_rate(declared_sr: int, cutoff_hz: int) -> int:
+    """The rate this audio was really at, whatever the container claims.
+
+    A 96 kHz FLAC brickwalled at 20.5 kHz is a 44.1 kHz master upsampled.
+    Never returns MORE than the declared rate: the container cannot
+    under-report, only over-report.
+
+    KNOWN CEILING, and it is structural: decode.windows() resamples to
+    44.1 kHz, so cutoff_hz can never exceed ~22 kHz and this function can
+    never CONFIRM a rate above 48 kHz — a genuine 96 kHz master is reported
+    as 44100 or 48000. That costs at most the 4 points quality_score gives
+    for a high rate, out of ~500, and it costs them equally to every file, so
+    it cannot change a merge decision between two candidates. Measuring the
+    cutoff a second time at the native rate would cost another full decode
+    pass to buy those 4 points back, which is not a trade this pool needs.
+    """
+    if declared_sr <= 0 or cutoff_hz <= 0:
+        return max(declared_sr, 0)
+    for rate in _STANDARD_RATES:
+        if rate > declared_sr:
+            break
+        if cutoff_hz <= rate * 0.5 * _NYQUIST_FRACTION:
+            return rate
+    return declared_sr
+
+
+def effective_bit_depth(path: str) -> int:
+    """Significant bits actually used, measured from decoded samples.
+
+    Decode to s32, OR every sample together, and count the trailing zeros:
+    a 16-bit master rewrapped as 24- or 32-bit leaves its low bits
+    permanently zero. This is the only honest reading — ffprobe reports
+    what the CONTAINER declares, which is precisely the claim being tested.
+
+    A dithered or noise-shaped upconversion defeats it and reports the
+    higher depth. That is correct behaviour, not a gap: dither is real
+    signal, and PRD §7.2 already states the honest limit that a motivated
+    cheat defeats this in minutes.
+    """
+    raw = subprocess.run(
+        ['ffmpeg', '-v', 'error', '-i', path, '-f', 's32le', '-ac', '1', '-'],
+        capture_output=True, check=True).stdout
+    if not raw:
+        return 0
+    samples = np.frombuffer(raw, dtype=np.int32)
+    if samples.size == 0:
+        return 0
+    # Bitwise-OR the magnitudes. np.bitwise_or.reduce over int32 keeps the
+    # sign bit, so take the unsigned view first.
+    acc = int(np.bitwise_or.reduce(samples.view(np.uint32)))
+    if acc == 0:
+        return 0                      # digital silence: no evidence either way
+    trailing = (acc & -acc).bit_length() - 1
+    return max(1, 32 - trailing)
+
+
 def classify_ancestor(cutoff_hz: int, cliff_db: float, lame_lowpass_hz: int | None,
                       usable_windows: int, hf_ref_delta_db: float) -> str:
     # 1. cheapest kill: the bitstream disagrees with the PCM
@@ -143,26 +276,168 @@ def classify_ancestor(cutoff_hz: int, cliff_db: float, lame_lowpass_hz: int | No
     # 2. abstain BEFORE deciding — this is what makes it fair
     if usable_windows < 4 or hf_ref_delta_db < -60:
         return 'abstain'
-    # 3. cliff-based
-    if cliff_db >= 30 and cutoff_hz < 21000 and \
-       any(abs(cutoff_hz - t) <= 400 for t in CUTOFF_TABLE):
-        return 'confirmed'
+    # 3. cliff-based.
+    #
+    # A WALL IS A WALL WHEREVER IT STANDS. Production, 2026-07-29: file
+    # b67a6dcc, a true 128 kbps MP3 (129 kbps by size), measured a 38.03 dB
+    # cliff at 15811 Hz and came back 'none' — because 15811 sits in a gap
+    # between CUTOFF_TABLE's 15000 and 16800 entries (the +-400 windows cover
+    # 14600-15400 and 16400-17650, so 15400-16400 is unwatched), and the
+    # 'suspected' branch below only spanned 15 <= cliff < 30. A 38 dB wall
+    # was therefore MORE suspicious than a 20 dB one and got a cleaner
+    # verdict. The gaps are real: 11400-14600, 15400-16400 and 17650-18350 Hz
+    # all fall between two table entries.
+    #
+    # The table still earns 'confirmed' — knowing WHICH encoder bitrate left
+    # the wall is stronger evidence than the wall alone. Everything else
+    # sharp and below 21 kHz is now at least 'suspected'.
+    #
+    # This is load-bearing for quality_tier: its bitrate floor is only
+    # consulted when the rolloff is SOFT and no ancestor was found, so a
+    # 38 dB wall reaching it as 'none' is exactly the case where a 320 kbps
+    # transcode of a 128 kbps source could have bought back a tier.
+    if cliff_db >= 30 and cutoff_hz < 21000:
+        if any(abs(cutoff_hz - t) <= 400 for t in CUTOFF_TABLE):
+            return 'confirmed'
+        return 'suspected'
     if 15 <= cliff_db < 30:
         return 'suspected'
     return 'none'
 
 
-def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int) -> int:
-    lossless = container.lower() in LOSSLESS
+def is_lossless(container: str, codec: str = '') -> bool:
+    """Is this really a lossless file?
+
+    THE CONTAINER IS NOT ENOUGH, and on this pool it is not even usually
+    enough: 334 of the 549 files in production report container 'mov', which
+    is ffprobe's name for the MP4/M4A family — and that family carries
+    either AAC (lossy) or ALAC (lossless). Every one of those 334 happens to
+    be AAC today, so nothing has been misjudged yet; the first ALAC upload
+    would have been capped at tier 3 forever, silently, because 'mov' is not
+    in LOSSLESS and nothing looked at the codec.
+
+    The codec is the honest answer wherever the two disagree, so either
+    naming a lossless format is enough. A lossy codec in a lossless
+    container (there is no such thing) and a lossless codec in a lossy one
+    (nor that) are both impossible, so there is no case where this is too
+    generous.
+    """
+    return container.lower() in LOSSLESS or codec.lower() in LOSSLESS
+
+
+# A cliff this sharp is an ENCODER's lowpass. Below it, the top of the
+# spectrum is the music ending, not a filter. 15 dB is the same threshold
+# classify_ancestor already uses as its floor for 'suspected', so the two
+# functions agree on what "an encoder did this" looks like.
+ENCODER_CLIFF_DB = 15.0
+
+# Declared-bitrate classes, descending. Only consulted when the rolloff is
+# soft AND no lossy ancestor was found — never as a way around the
+# anti-cheat.
+_KBPS_TIERS = ((240, 3), (160, 2))
+
+# The bitrate a lossless STREAM has to declare before its soft rolloff is
+# read as a dark master rather than as reduced audio.
+#
+# 16-bit/44.1 kHz stereo PCM is 1411 kbps. Real FLAC of real music lands
+# between ~600 and ~1100 kbps (production file d468ee5c is 753; the real
+# 320k-MP3-to-FLAC transcode fixture in test_forensics.py is 1037). 500 kbps
+# is ~35% of uncompressed — under every full-band stereo master, so the floor
+# only rejects audio that was reduced some OTHER way: mono, a low sample
+# rate, or near-silence. None of those should collect a verified-master
+# grade off a container name.
+#
+# THIS IS NOT THE ANTI-CHEAT, and must not be mistaken for it. A fake FLAC
+# clears 500 kbps trivially — decoded lossy audio is noisier than its source
+# and compresses WORSE, so the fake declares MORE than the honest file it
+# imitates. What stops the fake is the cliff and the ancestor verdict, both
+# checked first and both untouched here.
+LOSSLESS_KBPS_FLOOR = 500
+
+
+def quality_tier(container: str, ancestor: str, cutoff_hz: int, eff_bits: int,
+                 codec: str = '', cliff_db: float | None = None,
+                 declared_kbps: int = 0) -> int:
+    """The grade. Five is a verified lossless master; one is a 128 kbps file.
+
+    codec, cliff_db and declared_kbps are optional and LAST so every existing
+    caller and test keeps working unchanged. main.py always passes all three.
+
+    WHY cliff_db IS HERE. Production, 2026-07-29: "02 GOLD.m4a", a verified
+    iTunes purchase (iTunNORM/iTunSMPB atoms, ~283 kbps => iTunes Plus 256k
+    AAC) measured cutoff 16387 Hz with a cliff of 2.52 dB and landed at
+    TIER 1 — the same grade a 128 kbps file gets. classify_ancestor did its
+    job and refused to accuse it ('none'); the tier then demoted it anyway,
+    because the fall-through read a 16 kHz ceiling as evidence of a lossy
+    ancestor when it was simply a dark hip-hop master whose music stops
+    there. Nine of the first 35 tiered files were tier 1, and some were this.
+
+    A 2.5 dB rolloff is not a filter. An encoder lowpass is a wall: 30 dB and
+    more across 500 Hz. So the measured bandwidth is only allowed to demote
+    below the file's bitrate class when it LOOKS like an encoder did it —
+    a sharp cliff, or an ancestor verdict. Otherwise the declared bitrate,
+    which is a fact about the file rather than an inference from its
+    spectrum, sets the floor.
+
+    THE ANTI-CHEAT IS UNTOUCHED, and the ordering below is what guarantees
+    it: 'confirmed' and 'suspected' return the cutoff-derived tier before the
+    bitrate is ever consulted. A 128 kbps file transcoded up to 320 kbps MP3
+    or 256 kbps AAC still has a sharp cliff at a CUTOFF_TABLE frequency, so
+    it is still confirmed, and its enormous declared bitrate buys it nothing.
+    """
+    lossless = is_lossless(container, codec)
     if lossless and ancestor == 'none' and cutoff_hz >= 20800 and eff_bits >= 16:
         return 5
+
+    # A SOFT ROLLOFF DESCRIBES THE MASTER, NOT AN ENCODER — and that is as
+    # true above the 20800 Hz bar as below it. Production, 2026-07-29, owner
+    # -reported: file d468ee5c, "Paul Kalkbrenner — Altes Kamuffel", a 24 MB
+    # FLAC over 256 s (753 kbps), 16-bit, ancestor 'none', measured cutoff
+    # 20090 Hz with a cliff of 4.25 dB. It landed at TIER 3: 20090 misses the
+    # 20800 bar, so it fell past 5, was not 'abstain' so it fell past 4, and
+    # then max(by_cutoff=3, by_kbps(753)=3) graded a real lossless master the
+    # same as a 256 kbps AAC.
+    #
+    # 4.25 dB across 500 Hz is not a filter. It is where the music stops.
+    # The 20800 bar was only ever a proxy for "nothing cut the top off this
+    # file", and the cliff answers that question directly and better — so
+    # when the cliff is soft, the bar is the wrong test to apply.
+    #
+    # NO CUTOFF FLOOR HERE, deliberately. A genuinely dark master — the
+    # lossless sibling of the "02 GOLD" case, soft rolloff at 16 kHz — is
+    # still a lossless copy of that master, and tier is the hard monotone
+    # term in is_upgrade(), so a floor is exactly what would stop the FLAC
+    # from displacing the 256 kbps AAC of the same dark recording. That is
+    # the merge this pool wants.
+    #
+    # THE ANTI-CHEAT IS UNTOUCHED. Every branch that could hide a transcode
+    # is checked before this one: a 320 kbps MP3 rewrapped as FLAC keeps its
+    # wall, so it arrives 'suspected' or 'confirmed' (and is demoted below),
+    # and even at ancestor 'none' its cliff is nowhere near soft — measured
+    # 29.35 dB on the real transcode fixture in test_forensics.py, against
+    # ENCODER_CLIFF_DB of 15. Both gates reject it independently.
+    if (lossless and ancestor == 'none' and eff_bits >= 16
+            and cliff_db is not None and cliff_db < ENCODER_CLIFF_DB
+            and declared_kbps >= LOSSLESS_KBPS_FLOOR):
+        return 5
+
     if lossless and ancestor == 'abstain':
         return 4
+
     # A lossless container with a CONFIRMED lossy ancestor falls through to its
     # MEASURED bandwidth. That single rule is the entire anti-cheat.
-    if cutoff_hz >= 19500: return 3
-    if cutoff_hz >= 17000: return 2
-    return 1
+    by_cutoff = 3 if cutoff_hz >= 19500 else 2 if cutoff_hz >= 17000 else 1
+    if ancestor in ('confirmed', 'suspected'):
+        return by_cutoff
+    if cliff_db is None or cliff_db >= ENCODER_CLIFF_DB or declared_kbps <= 0:
+        return by_cutoff
+
+    # Soft rolloff, no ancestor found: the spectrum is describing the music,
+    # not the encoder. max(), never a plain override — the bitrate may only
+    # raise a floor, so a file that already earned tier 3 on bandwidth cannot
+    # be pushed DOWN by a modest bitrate.
+    by_kbps = next((t for floor, t in _KBPS_TIERS if declared_kbps >= floor), 1)
+    return max(by_cutoff, by_kbps)
 
 
 def quality_score(tier: int, cutoff_hz: int, eff_bits: int, eff_sr: int,

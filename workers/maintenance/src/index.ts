@@ -3,6 +3,8 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { AwsClient } from 'aws4fetch'
+import { runDedup, summariseDedup } from '../../../src/lib/dedup'
+import { dedupPending, dedupSeedTracks, makeDedupDeps } from '../../../src/lib/dedup-rpc'
 import { deletablePendingObjects, reconcile, type DbFile, type R2ObjectRow } from './reconcile'
 
 /**
@@ -58,9 +60,29 @@ export interface Env {
 const CRON_SWEEP = '17 * * * *'
 const CRON_REQUEUE = '31 * * * *'
 const CRON_RECONCILE = '40 4 * * *'
+const CRON_DEDUP = '47 * * * *'
 
-/** Must match src/lib/analyze-queue.ts:ANALYSIS_VERSION. */
-const ANALYSIS_VERSION = 'v1'
+/**
+ * One page of dedup_pending(). The SQL clamps its own limit to 200; this is
+ * smaller because every row in a page costs an offset sweep in THIS Worker's
+ * CPU, and limits.cpu_ms is 30 s.
+ */
+const DEDUP_PAGE = 100
+/**
+ * The ceiling on one run. M4 Task 3 measured 25 candidates at 2,886 frames
+ * in 20 ms, so 300 files is ~6 s of sweeping plus its HTTP — comfortably
+ * inside 30 s of CPU with room for the duration-only fallback firing on
+ * some of them. A backlog larger than this drains over consecutive hours,
+ * which is what a backstop is for.
+ */
+const DEDUP_MAX_FILES = 300
+/** dedup_seed_tracks() takes any limit; this is one page of its backfill. */
+const SEED_PAGE = 500
+const SEED_MAX_PAGES = 10
+
+/** Must match src/lib/analyze-queue.ts:ANALYSIS_VERSION. Exported so
+ *  analysis-version.test.ts can prove all three copies moved together. */
+export const ANALYSIS_VERSION = 'v2'
 /** How long a file may sit in received/analysing before it counts as stuck. */
 const STUCK_OLDER_THAN = '1 hour'
 /** analysis_stuck() clamps this to 500 itself. */
@@ -296,6 +318,85 @@ export async function requeueStuck(env: Env): Promise<void> {
 }
 
 /**
+ * The dedup backstop. M4's answer to "what happens when the inline matcher
+ * does not run".
+ *
+ * The analysis consumer runs the matcher immediately after
+ * analysis_persist(), best-effort — it CANNOT retry, because a redelivery
+ * finds the file already 'stored' and acks as "not claimable", so a retry
+ * would re-run ~45 vCPU-s of container analysis and still not dedup. This
+ * job is what turns "best-effort" into an acceptable word: anything that
+ * came out of analysis with a fingerprint and no track gets matched here,
+ * within the hour.
+ *
+ * THE ORDER OF THE TWO HALVES IS THE WHOLE DESIGN, and getting it backwards
+ * silently disables the job. dedup_pending() selects `state = 'stored' and
+ * track_id is null`. dedup_seed_tracks() mints a track for every one of
+ * those. So seeding FIRST would empty the work list before it was read, and
+ * this cron would run forever reporting nothing to do.
+ *
+ * Matching first, seeding second, also gives the seed its real job: a file
+ * with NO fingerprint (a degraded analysis — three pool files fail every
+ * re-analysis) can never be matched and would otherwise stay identity-less
+ * forever. Those are exactly the rows left over after the matching pass.
+ */
+export async function dedupSweep(env: Env): Promise<void> {
+  const call = <T,>(fn: string, args: Record<string, unknown>) => rpc<T>(env, fn, args)
+  const deps = makeDedupDeps(call)
+
+  let seen = 0
+  let matched = 0
+  let merged = 0
+  let unmatchable = 0
+  let failed = 0
+
+  while (seen < DEDUP_MAX_FILES) {
+    const page = await dedupPending(call, Math.min(DEDUP_PAGE, DEDUP_MAX_FILES - seen))
+    if (page.length === 0) break
+
+    // A file the matcher CANNOT assign (no fingerprint) stays trackless and
+    // dedup_pending returns it again next page, forever. Counting real
+    // progress per page and stopping when there is none is what bounds that
+    // — the seed below is what finally gets those rows an identity.
+    let progress = 0
+    for (const row of page) {
+      seen++
+      try {
+        // No digest: this path has a file id and nothing else. Safe — two
+        // byte-identical files have identical fingerprints, so layer 1
+        // returns the twin as its top hit and the scorer reads 1.0. Layer 0
+        // saves a decompress, it is not load-bearing for correctness.
+        const out = await runDedup(row.file_id, deps, null)
+        for (const w of out.warnings ?? []) console.warn(w)
+        if (!out.ok) { unmatchable++; continue }
+        progress++
+        matched++
+        if (out.action === 'merged') merged++
+        console.log(summariseDedup(row.file_id, out))
+      } catch (err) {
+        // One bad file must not abandon the rest of the page. The row keeps
+        // its state, so the next hour tries again.
+        failed++
+        console.error(`dedup: ${row.file_id}: ${String(err)}`)
+      }
+    }
+    if (progress === 0) break
+  }
+
+  let seeded = 0
+  for (let page = 0; page < SEED_MAX_PAGES; page++) {
+    const n = await dedupSeedTracks(call, SEED_PAGE)
+    seeded += n
+    if (n < SEED_PAGE) break
+  }
+
+  console.log(
+    `dedup: seen=${seen} matched=${matched} merged=${merged} ` +
+      `unmatchable=${unmatchable} failed=${failed} seeded=${seeded}`,
+  )
+}
+
+/**
  * Read every files row, keyset-paginated on the unique r2_key. Keyset rather
  * than offset because an offset walk over a table that is being written to
  * skips rows.
@@ -429,13 +530,15 @@ export default {
         await requeueStuck(env)
       } else if (controller.cron === CRON_RECONCILE) {
         await reconcileBucket(env)
+      } else if (controller.cron === CRON_DEDUP) {
+        await dedupSweep(env)
       } else {
         // wrangler.jsonc and this file have drifted. Run the sweeper: it is
         // the cheap, idempotent, time-sensitive one, and doing nothing would
         // let multipart uploads bill silently for a week.
         console.error(
           `unknown cron "${controller.cron}" — expected "${CRON_SWEEP}", ` +
-            `"${CRON_REQUEUE}" or "${CRON_RECONCILE}"; running the sweeper`,
+            `"${CRON_REQUEUE}", "${CRON_RECONCILE}" or "${CRON_DEDUP}"; running the sweeper`,
         )
         await sweep(env)
       }

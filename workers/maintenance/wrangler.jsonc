@@ -32,9 +32,17 @@
   //     the producer. Offset from :17 so the two hourly jobs never contend.
   //   "40 4 * * *" nightly. The R2 reconcile. Listing the whole bucket is
   //     the expensive one, so it runs once, off-peak.
-  // These three strings are duplicated as constants in src/index.ts and must
+  //   "47 * * * *" hourly at :47. M4's dedup backstop. The analysis
+  //     consumer runs the matcher inline after analysis_persist(),
+  //     best-effort: it CANNOT retry, because a redelivery finds the file
+  //     already 'stored' and acks as "not claimable". This job re-runs the
+  //     matcher over anything that came out of analysis with a fingerprint
+  //     and no track_id, then seeds identities for whatever could not be
+  //     matched at all. Offset from :17 and :31 so the three hourly jobs
+  //     never contend.
+  // These four strings are duplicated as constants in src/index.ts and must
   // stay identical -- the scheduled handler dispatches on controller.cron.
-  "triggers": { "crons": ["17 * * * *", "31 * * * *", "40 4 * * *"] },
+  "triggers": { "crons": ["17 * * * *", "31 * * * *", "40 4 * * *", "47 * * * *"] },
 
   // The reconcile is I/O-bound (thousands of awaits, almost no compute), so
   // this ceiling is about a runaway loop, not about normal operation.
