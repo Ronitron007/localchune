@@ -1,7 +1,7 @@
 # localchune — MIT licensed. See LICENSE.
 # CI: every push to main and every PR runs the three test surfaces.
 # Deploys stay a manual decision. The app Worker deploys via deploy.yml
-# (workflow_dispatch — see its header for why CI runners, not the laptop);
+# (workflow_dispatch; its header records the 2026-07-29 wedged-script 403);
 # deploy:analysis / deploy:maintenance stay laptop-only, their secrets
 # deliberately do not live in CI.
 name: ci

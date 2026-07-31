@@ -2,6 +2,22 @@
 
 - Production URL: `https://localchune.butternutcrack.com`
 - Deploy with `npm run deploy` (`astro build && wrangler deploy`).
+- CI deploy: `gh workflow run deploy.yml --ref <branch>` (workflow_dispatch
+  only). It builds with repo secrets, deploys, then fails unless
+  `/api/build-info` serves the deployed sha. The migrations-first rule
+  applies to this path too. After any deploy, `curl
+  https://localchune.butternutcrack.com/api/build-info` answers "is the
+  commit I pushed the one running?" — a merge is NOT a deploy, and prod
+  once sat a full day behind main with nothing red anywhere. No lock spans
+  the two deploy paths: a laptop deploy superseded a CI deploy mid-run on
+  2026-07-31. Last deploy wins; check build-info when paths could race.
+- If a deploy gets a 403 HTML challenge page on POST
+  `.../workers/scripts/localchune/versions` from every network and auth,
+  while other scripts upload fine: that is stuck server-side state on the
+  script object (seen 2026-07-29, ~8 h). One `npx wrangler versions upload`
+  through the alternate path cleared it, and deploys worked immediately
+  after. Probe that first. Do not chase IP, token-scope, or bundle-size
+  theories — all three were falsified that day.
 - `wrangler.jsonc` routes the Worker via the custom-domain form (`custom_domain: true`)
   on the `butternutcrack.com` zone — Cloudflare provisions DNS and the cert.
 - `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are Worker secrets
