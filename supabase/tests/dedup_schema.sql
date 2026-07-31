@@ -206,9 +206,13 @@ select throws_ok(
 -- rewritten again by M4.8's real calibration. What must survive every one of
 -- those edits is the admission: whoever reads dedup_config has to be able to
 -- see, from the row itself, whether the numbers came from evidence.
+-- M4.8 has now run, so the admission this assertion protects has flipped
+-- from "these are guesses" to "these are measurements, and here is the
+-- sample". Either sentence satisfies the rule; a source string that claims
+-- neither does not.
 select ok((select source from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025')
-            like '%NOT calibrated%',
-          'the shipped thresholds say plainly that they are guesses');
+            ~ '(NOT calibrated|^CALIBRATED [0-9]{4})',
+          'the thresholds state their own provenance — guess or measurement, never silent');
 select is((select t_same from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025'),
           0.90::real, 'auto-merge band seeded at 0.90');
 select throws_ok(

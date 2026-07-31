@@ -204,6 +204,21 @@ document.addEventListener('click', (e) => {
     audio.src = body.url
     playMeter.reset()
     if (label) label.textContent = currentTitle
+    // M4 Task 7 — the A/B audition opens at the point of maximum
+    // divergence, not at 0:00. PRD §6 asks for snippets "taken at the point
+    // of maximum divergence", and starting both sides at the top makes the
+    // reviewer listen to the one part that carries no information. Only
+    // /review renders data-start; every other play link omits it and this
+    // branch never runs. `once` matters — without it a later seek would be
+    // yanked back here on the next metadata event.
+    const startAt = Number(a.dataset.start ?? 0)
+    if (Number.isFinite(startAt) && startAt > 0) {
+      audio.addEventListener(
+        'loadedmetadata',
+        () => { audio.currentTime = startAt },
+        { once: true },
+      )
+    }
     // Clear the previous track's elapsed/total and seek position rather
     // than leaving them on screen until the new track's first timeupdate —
     // loadedmetadata still fires normally afterwards and fills in the new
