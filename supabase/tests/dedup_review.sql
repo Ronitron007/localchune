@@ -1,5 +1,5 @@
 begin;
-select plan(56);
+select plan(60);
 
 -- ============================================================
 -- M4 Tasks 7 + 8. The human layer, and the calibrated thresholds.
@@ -189,6 +189,39 @@ set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
 
 select is((select count(*)::int from public.review_queue(50, 'pending', null)), 3,
   'three pairs pending — the reciprocal of the first is folded into it, not counted twice');
+
+-- THE STALE-LABEL TEST (migration 30). 900005 was banded `probable` when
+-- t_probable was 0.70 and its thresholds jsonb still says so, but 0.72 is
+-- below the calibrated 0.80. The LOG keeps the old label; the WORK QUEUE
+-- must not show the row. Nine of production's ten pending pairs were
+-- exactly this, and reading the frozen band would have let the flood
+-- survive its own fix.
+--
+-- Written as the harness, not as the member: only the matcher (service_role)
+-- and this file ever insert a decision, and `authenticated` holds no write
+-- on match_decisions by design.
+reset role;
+insert into public.match_decisions
+  (id, probe_file_id, candidate_file_id, candidate_track_id, algo_version,
+   layer, score, band, overlap_frames, shared_items, duration_delta_ms,
+   thresholds, action)
+values
+  (900005,'00000000-0000-0000-0000-00000000ee03','00000000-0000-0000-0000-00000000ee04',
+   '00000000-0000-0000-0000-00000000cc04','cp-1.6.0/test2/11025','ber',0.72,'probable',
+   351,3,-124531,
+   '{"t_same":0.9,"t_probable":0.7,"t_related":0.6}'::jsonb,'review_queued');
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000e1"}';
+select is((select count(*)::int from public.review_queue(50, 'pending', null)
+            where decision_id = 900005), 0,
+  'a row labelled probable under the OLD thresholds is not in the queue at the new ones');
+select is((select band from public.match_decisions where id = 900005), 'probable',
+  'and its stored band is untouched — the log records what we believed then');
+select is((select (thresholds ->> 't_probable')::real from public.match_decisions
+            where id = 900005), 0.70::real,
+  'as do the thresholds it was judged against — a recalibration explains history, never rewrites it');
+select is((select count(*)::int from public.review_queue(50, 'pending', null)), 3,
+  'so the queue is still the same three real pairs');
 select is((select count(*)::int from public.review_queue(50, 'pending', null)
             where decision_id in (900001, 900004)), 1,
   'ONE row per ordered file pair, and it is the higher-scoring direction');
