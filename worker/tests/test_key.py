@@ -181,3 +181,79 @@ def test_analyze_key_subprocess_failure_does_not_leak_temp_file():
 
     assert "out_path" in captured
     assert not os.path.exists(captured["out_path"])
+
+
+# --- Production failure, 2026-07-29: five Beatport MP3s died with
+# --- "JSONDecodeError: Invalid control character at: line 600 column 26".
+#
+# streaming_extractor_music copies the file's TAGS into its output document
+# verbatim, and real tags from real stores carry raw control characters.
+# Python's JSON parser rejects those by default. The extractor had already
+# spent ~40 vCPU-s; the audio was fine and the key was computed; the analysis
+# died formatting the answer.
+#
+# The bug is entirely in the PARSER, so the fixture that reproduces it is a
+# document, not audio — and it is reproduced here byte for byte, including
+# the numbers around it, so the assertions prove the relaxation does not
+# disturb anything the key detector reads.
+
+import json
+
+from app.key import _load_extractor_json
+
+
+def _extractor_doc(tag_value: str) -> str:
+    return json.dumps({
+        'metadata': {'tags': {'comment': [tag_value], 'artist': ['ANMA']}},
+        'tonal': {
+            'key_edma': {'key': 'C', 'scale': 'minor', 'strength': 0.7412},
+            'key_temperley': {'key': 'C', 'scale': 'minor'},
+            'key_krumhansl': {'key': 'Eb', 'scale': 'major'},
+        },
+    })
+
+
+def test_a_control_character_in_a_tag_is_not_an_analysis_failure(tmp_path):
+    # json.dumps ESCAPES the control character, so put a raw one back in —
+    # that is what the C++ writer emits.
+    doc = _extractor_doc('placeholder').replace('placeholder', 'Beatport\rRelease')
+    p = tmp_path / 'out.json'
+    # write_bytes, NOT write_text: text mode translates a lone \r to \n on the
+    # way out and the fixture would quietly stop reproducing the bug.
+    p.write_bytes(doc.encode('utf-8'))
+
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(doc)                      # the production failure, exactly
+
+    got = _load_extractor_json(str(p))
+    assert got['metadata']['tags']['comment'] == ['Beatport\rRelease']
+    # The numbers the key detector actually reads are untouched.
+    assert got['tonal']['key_edma']['strength'] == 0.7412
+    assert got['tonal']['key_edma']['key'] == 'C'
+
+
+@pytest.mark.parametrize('ctrl', ['\r', '\n', '\x00', '\x1f'])
+def test_every_raw_control_character_survives_the_read(tmp_path, ctrl):
+    p = tmp_path / 'out.json'
+    p.write_bytes(_extractor_doc('placeholder')
+                  .replace('placeholder', f'a{ctrl}b').encode('utf-8'))
+    assert _load_extractor_json(str(p))['metadata']['tags']['comment'] == [f'a{ctrl}b']
+
+
+def test_invalid_utf8_in_a_tag_is_not_an_analysis_failure_either(tmp_path):
+    """The same tags are not guaranteed to be valid UTF-8. A
+    UnicodeDecodeError would fail the file just as completely, one layer
+    before the JSON parser ever sees it."""
+    p = tmp_path / 'out.json'
+    raw = _extractor_doc('placeholder').replace('placeholder', 'LATIN1').encode()
+    p.write_bytes(raw.replace(b'LATIN1', b'caf\xe9'))       # 0xE9 is not UTF-8
+    assert _load_extractor_json(str(p))['tonal']['key_edma']['strength'] == 0.7412
+
+
+def test_genuinely_broken_json_still_raises(tmp_path):
+    """strict=False relaxes control characters, not structure. A truncated
+    document is a real failure and must stay one."""
+    p = tmp_path / 'out.json'
+    p.write_bytes(b'{"tonal": {"key_edma": ')
+    with pytest.raises(json.JSONDecodeError):
+        _load_extractor_json(str(p))

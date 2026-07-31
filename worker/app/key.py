@@ -42,6 +42,41 @@ _ALT_PROFILE_TONAL_KEYS = {
     'krumhansl': 'key_krumhansl',
 }
 
+def _load_extractor_json(path: str) -> dict:
+    """streaming_extractor_music's output document.
+
+    TWO deliberate relaxations, both paid for in production on 2026-07-29,
+    when five Beatport MP3s failed with
+
+        JSONDecodeError: Invalid control character at: line 600 column 26
+
+    The extractor copies the file's TAGS into its output verbatim. Real tags
+    from real stores contain raw control characters — a stray CR in a
+    comment, a NUL left by a broken tagger — and Python's JSON parser
+    rejects those in strict mode, which is the default. The extractor had
+    already done all ~40 vCPU-s of its work by then; the file was fine, the
+    key was computed, and the analysis died formatting the answer.
+
+    - strict=False accepts the control characters inside string values.
+      RFC 8259 forbids them unescaped, so this document is not strictly
+      valid JSON — but it is what the binary emits, and we do not get to
+      choose.
+    - errors='replace' on the read: the same tags are not guaranteed to be
+      valid UTF-8 either, and a UnicodeDecodeError here would fail the file
+      just as completely, one layer earlier.
+
+    Neither touches a NUMBER, so nothing this function returns to the key
+    detector can be altered by either relaxation.
+
+    Read as BYTES and decoded by hand rather than opened in text mode: text
+    mode applies universal-newline translation, which rewrites a lone CR to
+    LF — silently editing the very characters this function exists to carry
+    through intact.
+    """
+    with open(path, 'rb') as fh:
+        return json.loads(fh.read().decode('utf-8', 'replace'), strict=False)
+
+
 def analyze_key(path: str) -> Key:
     """Essentia as an ARM'S-LENGTH SUBPROCESS. Never `import essentia` —
     see PRD 7.3 rule 2. argv in, JSON out, no shared address space.
@@ -57,8 +92,7 @@ def analyze_key(path: str) -> Key:
         subprocess.run(
             ['streaming_extractor_music', path, out_path],
             capture_output=True, check=True)
-        with open(out_path) as fh:
-            doc = json.load(fh)
+        doc = _load_extractor_json(out_path)
         tonal = doc['tonal']
 
         primary = tonal['key_edma']

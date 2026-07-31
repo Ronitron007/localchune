@@ -17,8 +17,12 @@
 // key should have no HTTP surface at all.
 
 import { Container } from '@cloudflare/containers'
-import { handleDeadLetter, handleMessage, type AnalyzeMessage } from './consumer'
-import { analysisBegin, analysisFail, analysisPersist } from './supabase'
+import { runDedup } from '../../../src/lib/dedup'
+import { makeDedupDeps } from '../../../src/lib/dedup-rpc'
+import {
+  handleDeadLetter, handleMessage, R2MissingError, type AnalyzeMessage,
+} from './consumer'
+import { analysisBegin, analysisFail, analysisFileState, analysisPersist, rpc } from './supabase'
 import type { AnalyzeResponse } from './types'
 
 /**
@@ -56,7 +60,13 @@ export class AnalysisContainer extends Container<Env> {
   // $0.00 month into a ~$0.73 one for doing exactly the same work.
   sleepAfter = '30s'
 
-  envVars = { ANALYSIS_VERSION: 'v1' }
+  // v2 = M4 Task 1: a real Forensics verdict and content_sha256. The three
+  // copies of this string (here, src/lib/analyze-queue.ts and the
+  // maintenance Worker's cron) must move together — a mismatch means a
+  // backfill silently re-stores under the old version and nothing says so.
+  // This one only reaches /healthz; the two producers are what travel in the
+  // queue message and end up in audio_analysis.analysis_version.
+  envVars = { ANALYSIS_VERSION: 'v2' }
 
   override onStart() {
     console.log('container started')
@@ -143,7 +153,9 @@ export class AnalysisContainer extends Container<Env> {
    */
   async analyse(fileId: string, r2Key: string, version: string): Promise<AnalyzeResponse> {
     const obj = await this.env.AUDIO.get(r2Key)
-    if (!obj) throw new Error(`r2 miss: ${r2Key}`)
+    // Its own error type, because the consumer treats it as terminal and
+    // every other throw in this method as retryable. See R2MissingError.
+    if (!obj) throw new R2MissingError(r2Key)
 
     // Streamed, never buffered — a 15-minute FLAC is ~150 MB and a Worker
     // has 128 MB of memory to play with.
@@ -222,16 +234,24 @@ export class AnalysisContainer extends Container<Env> {
  * Instance pool. Containers are addressed by DO name, so the name IS the
  * routing decision: a fresh name per file would cold-start an image on every
  * single track, and one shared name would serialise a backfill through a
- * single box. POOL is kept below `max_instances` (8) so a burst can never
- * trip the limit — `max_instances` ERRORS when exceeded, it does not queue.
+ * single box. POOL is kept below `max_instances` (12, wrangler.jsonc) so a
+ * burst can never trip the limit — `max_instances` ERRORS when exceeded, it
+ * does not queue.
  *
  * Hashing the file id rather than picking at random also gives a retry the
  * SAME instance, which is warm and already holds the model. Idempotency does
  * not depend on that — it is enforced by analysis_persist()'s upsert on
  * file_id — and a pool collision serialises on the container's own
  * asyncio.Lock instead of doubling RSS.
+ *
+ * 8, raised from 4 on 2026-07-29 for M4's backfill: every file in the pool
+ * has to be re-analysed at ~45 vCPU-s each, and four at a time made that a
+ * multi-hour wall-clock job. Horizontal only — the instance stays at
+ * 1 vCPU / 3 GiB, because Essentia and Beat-This are both single-threaded
+ * here (see worker/Dockerfile's thread pins) and a second vCPU per box would
+ * bill for a core nothing runs on.
  */
-const POOL = 4
+const POOL = 8
 
 export function containerFor(env: Env, fileId: string) {
   let h = 0
@@ -264,6 +284,7 @@ export default {
       for (const m of batch.messages) {
         const outcome = await handleDeadLetter(m.body, m.attempts, {
           fail: (fileId, reason) => analysisFail(env, fileId, reason),
+          fileState: (fileId) => analysisFileState(env, fileId),
         })
         if (outcome.action === 'ack') {
           console.log(`[dlq] ${outcome.reason}`)
@@ -276,6 +297,11 @@ export default {
       return
     }
 
+    // One per invocation, not one per message: max_batch_size is 1, and the
+    // deps close over nothing but `env`.
+    const dedupDeps = makeDedupDeps(
+      <T,>(fn: string, args: Record<string, unknown>) => rpc<T>(env, fn, args))
+
     for (const m of batch.messages) {
       const outcome = await handleMessage(m.body, m.attempts, {
         begin: (fileId) => analysisBegin(env, fileId),
@@ -283,6 +309,8 @@ export default {
           containerFor(env, msg.file_id).analyse(msg.file_id, msg.r2_key, msg.analysis_version),
         persist: (result) => analysisPersist(env, result),
         fail: (fileId, reason) => analysisFail(env, fileId, reason),
+        dedup: (fileId, sha) => runDedup(fileId, dedupDeps, sha),
+        fileState: (fileId) => analysisFileState(env, fileId),
       })
 
       if (outcome.action === 'ack') {

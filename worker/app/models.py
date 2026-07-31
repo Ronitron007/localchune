@@ -71,6 +71,21 @@ class Forensics(BaseModel):
     quality_score: float
     spectrogram_key: Optional[str] = None   # only written on a suspect verdict
 
+    # The three quality_score() inputs that used to be computed in main.py,
+    # fed to quality_score(), and then thrown away. is_upgrade() (PRD §11's
+    # keep-if-better rule) takes TEN inputs; without these three a caller
+    # rebuilding them from audio_analysis scores with neutral defaults and
+    # loses the fake-FLAC branch entirely. M4 Task 4 recorded that as a
+    # schema gap; this is the producer half of the fix, and migration 25 is
+    # the storage half.
+    #
+    # Defaulted rather than required, so an OLD stored response still
+    # validates and so a partial forensics pass cannot fail the whole
+    # analysis over a boolean.
+    lame_disagrees: bool = False
+    mono_vs_stereo: bool = False
+    decode_errors: bool = False
+
 
 class AnalyzeResponse(BaseModel):
     file_id: str
@@ -93,4 +108,14 @@ class AnalyzeResponse(BaseModel):
     preview_key: Optional[str] = None
     artwork_key: Optional[str] = None
     thumb_key: Optional[str] = None
+    content_sha256: str = ''
+    """PRD §6 layer 0, hex. Empty when the analysis failed before hashing.
+
+    Lower-case hex rather than bytes because this rides a JSON payload into
+    analysis_persist(), which decodes it with `decode(..., 'hex')` into the
+    bytea column. The DEFAULT MATTERS: '' is what analysis_persist() checks
+    for before touching files.content_sha256, so an old container answering a
+    new schema leaves the column alone instead of writing an empty digest
+    that would then collide with the next empty digest on a UNIQUE index.
+    """
     cpu_seconds: float = 0.0

@@ -50,11 +50,17 @@
       "instance_type": { "vcpu": 1, "memory_mib": 3072, "disk_mb": 6000 },
 
       // max_instances ERRORS when exceeded, it does not queue. Kept above the
-      // consumer's max_concurrency (4, Task 9) and above the DO pool size (4,
+      // consumer's max_concurrency (8, below) and above the DO pool size (8,
       // src/index.ts) so a burst never trips it, and low enough that a
       // runaway loop is bounded. NOT enforced in local dev — the "too many
       // concurrent containers" error is a production-only failure mode.
-      "max_instances": 8
+      //
+      // 12, raised from 8 on 2026-07-29 alongside the 4 -> 8 pool bump for
+      // M4's backfill. The MARGIN is the point, not the number: it is the
+      // pool size plus half again, so an instance that is still shutting
+      // down while its replacement starts does not push the live count over
+      // the ceiling.
+      "max_instances": 12
     }
   ],
 
@@ -85,13 +91,14 @@
         // nine neighbours — nine more ~55 vCPU-s container runs, billed, for
         // a failure that had nothing to do with them.
         "max_batch_size": 1,
-        // Strictly below the container's max_instances (8, above).
+        // Strictly below the container's max_instances (12, above).
         // max_instances ERRORS when exceeded, it does not queue, and it is
         // NOT enforced in local dev — so `wrangler dev` will never show you
         // this failure. The margin is the design. It also sits at the DO
-        // pool size (4, src/index.ts), which is the real ceiling on distinct
-        // instances a burst can wake.
-        "max_concurrency": 4,
+        // pool size (8, src/index.ts), which is the real ceiling on distinct
+        // instances a burst can wake — raising this above the pool would buy
+        // nothing but collisions on the containers' own asyncio.Lock.
+        "max_concurrency": 8,
         // Five attempts, then the DLQ. files.state is the system of
         // record, never the queue, whose retention is finite whatever the
         // plan says — see the DLQ consumer below for what actually happens
