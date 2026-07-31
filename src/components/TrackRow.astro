@@ -88,7 +88,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       heart when liked_by_me, empty otherwise — same convention Task 2
       established for the display-only cell this replaces. */}
   <td class="likes num">
-    <form method="post" action={`/api/track/${track.file_id}/like`} class="likeform">
+    <form method="post" action={`/api/track/${track.file_id}/like`} class="likeform" data-astro-reload>
       <button
         type="submit"
         class="likebtn"

@@ -142,7 +142,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               class and markup shape as TrackRow.astro's pool-table cell,
               so site.ts's one document-level submit handler covers both. */}
           <p class="signals">
-            <form method="post" action={`/api/track/${t.file_id}/like`} class="likeform">
+            <form method="post" action={`/api/track/${t.file_id}/like`} class="likeform" data-astro-reload>
               <button
                 type="submit"
                 class="likebtn"
@@ -183,7 +183,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           <li>
             <span class="tagchip">{tag}</span>
             {isUploader && (
-              <form class="tagform" method="post" action={tagsAction}>
+              <form class="tagform" method="post" action={tagsAction} data-astro-reload>
                 <input type="hidden" name="intent" value="remove" />
                 <input type="hidden" name="tag_key" value={tag} />
                 <button type="submit" class="btn-danger" aria-label={`Remove tag ${tag}`}>×</button>
@@ -193,7 +193,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
         ))}
       </ul>
       {isUploader && (
-        <form class="tagform" method="post" action={tagsAction}>
+        <form class="tagform" method="post" action={tagsAction} data-astro-reload>
           <label>
             <span class="sr-only">Add a tag</span>
             <input type="text" name="tag" maxlength="32" placeholder="add a tag" required />
@@ -220,7 +220,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
         {myCrates.length === 0 ? (
           <p class="explain">You have no crates yet. <a href="/crates">Create one</a>.</p>
         ) : (
-          <form method="post" action="/api/crate/add-dispatch" class="addcrateform">
+          <form method="post" action="/api/crate/add-dispatch" class="addcrateform" data-astro-reload>
             <input type="hidden" name="file_id" value={t.file_id} />
             <label>
               <span class="sr-only">Choose a crate</span>

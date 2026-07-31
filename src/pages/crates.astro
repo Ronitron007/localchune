@@ -38,7 +38,7 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
 <Shell title="localchune — crates">
   <h1>Crates</h1>
 
-  <form method="post" action="/api/crates" class="cratecreate">
+  <form method="post" action="/api/crates" class="cratecreate" data-astro-reload>
     <label>
       <span class="sr-only">New crate name</span>
       <input type="text" name="name" placeholder="New crate name" maxlength="80" required />

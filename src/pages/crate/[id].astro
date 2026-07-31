@@ -78,14 +78,14 @@ const HEADERS = [
           page's tag editor: every one of these works with no JS. */}
       {isOwner && (
         <div class="cratemanage">
-          <form method="post" action={`/api/crate/${id}/rename`} class="renameform">
+          <form method="post" action={`/api/crate/${id}/rename`} class="renameform" data-astro-reload>
             <label>
               <span class="sr-only">Rename crate</span>
               <input type="text" name="name" value={meta.name} maxlength="80" required />
             </label>
             <button type="submit" class="btn-secondary">Rename</button>
           </form>
-          <form method="post" action={`/api/crate/${id}/public`} class="publicform">
+          <form method="post" action={`/api/crate/${id}/public`} class="publicform" data-astro-reload>
             <input type="hidden" name="public" value={meta.is_public ? 'false' : 'true'} />
             <button type="submit" class="btn-secondary">
               {meta.is_public ? 'Make private' : 'Make public'}
@@ -102,6 +102,7 @@ const HEADERS = [
             action={`/api/crate/${id}/delete`}
             class="deleteform"
             data-confirm="Delete this crate? This cannot be undone."
+            data-astro-reload
           >
             <button type="submit" class="btn-danger">Delete crate</button>
           </form>
@@ -135,7 +136,7 @@ const HEADERS = [
             <TrackRow track={crateItemToPoolTrack(item)} reorderable={isOwner}>
               {isOwner && (
                 <td class="cratecontrols" slot="controls">
-                  <form method="post" action={`/api/crate/${id}/move`} class="moveform">
+                  <form method="post" action={`/api/crate/${id}/move`} class="moveform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
                     <input type="hidden" name="dir" value="up" />
                     <button
@@ -145,7 +146,7 @@ const HEADERS = [
                       disabled={idx === 0}
                     >↑</button>
                   </form>
-                  <form method="post" action={`/api/crate/${id}/move`} class="moveform">
+                  <form method="post" action={`/api/crate/${id}/move`} class="moveform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
                     <input type="hidden" name="dir" value="down" />
                     <button
@@ -155,7 +156,7 @@ const HEADERS = [
                       disabled={idx === items.length - 1}
                     >↓</button>
                   </form>
-                  <form method="post" action={`/api/crate/${id}/remove`} class="removeform">
+                  <form method="post" action={`/api/crate/${id}/remove`} class="removeform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
                     <button
                       type="submit"
