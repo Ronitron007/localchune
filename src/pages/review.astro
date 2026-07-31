@@ -1,0 +1,96 @@
+---
+// src/pages/review.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The review queue. M4 Task 7.
+//
+// Server-rendered, zero islands, exactly like the pool: PRD §6 budgets "a
+// duplicate decision must take about two seconds", and a page that is
+// already complete when it arrives beats one that fetches, hydrates and
+// then renders. Every verdict is a native form POST, so the whole page
+// works with JavaScript disabled — only cross-page playback is lost.
+//
+// OWNER ONLY, TWICE. review_queue() raises 42501 for anyone else, and this
+// page turns that into a 404 rather than a 403: the same rule
+// /api/admin/allowlist.ts states — do not confirm the route exists to a
+// non-owner. The database is the authority; this is the redundant half.
+import Shell from '../layouts/Shell.astro'
+import ComparePanel from '../components/ComparePanel.astro'
+import {
+  REVIEW_PAGE_SIZE,
+  REVIEW_STATUSES,
+  parseReviewQuery,
+  reviewHref,
+  type ReviewPair,
+} from '../lib/review-api'
+
+const status = parseReviewQuery(Astro.url.searchParams)
+
+const { data, error } = await Astro.locals.supabase.rpc('review_queue', {
+  p_limit: REVIEW_PAGE_SIZE,
+  p_status: status,
+  p_decision_id: null,
+})
+if (error && error.code === '42501') return new Response('Not found', { status: 404 })
+if (error) console.error('review_queue failed:', error.message)
+
+// An outage and an empty queue must not read the same. `error` here is
+// anything other than the 42501 already handled above.
+const loadFailed = !!error
+const pairs = (data ?? []) as ReviewPair[]
+
+const { data: cfg, error: cfgError } = await Astro.locals.supabase
+  .from('dedup_config').select('t_same,t_probable,t_related,source').limit(1)
+if (cfgError) console.error('dedup_config read failed:', cfgError.message)
+const thresholds = cfg?.[0] ?? null
+---
+<Shell title="localchune — review">
+  <h1>Review</h1>
+
+  <p class="explain">
+    Pairs the matcher scored high enough to suspect but not high enough to merge on
+    its own. Everything above the merge threshold has already collapsed; everything
+    below is logged and left alone.
+    {thresholds !== null && (
+      <>
+        {' '}Current bands: merge at <span class="num">{thresholds.t_same}</span>,
+        review from <span class="num">{thresholds.t_probable}</span>,
+        related from <span class="num">{thresholds.t_related}</span>.
+      </>
+    )}
+  </p>
+
+  <form method="get" action="/review" class="reviewfilter">
+    <label>
+      <span class="sr-only">Show</span>
+      <select name="status">
+        {REVIEW_STATUSES.map((s) => (
+          <option value={s} selected={s === status}>{s}</option>
+        ))}
+      </select>
+    </label>
+    <button type="submit" class="btn-secondary">Show</button>
+    {status !== 'pending' && <a href={reviewHref('pending')}>Back to pending</a>}
+  </form>
+
+  {loadFailed ? (
+    <p class="empty">The review queue could not be loaded. Reload in a moment.</p>
+  ) : pairs.length === 0 ? (
+    <p class="empty">
+      {status === 'pending'
+        ? 'Nothing to review. Every suspected duplicate has been answered.'
+        : 'No rows for that filter.'}
+    </p>
+  ) : (
+    <section class="reviewqueue">
+      {pairs.map((pair) => <ComparePanel pair={pair} canResolve={true} />)}
+    </section>
+  )}
+
+  <p class="pager">
+    <span class="counts">{pairs.length} pair{pairs.length === 1 ? '' : 's'}</span>
+    {' · '}<a href="/merges">merges feed ›</a>
+  </p>
+</Shell>

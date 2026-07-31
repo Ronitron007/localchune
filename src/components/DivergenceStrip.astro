@@ -1,0 +1,42 @@
+---
+// src/components/DivergenceStrip.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// One bar per second of overlap. Zero JavaScript, zero canvas: this is a
+// few hundred spans with an inline height, which is exactly what a
+// brutalist monochrome page can express natively.
+//
+// PRD §6 on why it exists at all: "so you can see WHERE they diverge (a
+// matching body with a divergent first 30 s = different intro edit, not a
+// different track)". That distinction is invisible in the score and obvious
+// here — and it is the one thing that turns a two-second decision into an
+// informed one.
+//
+// A layer-0 merge (content_sha256 / fp_sha256) has no per-second array at
+// all. It renders as a sentence, not as an empty bordered box: an empty box
+// reads as a rendering failure.
+import { barHeightPct } from '../lib/review-api'
+
+interface Props { ber: number[] | null; peakAt?: number }
+const { ber, peakAt = -1 } = Astro.props
+const bars = ber ?? []
+---
+{bars.length === 0 ? (
+  <p class="explain">No per-second detail — this pair matched on a whole-file digest, so there is nothing to diverge.</p>
+) : (
+  <div
+    class="strip"
+    role="img"
+    aria-label={`Bit-error rate per second across ${bars.length} seconds of overlap`}
+  >
+    {bars.map((v, s) => (
+      <span
+        class:list={['bar', { peak: s === peakAt }]}
+        style={`height:${barHeightPct(v)}%`}
+        title={`${s}s — ${((v ?? 0) * 100).toFixed(1)}% of bits differ`}
+      />
+    ))}
+  </div>
+)}

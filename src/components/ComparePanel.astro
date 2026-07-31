@@ -1,0 +1,128 @@
+---
+// src/components/ComparePanel.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// One pending pair, everything a person needs to answer "same recording?"
+// in about two seconds — PRD §6's stated budget, and the reason this is
+// server-rendered with no island: the page is already complete when it
+// arrives.
+//
+// Reading order matters and is deliberate:
+//   1. the score, and what the calibrated bands make of it
+//   2. both sides side by side — name, uploader, tier, format, bitrate,
+//      length — so the CHEAPER encode is obvious at a glance
+//   3. the divergence strip, which answers "where do they differ"
+//   4. the three verdicts
+//
+// The two play links are the pool's own `a.play[data-track-id]` contract,
+// so the persisted player handles them and nothing new is bound. They carry
+// data-start, which only /review renders: the audition opens at the point
+// of maximum divergence rather than at 0:00.
+import DivergenceStrip from './DivergenceStrip.astro'
+import QualityBadge from './QualityBadge.astro'
+import {
+  divergencePeakSecond,
+  formatDelta,
+  formatLength,
+  formatScore,
+  type ReviewPair,
+} from '../lib/review-api'
+
+interface Props { pair: ReviewPair; canResolve: boolean }
+const { pair, canResolve } = Astro.props
+
+// TWO DIFFERENT SECONDS, and conflating them is the obvious mistake.
+//   peakAt   where the two recordings actually diverge — the bar to outline.
+//   startAt  two seconds earlier, so the reviewer hears the difference
+//            ARRIVE rather than landing in the middle of it.
+// Highlighting startAt would put the outline on a bar that is identical in
+// both files, which is precisely the bar carrying no information.
+const peakAt = divergencePeakSecond(pair.per_second_ber, { leadIn: 0 })
+const startAt = divergencePeakSecond(pair.per_second_ber, { leadIn: 2 })
+
+const sides = [
+  {
+    key: 'probe',
+    fileId: pair.probe_file_id,
+    artist: pair.probe_artist ?? 'Unknown artist',
+    title: pair.probe_title ?? pair.probe_filename,
+    filename: pair.probe_filename,
+    uploader: pair.probe_uploader ?? 'unknown',
+    tier: pair.probe_tier,
+    container: pair.probe_container ?? '?',
+    duration: pair.probe_duration_ms,
+    kbps: pair.probe_kbps,
+  },
+  {
+    key: 'candidate',
+    fileId: pair.cand_file_id,
+    artist: pair.cand_artist ?? 'Unknown artist',
+    title: pair.cand_title ?? pair.cand_filename,
+    filename: pair.cand_filename,
+    uploader: pair.cand_uploader ?? 'unknown',
+    tier: pair.cand_tier,
+    container: pair.cand_container ?? '?',
+    duration: pair.cand_duration_ms,
+    kbps: pair.cand_kbps,
+  },
+]
+---
+<article class="comparepanel">
+  <header class="compareheader">
+    <span class="num comparescore">{formatScore(pair.score)}</span>
+    <span class="explain">
+      {pair.layer === 'ber' ? 'fingerprint bit-error rate' : `matched on ${pair.layer}`}
+      {' · '}{formatDelta(pair.duration_delta_ms)}
+      {pair.shared_items !== null && <>{' · '}{pair.shared_items} shared items</>}
+      {pair.overlap_frames !== null && <>{' · '}{pair.overlap_frames} frames overlap</>}
+    </span>
+  </header>
+
+  <div class="comparesides">
+    {sides.map((s) => (
+      <section class="compareside">
+        <h3>
+          <a
+            class="play"
+            href={`/track/${s.fileId}`}
+            data-track-id={s.fileId}
+            data-label={`${s.artist} — ${s.title}`}
+            data-start={startAt > 0 ? String(startAt) : undefined}
+            aria-label={`Play ${s.title}`}
+          >▶</a>
+          {' '}
+          <a href={`/track/${s.fileId}`}>{s.artist} — {s.title}</a>
+        </h3>
+        <dl>
+          <dt>File</dt><dd>{s.filename}</dd>
+          <dt>Uploader</dt><dd>{s.uploader}</dd>
+          <dt>Quality</dt><dd><QualityBadge tier={s.tier} lossyAncestor={null} measCutoffHz={null} /></dd>
+          <dt>Format</dt><dd>{s.container}{s.kbps !== null && <> · <span class="num">{s.kbps}</span> kbps</>}</dd>
+          <dt>Length</dt><dd class="num">{formatLength(s.duration)}</dd>
+        </dl>
+      </section>
+    ))}
+  </div>
+
+  <div class="comparestrip">
+    <DivergenceStrip ber={pair.per_second_ber} peakAt={peakAt} />
+    {peakAt > 0 && (
+      <p class="explain">
+        They diverge most at {peakAt}s. Both play links open at {startAt}s, so the
+        difference arrives rather than being half over when you get there.
+      </p>
+    )}
+  </div>
+
+  {pair.verdict !== null ? (
+    <p class="explain">Answered: <strong>{pair.verdict}</strong>.</p>
+  ) : canResolve ? (
+    <form method="post" action={`/api/review/${pair.decision_id}/resolve`} class="verdictform">
+      <button type="submit" name="verdict" value="same" class="btn">Same recording</button>
+      <button type="submit" name="verdict" value="version" class="btn-secondary">Different version</button>
+      <button type="submit" name="verdict" value="different" class="btn-secondary">Not a duplicate</button>
+    </form>
+  ) : null}
+</article>

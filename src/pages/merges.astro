@@ -1,0 +1,111 @@
+---
+// src/pages/merges.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The merges feed. M4 Task 7, and it is not optional.
+//
+// PRD §6's last "where dedup will fail" bullet, verbatim: "Nothing
+// currently surfaces a completed auto-merge for after-the-fact review.
+// Wrong merges are cheap to undo only if someone notices." This is the
+// noticing. It shows the AUTOMATIC merges alongside the human ones,
+// because the automatic ones are the dangerous half.
+//
+// EVERY MEMBER READS IT; only the owner sees an Undo. The spec's rule is
+// omit, don't disable — a disabled button is a promise with no delivery
+// date. undo_merge() enforces the same line in the database, so the
+// omission is presentation and the gate is real.
+import Shell from '../layouts/Shell.astro'
+import { MERGES_PAGE_SIZE, formatScore, type MergeRow } from '../lib/review-api'
+
+const isOwner = Astro.locals.member?.role === 'owner'
+
+const { data, error } = await Astro.locals.supabase.rpc('recent_merges', {
+  p_limit: MERGES_PAGE_SIZE,
+})
+if (error) console.error('recent_merges failed:', error.message)
+const loadFailed = !!error
+const merges = (data ?? []) as MergeRow[]
+
+const label = (artist: string | null, title: string | null, fallback: string): string =>
+  title === null ? fallback : `${artist ?? 'Unknown artist'} — ${title}`
+---
+<Shell title="localchune — merges">
+  <h1>Merges</h1>
+
+  <p class="explain">
+    Every time two files were declared the same recording, by the matcher or by a
+    person. Nothing is deleted by a merge — the losing identity is marked, its files
+    are re-pointed, and an undo puts all of it back.
+  </p>
+
+  {loadFailed ? (
+    <p class="empty">The merges feed could not be loaded. Reload in a moment.</p>
+  ) : merges.length === 0 ? (
+    <p class="empty">No merges yet.</p>
+  ) : (
+    <section class="tracktable">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">#</th>
+            <th scope="col">Kept</th>
+            <th scope="col">Folded in</th>
+            <th scope="col">Score</th>
+            <th scope="col">By</th>
+            <th scope="col">When</th>
+            <th scope="col"><span class="sr-only">Undo</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {merges.map((m) => (
+            <tr class={m.undone_at !== null ? 'mergerow undone' : 'mergerow'}>
+              <td class="num">{m.merge_id}</td>
+              <td>
+                {m.winner_file_id !== null ? (
+                  <a href={`/track/${m.winner_file_id}`}>
+                    {label(m.winner_artist, m.winner_title, 'a file')}
+                  </a>
+                ) : <span class="explain">a track with no file</span>}
+                {m.winner_container !== null && <span class="explain"> · {m.winner_container}</span>}
+              </td>
+              <td>
+                {m.loser_file_id !== null ? (
+                  <a href={`/track/${m.loser_file_id}`}>
+                    {label(m.loser_artist, m.loser_title, 'a file')}
+                  </a>
+                ) : <span class="explain">nothing — the identity was empty</span>}
+                {m.moved_files > 1 && <span class="explain"> · +{m.moved_files - 1} more</span>}
+              </td>
+              <td class="num">
+                {formatScore(m.score)}
+                {m.layer !== null && m.layer !== 'ber' && <span class="explain"> {m.layer}</span>}
+              </td>
+              <td class="uploader">{m.is_auto ? 'matcher' : (m.performer_name ?? 'a member')}</td>
+              <td class="added num">{m.performed_at.slice(0, 10)}</td>
+              <td>
+                {m.undone_at !== null ? (
+                  <span class="statechip">undone{m.undone_by_name !== null && ` by ${m.undone_by_name}`}</span>
+                ) : isOwner ? (
+                  <form
+                    method="post"
+                    action={`/api/merges/${m.merge_id}/undo`}
+                    data-confirm="Undo this merge? Both identities come back and every moved file returns to the track it came from."
+                  >
+                    <button type="submit" class="btn-danger">Undo</button>
+                  </form>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )}
+
+  <p class="pager">
+    <span class="counts">{merges.length} merge{merges.length === 1 ? '' : 's'}</span>
+    {isOwner && <>{' · '}<a href="/review">review queue ›</a></>}
+  </p>
+</Shell>

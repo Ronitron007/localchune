@@ -497,3 +497,71 @@ dd { margin: 0; }
   white-space: nowrap;
   border: 0;
 }
+
+/* --- M4 Task 7: the review queue and the merges feed.
+     Monochrome, hard geometry, no radius, no shadow — the six tokens only.
+     Every colour on these two pages comes from --fg/--mid/--line/--faint,
+     and the only non-monochrome thing is the three --btn-* verdict buttons,
+     which is the one deliberate exception the button system already owns. */
+
+.reviewfilter { display: flex; align-items: center; gap: var(--pad-2); flex-wrap: wrap; }
+.reviewqueue > * + * { margin-top: var(--pad-3); }
+
+/* One pending pair. The border is what makes two panels read as two
+   questions rather than one long page. */
+.comparepanel { border: 1px solid var(--line); padding: var(--pad-2); }
+.comparepanel > * + * { margin-top: var(--pad-2); }
+.compareheader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pad-2);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--faint);
+  padding-bottom: var(--pad-1);
+}
+.comparescore { font-size: 1.4rem; font-weight: bold; }
+
+/* Side by side on a desktop, stacked on a phone. Two columns of equal
+   width is the whole point: the reviewer compares down the rows, and a
+   column that sizes to its content would put "flac" and "mp3" at
+   different x positions. */
+.comparesides { display: grid; grid-template-columns: 1fr 1fr; gap: var(--pad-2); }
+@media (max-width: 40rem) { .comparesides { grid-template-columns: 1fr; } }
+.compareside { border: 1px solid var(--faint); padding: var(--pad-2); min-width: 0; }
+.compareside h3 { margin: 0 0 var(--pad-1); font-size: 1rem; overflow-wrap: anywhere; }
+.compareside dd { overflow-wrap: anywhere; }
+
+.verdictform { display: flex; gap: var(--pad-1); flex-wrap: wrap; }
+
+/* The divergence strip: one bar per second of overlap, ~360 of them.
+   overflow-x on the strip itself, never on the page — a 375 px viewport
+   scrolls the strip and nothing else. */
+.comparestrip > * + * { margin-top: var(--pad-1); }
+.strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 48px;
+  border: 1px solid var(--line);
+  padding: 2px;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.strip .bar { flex: 1 0 2px; min-width: 2px; background: var(--fg); }
+.strip .bar.peak { outline: 1px solid var(--mid); background: var(--mid); }
+
+/* An undone merge stays in the feed — struck through, never removed. The
+   event is the record; deleting it would lose the fact that someone
+   noticed. */
+.mergerow.undone td { color: var(--mid); text-decoration: line-through; }
+.mergerow.undone td:last-child { text-decoration: none; }
+
+/* The nav's pending-review count. Sits inside the Review link, so it
+   inherits the link's colour and never becomes a second focus target. */
+.navbadge {
+  display: inline-block;
+  margin-left: calc(var(--pad-1) / 2);
+  padding: 0 calc(var(--pad-1) / 2);
+  border: 1px solid var(--line);
+  font-size: 0.85em;
+}

@@ -6,6 +6,23 @@
 import { creditsRemaining } from '../lib/session'
 const m = Astro.locals.member!
 const here = Astro.url.pathname
+
+// M4 Task 7 — the review badge. One count(*), owner only.
+//
+// review_pending_count() RETURNS 0 for a non-owner rather than raising,
+// because AppNav renders on every page for everyone and a nav that throws
+// takes the whole site with it. The owner test below is therefore about
+// what to SHOW, not about authorization — the database already answered
+// that.
+//
+// A failed RPC degrades to no badge. The nav is not the place to report a
+// database outage; the page below it will.
+let pending = 0
+if (m.role === 'owner') {
+  const { data, error } = await Astro.locals.supabase.rpc('review_pending_count')
+  if (error) console.error('review_pending_count failed:', error.message)
+  else if (typeof data === 'number') pending = data
+}
 ---
 <nav class="appnav">
   <a href="/" aria-current={here === '/' ? 'page' : undefined}>Pool</a>
@@ -13,9 +30,18 @@ const here = Astro.url.pathname
   <a href="/uploads" aria-current={here === '/uploads' ? 'page' : undefined}>My uploads</a>
   {/* M6a Task 6. */}
   <a href="/crates" aria-current={here.startsWith('/crates') || here.startsWith('/crate/') ? 'page' : undefined}>Crates</a>
-  {/* Admin is owner-only — OMITTED rather than shown disabled — a disabled
-      link is a promise with no delivery date, and it tells a non-owner
-      that an admin page exists. */}
+  {/* M4 Task 7 — every member may read the merges feed. PRD §6: "wrong
+      merges are cheap to undo only if someone notices", and one pair of
+      eyes is not a lot of noticing. The Undo control inside is owner-only. */}
+  <a href="/merges" aria-current={here === '/merges' ? 'page' : undefined}>Merges</a>
+  {/* Admin and Review are owner-only — OMITTED rather than shown disabled — a
+      disabled link is a promise with no delivery date, and it tells a
+      non-owner that an admin page exists. */}
+  {m.role === 'owner' && (
+    <a href="/review" aria-current={here === '/review' ? 'page' : undefined}>
+      Review{pending > 0 && <span class="navbadge num">{pending}</span>}
+    </a>
+  )}
   {m.role === 'owner' && (
     <a href="/admin" aria-current={here.startsWith('/admin') ? 'page' : undefined}>Admin</a>
   )}

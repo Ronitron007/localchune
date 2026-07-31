@@ -62,11 +62,18 @@ select has_column('public','audio_analysis','decode_errors','and the -25 decode-
 -- 2. The threshold guard. This is the whole reason the matcher can be
 --    switched on: at 0.40 the `different` band is BELOW the measured
 --    unrelated floor (~0.51) and cannot be reached by anything real.
+--
+--    M4.8 (migration 29) then replaced this task's two-data-point guess
+--    with a measurement over 3,549 production decisions. 0.60 turned out
+--    to be inside the unrelated hump, not above it: its p99 is 0.6635 and
+--    its right shoulder filled the near-miss log with 253 non-matches on
+--    the first real sweep. 0.78 clears every one of 3,404 unrelated
+--    observations (max 0.7659).
 -- ============================================================
 select is(
   (select t_related from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025'),
-  0.60::real,
-  't_related clears M4 Task 3''s measured unrelated floor of ~0.51');
+  0.78::real,
+  't_related clears the whole measured unrelated population, not just its floor');
 select ok(
   (select t_same > t_probable and t_probable > t_related
      from public.dedup_config where algo_version = 'cp-1.6.0/test2/11025'),
@@ -191,14 +198,14 @@ select is(
       "layer":"ber","score":0.80,"bestOffset":-4,"overlapFrames":2400,
       "sharedItems":180,"durationDeltaMs":120,"perSecondBer":[0.1,0.2]},
      {"candidateFileId":"00000000-0000-0000-0000-0000000000a3","candidateTrackId":null,
-      "layer":"ber","score":0.62,"bestOffset":0,"overlapFrames":2400,
+      "layer":"ber","score":0.79,"bestOffset":0,"overlapFrames":2400,
       "sharedItems":40,"durationDeltaMs":-90,"perSecondBer":[]},
      {"candidateFileId":"00000000-0000-0000-0000-0000000000a4","candidateTrackId":null,
       "layer":"ber","score":0.99,"bestOffset":0,"overlapFrames":2400,
       "sharedItems":400,"durationDeltaMs":0,"perSecondBer":[]}
    ]$j$::jsonb, 'cp-1.6.0/test2/11025')) -> 'bands',
   '{"same": 0, "probable": 1, "related": 1, "different": 0}'::jsonb,
-  '0.80 is probable, 0.62 is related — and the 0.99 candidate is dropped for its state, not merged');
+  '0.80 is probable, 0.79 is related — and the 0.99 candidate is dropped for its state, not merged');
 
 select is(
   (select count(*)::int from public.match_decisions
@@ -211,7 +218,7 @@ select is(
       and candidate_file_id = '00000000-0000-0000-0000-0000000000a2'
       and superseded_at is null),
   'probable',
-  'the 0.70-0.90 band IS the review queue — a decision with no review_actions row is pending');
+  'the review band IS the review queue — a decision with no review_actions row is pending');
 
 select is(
   (select action from public.match_decisions
@@ -226,7 +233,7 @@ select is(
     where probe_file_id = '00000000-0000-0000-0000-0000000000a1'
       and candidate_file_id = '00000000-0000-0000-0000-0000000000a2'
       and superseded_at is null),
-  0.60::real,
+  0.78::real,
   'every decision carries the thresholds it used, so a later calibration cannot rewrite its meaning');
 
 select is(
