@@ -75,7 +75,12 @@
   // through this binding and hands the container nothing but bytes.
   // No "remote": true here, unlike the app and maintenance Workers — this
   // Worker is never run under `wrangler dev` against production data.
-  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "localchune-audio" }],
+  "r2_buckets": [
+    { "binding": "AUDIO", "bucket_name": "localchune-audio" },
+    // Public thumbs-only bucket — spec 2026-08-01-art-bucket-split. Audio
+    // and full-size artwork must never be written here.
+    { "binding": "ART", "bucket_name": "localchune-art" }
+  ],
 
   // The only way in. This Worker has no route, no workers.dev host and no
   // fetch handler; a message on localchune-analyze is the entire trigger

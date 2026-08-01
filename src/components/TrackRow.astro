@@ -24,7 +24,7 @@
 // nothing when the caller passes no slotted content.
 import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
-import { formatBpm } from '../lib/track-format'
+import { artThumbUrl, formatBpm } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
 import type { PoolTrack } from '../lib/pool-api'
 
@@ -50,7 +50,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   </td>
   <td class="art">
     {track.has_thumb
-      ? <img class="thumb" src={`/api/track/${track.file_id}/art`} alt="" width="28" height="28" loading="lazy" />
+      ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} alt="" width="28" height="28" loading="lazy" />
       : <span class="thumb-empty" aria-hidden="true"></span>}
   </td>
   {/* Task 8: artist and title are now independent columns — each still

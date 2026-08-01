@@ -42,6 +42,8 @@ export type {
 export interface Env {
   ANALYSIS: DurableObjectNamespace<AnalysisContainer>
   AUDIO: R2Bucket
+  /** Public thumbs-only bucket (art.butternutcrack.com) — spec 2026-08-01-art-bucket-split. */
+  ART: R2Bucket
   /**
    * The second legitimate service_role key in the project, for the same
    * reason as the maintenance Worker's: this Worker is route-less, is driven
@@ -127,7 +129,9 @@ export class AnalysisContainer extends Container<Env> {
   private static readonly MAX_PREVIEW_BYTES = 20 * 1024 * 1024 // ~14 MB at the 15-min/128kbps cap; headroom, not the expected size
   private static readonly MAX_PEAKS_BYTES = 1 * 1024 * 1024 // ~41 KB by construction (1000 buckets); generous headroom
 
-  private async putArtifact(key: string, res: Response, maxBytes: number): Promise<string | null> {
+  private async putArtifact(
+    key: string, res: Response, maxBytes: number, bucket?: R2Bucket, meta?: R2PutOptions,
+  ): Promise<string | null> {
     const declared = res.headers.get('content-length')
     const len = declared === null ? NaN : Number(declared)
     if (!Number.isFinite(len) || len > maxBytes) {
@@ -139,7 +143,7 @@ export class AnalysisContainer extends Container<Env> {
     }
     const body = await res.arrayBuffer()
     console.log(`artifact ${key} ${body.byteLength}B`)
-    await this.env.AUDIO.put(key, body)
+    await (bucket ?? this.env.AUDIO).put(key, body, meta)
     return null
   }
 
@@ -179,6 +183,8 @@ export class AnalysisContainer extends Container<Env> {
         kind: string
         name: string | null | undefined
         maxBytes: number
+        bucket?: R2Bucket
+        meta?: R2PutOptions
         clear: () => void
       }> = [
         { kind: 'peaks', name: out.peaks_key, maxBytes: AnalysisContainer.MAX_PEAKS_BYTES,
@@ -189,7 +195,13 @@ export class AnalysisContainer extends Container<Env> {
           clear: () => { out.artwork_key = null } },
         // The 64px cover thumb the pool table renders (brutalist spec §4).
         // A 64px q~70 JPEG is a few KB; the artwork ceiling is generous.
+        // Thumbs alone land in the PUBLIC art bucket (spec:
+        // 2026-08-01-art-bucket-split) with immutable cache metadata —
+        // rows load them straight off art.butternutcrack.com, no Worker,
+        // no signing. Audio and full artwork never take this fork.
         { kind: 'thumb', name: out.thumb_key, maxBytes: AnalysisContainer.MAX_ARTWORK_BYTES,
+          bucket: this.env.ART,
+          meta: { httpMetadata: { contentType: 'image/jpeg', cacheControl: 'public, max-age=31536000, immutable' } },
           clear: () => { out.thumb_key = null } },
         // spectrogram_key is always null today — see the Forensics field
         // comment in types.ts; nothing in app/ produces one yet — but the
@@ -199,14 +211,14 @@ export class AnalysisContainer extends Container<Env> {
           clear: () => { if (out.forensics) out.forensics.spectrogram_key = null } },
       ]
 
-      for (const { kind, name, maxBytes, clear } of artifacts) {
+      for (const { kind, name, maxBytes, bucket, meta, clear } of artifacts) {
         if (!name) continue
         const a = await this.containerFetch(`http://c/artifact/${fileId}/${name}`)
         if (!a.ok || !a.body) {
           console.warn(`artifact ${name} not retrievable: ${a.status}`)
           continue
         }
-        const skipReason = await this.putArtifact(`derived/${fileId}/${name}`, a, maxBytes)
+        const skipReason = await this.putArtifact(`derived/${fileId}/${name}`, a, maxBytes, bucket, meta)
         if (skipReason) {
           artifactSkipped[kind] = skipReason
           clear()

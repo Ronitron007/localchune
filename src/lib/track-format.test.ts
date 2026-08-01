@@ -116,3 +116,17 @@ describe('qualityLabel / qualityTooltip', () => {
     expect(qualityTooltip(null, null, null)).toBe('not analysed yet')
   })
 })
+
+import { artThumbUrl } from './track-format'
+
+describe('artThumbUrl', () => {
+  it('builds the public bucket URL from base + file id', () => {
+    expect(artThumbUrl('https://art.example.com', 'abc')).toBe('https://art.example.com/derived/abc/thumb.jpg')
+  })
+  it('strips trailing slashes from the base', () => {
+    expect(artThumbUrl('https://art.example.com/', 'abc')).toBe('https://art.example.com/derived/abc/thumb.jpg')
+  })
+  it('falls back to the signed route when the env base is unset', () => {
+    expect(artThumbUrl(undefined, 'abc')).toBe('/api/track/abc/art?full=1')
+  })
+})
