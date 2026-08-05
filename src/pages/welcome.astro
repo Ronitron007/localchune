@@ -31,7 +31,11 @@ const placeholder = suggestUsername(m.email)
     Once set, it cannot be changed.
   </p>
   {error && <p role="alert"><strong>{error}</strong></p>}
-  <form method="post" action="/api/welcome" class="claimform">
+  {/* data-astro-reload: /api/welcome calls request.formData() with no
+      content-type test, so it parses ClientRouter's multipart body today and
+      every one of its answers is a 303 to an HTML page. It is opted out
+      anyway, to keep the invariant total — see AppNav.astro. */}
+  <form method="post" action="/api/welcome" class="claimform" data-astro-reload>
     <label>
       <span class="sr-only">Username</span>
       <input

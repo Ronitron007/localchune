@@ -84,6 +84,18 @@ const label = (artist: string | null, title: string | null, fallback: string): s
               </td>
               <td class="uploader">{m.is_auto ? 'matcher' : (m.performer_name ?? 'a member')}</td>
               <td class="added num">{m.performed_at.slice(0, 10)}</td>
+              {/* The undo form carries data-astro-reload for the reason
+                  ComparePanel.astro spells out in full: without it
+                  ClientRouter re-sends the body as multipart/form-data,
+                  undo.ts's x-www-form-urlencoded test fails, and the route
+                  answers JSON instead of the 303. ClientRouter cannot swap a
+                  non-HTML response, so it falls back to a GET of the action
+                  URL and the owner gets the 404 page.
+                  WORSE HERE THAN ON /review: undo.ts calls undo_merge()
+                  BEFORE it looks at the content type, so the merge is
+                  already undone by the time the 404 appears. The owner is
+                  told the undo failed when it did not, and the obvious next
+                  move is to try again. */}
               <td>
                 {m.undone_at !== null ? (
                   <span class="statechip">undone{m.undone_by_name !== null && ` by ${m.undone_by_name}`}</span>
@@ -92,6 +104,7 @@ const label = (artist: string | null, title: string | null, fallback: string): s
                     method="post"
                     action={`/api/merges/${m.merge_id}/undo`}
                     data-confirm="Undo this merge? Both identities come back and every moved file returns to the track it came from."
+                    data-astro-reload
                   >
                     <button type="submit" class="btn-danger">Undo</button>
                   </form>

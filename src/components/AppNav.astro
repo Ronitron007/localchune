@@ -50,5 +50,12 @@ if (m.role === 'owner') {
       through /welcome. */}
   <span class="who">{m.username ?? m.email}</span>
   <span class="credits">{creditsRemaining(m.access_expires_at)} credits</span>
-  <form method="post" action="/auth/signout"><button type="submit" class="btn-secondary">Sign out</button></form>
+  {/* data-astro-reload: /auth/signout reads no body, so it survives
+      ClientRouter's multipart re-send today. It is opted out anyway, because
+      the rule this repo now holds is "every POST form submits natively" —
+      an invariant with two exceptions is one nobody can check. A sign-out
+      also has to be a real document load: the response clears the auth
+      cookies, and a full navigation is the only way every persisted island
+      is torn down with them. */}
+  <form method="post" action="/auth/signout" data-astro-reload><button type="submit" class="btn-secondary">Sign out</button></form>
 </nav>
