@@ -327,8 +327,13 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   bottom: 3.5rem;
   pointer-events: none;
 }
+/* Below 640px the player bar is TWO rows (the seek slider is forced onto its
+   own line), so the chip has to clear roughly twice as much. It stays
+   right-anchored and content-sized here rather than stretching to the full
+   width — the text is a dozen characters, and a full-width bar on a phone
+   reads as a second toolbar rather than as a pill. */
 @media (max-width: 640px) {
-  .uploadchip-slot { bottom: 6.75rem; left: var(--pad-2); }
+  .uploadchip-slot { bottom: 6.75rem; }
 }
 .uploadchip {
   pointer-events: auto;
