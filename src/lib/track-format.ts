@@ -127,3 +127,16 @@ export function qualityTooltip(
       return `Tier ${tier}`
   }
 }
+
+/**
+ * Row thumbs come straight off the public art bucket
+ * (spec 2026-08-01-art-bucket-split): `derived/<file_id>/thumb.jpg` is the
+ * deterministic key the analysis worker writes, PUBLIC_ART_BASE_URL is the
+ * bucket's domain (prod: art.butternutcrack.com; dev: the r2.dev URL). No
+ * Worker request, no DB call, no signing — and the URL is stable, so the
+ * browser and edge caches actually hold it.
+ */
+export function artThumbUrl(base: string | undefined, fileId: string): string {
+  if (!base) return `/api/track/${fileId}/art?full=1` // unset env: fall back to the signed path
+  return `${base.replace(/\/+$/, '')}/derived/${fileId}/thumb.jpg`
+}

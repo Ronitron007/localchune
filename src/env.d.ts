@@ -3,6 +3,10 @@
 // worker includes Essentia. LICENSE explains why.
 
 /// <reference types="astro/client" />
+interface ImportMetaEnv {
+  /** Public art bucket origin (spec 2026-08-01-art-bucket-split). */
+  readonly PUBLIC_ART_BASE_URL?: string
+}
 import type { Member } from './lib/session'
 import type { SupabaseClient } from '@supabase/supabase-js'
 declare global {

@@ -37,8 +37,13 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   }
   if (!track) return jsonError(404, 'not_found', 'no such track')
 
-  const full = url.searchParams.get('full') === '1'
-  const name = full ? (track.artwork_key ?? track.thumb_key) : track.thumb_key
+  // Thumbs no longer live here: rows load them straight off the public art
+  // bucket (spec 2026-08-01-art-bucket-split). Only the track page's
+  // full-size art still needs the signed, session-gated path.
+  if (url.searchParams.get('full') !== '1') {
+    return jsonError(404, 'no_art', 'thumbs are served from the public art bucket')
+  }
+  const name = track.artwork_key ?? track.thumb_key
   if (!name) return jsonError(404, 'no_art', 'no artwork for this track')
 
   try {

@@ -113,11 +113,56 @@ function updateSeekRange() {
   if (!seeking) seek.value = String(Math.floor(audio.currentTime))
 }
 
+/**
+ * Presigned GETs live GET_TTL_SECONDS (1 h). A player parked across a
+ * lunch break, a laptop sleep, or a long tab-hoard wakes up with a DEAD
+ * src, and `play()` rejects — the "That track would not play" the owner
+ * hit constantly. The fix is to treat a source failure as a refresh
+ * trigger, not an error: fetch a fresh signed URL for currentFileId, seek
+ * back to where the transport stood, resume if we were resuming. Only a
+ * failure of the FRESH url earns the error message. One attempt per
+ * failure — `refreshing` stops an expired-session loop.
+ */
+let refreshing = false
+async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<boolean> {
+  if (audio === null || currentFileId === null || refreshing) return false
+  refreshing = true
+  try {
+    const res = await fetch(`/api/track/${currentFileId}/source`, {
+      headers: { accept: 'application/json' },
+    })
+    if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
+      if (label) label.textContent = 'Session ended — reload to sign in.'
+      return false
+    }
+    const body = (await res.json()) as { url?: string }
+    if (!res.ok || !body.url) return false
+    audio.addEventListener('loadedmetadata', () => {
+      if (resumeAt > 0) audio.currentTime = resumeAt
+      updateTime()
+      updateSeekRange()
+    }, { once: true })
+    audio.src = body.url
+    audio.load()
+    if (thenPlay) await audio.play()
+    return true
+  } catch {
+    return false
+  } finally {
+    refreshing = false
+  }
+}
+
 if (audio && toggle) {
   toggle.addEventListener('click', () => {
     if (audio.paused) {
-      void audio.play().catch(() => {
-        if (label) label.textContent = 'Nothing to play yet.'
+      void audio.play().catch(async () => {
+        const recovered = await refreshSource(audio.currentTime, true)
+        if (!recovered && label && currentFileId === null) {
+          label.textContent = 'Nothing to play yet.'
+        } else if (!recovered && label) {
+          label.textContent = 'That track would not play. Try downloading it.'
+        }
       })
     } else {
       audio.pause()
@@ -126,6 +171,15 @@ if (audio && toggle) {
   audio.addEventListener('play', updateToggle)
   audio.addEventListener('pause', updateToggle)
   audio.addEventListener('ended', updateToggle)
+  // Mid-play source death (URL expired during a long listen, network cut
+  // on sleep/wake): recover in place at the last transport position. The
+  // seek range is the survivor — audio.currentTime can already be reset to
+  // 0 by the time 'error' fires.
+  audio.addEventListener('error', () => {
+    const wasPlaying = !audio.paused && !audio.ended
+    const at = seek ? Number(seek.value) : 0
+    void refreshSource(Number.isFinite(at) ? at : 0, wasPlaying)
+  })
   // Player-resume: a pause is a deliberate "I might come back to this"
   // moment, worth a save even before the next ~1 Hz timeupdate tick would
   // have caught it. `ended` is the opposite signal — the track finished,
