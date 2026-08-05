@@ -5,8 +5,8 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  EMPTY_QUERY, isDefaultQuery, parsePoolQuery, poolListArgs,
-  poolQueryToSearchParams, poolHref,
+  EMPTY_QUERY, feedTrackToPoolTrack, isDefaultQuery, parsePoolQuery, poolListArgs,
+  poolQueryToSearchParams, poolHref, type FeedTrack,
 } from './pool-api'
 
 const parse = (s: string) => parsePoolQuery(new URLSearchParams(s))
@@ -115,16 +115,77 @@ describe('poolListArgs', () => {
 })
 
 describe('poolHref', () => {
-  it('is a clean / for the default query', () => {
-    expect(poolHref(EMPTY_QUERY)).toBe('/')
+  // M6c Task 2: the pool table moved off "/" (now the home feed) to
+  // "/pool" — every sort/filter/cursor link this function builds must
+  // follow it there.
+  it('is a clean /pool for the default query', () => {
+    expect(poolHref(EMPTY_QUERY)).toBe('/pool')
+  })
+  it('starts every href with /pool, never bare /', () => {
+    expect(poolHref(EMPTY_QUERY, { sort: 'likes_desc' })).toBe('/pool?sort=likes_desc')
   })
   it('keeps the filters and swaps the sort, dropping any cursor', () => {
     const q = { ...EMPTY_QUERY, bpmMin: 120, sort: 'added_desc' as const }
-    expect(poolHref(q, { sort: 'bpm_asc' })).toBe('/?bpm_min=120&sort=bpm_asc')
+    expect(poolHref(q, { sort: 'bpm_asc' })).toBe('/pool?bpm_min=120&sort=bpm_asc')
   })
   it('carries the cursor for the next page under the current sort', () => {
     const q = { ...EMPTY_QUERY, sort: 'bpm_asc' as const }
     expect(poolHref(q, { cursor: '00000123abc' }))
-      .toBe('/?sort=bpm_asc&cursor=00000123abc')
+      .toBe('/pool?sort=bpm_asc&cursor=00000123abc')
+  })
+})
+
+describe('feedTrackToPoolTrack', () => {
+  // A full feed_tracks() row (migration 31) — pool_get()'s entire column
+  // list, same shape org-api.ts's crateItemToPoolTrack adapts for
+  // crate_get(). Only the fields FeedRow/PoolTrack reads are populated
+  // here; every other pool_get column is irrelevant to the adapter.
+  const ROW: FeedTrack = {
+    file_id: '11111111-1111-1111-1111-111111111111',
+    track_id: null,
+    uploaded_by: '33333333-3333-3333-3333-333333333333',
+    uploader_name: 'dj',
+    original_filename: 'track.wav',
+    display_artist: 'Artist',
+    display_title: 'Title',
+    container: 'wav',
+    byte_size: 1000,
+    duration_ms: 180_000,
+    bpm: 128,
+    ibi_std_ms: 2,
+    key_camelot: '8A',
+    key_open: null,
+    key_musical: null,
+    quality_tier: 5,
+    lossy_ancestor: null,
+    meas_cutoff_hz: null,
+    integrated_lufs: -9,
+    preview_key: 'preview/key',
+    peaks_key: null,
+    thumb_key: 'thumb/key',
+    created_at: '2026-07-29T00:00:00Z',
+    download_count: 3,
+    tags: ['house'],
+    like_count: 2,
+    liked_by_me: true,
+    play_count: 10,
+  }
+
+  it('derives has_preview/has_peaks/has_thumb from the *_key columns', () => {
+    const track = feedTrackToPoolTrack(ROW)
+    expect(track.has_preview).toBe(true)
+    expect(track.has_peaks).toBe(false)
+    expect(track.has_thumb).toBe(true)
+  })
+
+  it('carries every other FeedRow-relevant field through unchanged', () => {
+    const track = feedTrackToPoolTrack(ROW)
+    expect(track.file_id).toBe(ROW.file_id)
+    expect(track.display_artist).toBe(ROW.display_artist)
+    expect(track.display_title).toBe(ROW.display_title)
+    expect(track.bpm).toBe(ROW.bpm)
+    expect(track.key_camelot).toBe(ROW.key_camelot)
+    expect(track.like_count).toBe(ROW.like_count)
+    expect(track.liked_by_me).toBe(ROW.liked_by_me)
   })
 })

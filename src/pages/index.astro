@@ -4,38 +4,118 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// The pool is server-rendered. Zero islands. This page parses its own URL,
-// calls pool_list() once, and renders everything — a filtered URL is the
-// complete filter state and every view is shareable. View-source shows the
-// rows; no client fetch renders anything.
+// M6c Task 2 — the home feed. "/" used to be the pool table
+// (src/pages/pool.astro now); this is a new, separate page. Four sections,
+// each server-rendered from one RPC call — no islands, same "the page is
+// the whole answer" idiom as /pool and /crates.
+//
+// Every section's HEADING always renders, even on failure or an empty
+// result — only the body underneath it changes. An RPC failure degrades
+// that one section to its own outage line, never a fake empty state (the
+// same rule M6a's final review held pool_list()/crate_list() to): "nothing
+// here" and "could not find out" are different facts, and only the
+// database — not this page — gets to say which one happened.
 import Shell from '../layouts/Shell.astro'
-import FilterBar from '../components/FilterBar.astro'
-import TrackTable from '../components/TrackTable.astro'
-import { PAGE_SIZE, parsePoolQuery, poolListArgs, type PoolTrack } from '../lib/pool-api'
+import FeedRow from '../components/FeedRow.astro'
+import { crateHref, formatCrateMeta } from '../lib/org-api'
+import { feedTrackToPoolTrack, type FeedTrack, type PoolTrack } from '../lib/pool-api'
 
-const query = parsePoolQuery(Astro.url.searchParams)
-const rawCursor = Astro.url.searchParams.get('cursor')
-const cursor = rawCursor !== null && rawCursor.length > 36 ? rawCursor : null
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [fresh, hot, top, crates] = await Promise.all([
+  rpc('feed_tracks', { p_section: 'fresh' }),
+  rpc('feed_tracks', { p_section: 'hot' }),
+  rpc('feed_tracks', { p_section: 'top' }),
+  rpc('feed_new_crates', {}),
+])
+if (fresh.error) console.error('feed_tracks(fresh) failed:', fresh.error.message)
+if (hot.error) console.error('feed_tracks(hot) failed:', hot.error.message)
+if (top.error) console.error('feed_tracks(top) failed:', top.error.message)
+if (crates.error) console.error('feed_new_crates failed:', crates.error.message)
 
-// Astro.locals.supabase — the request's cookie-bound client. Never a second one.
-const { data, error } = await Astro.locals.supabase.rpc(
-  'pool_list', poolListArgs(query, cursor, PAGE_SIZE))
-if (error) console.error('pool_list failed:', error.message)
-const tracks = (data ?? []) as PoolTrack[]
-const nextCursor =
-  tracks.length === PAGE_SIZE ? tracks[tracks.length - 1].row_cursor : null
+const tracksFrom = (res: typeof fresh): PoolTrack[] =>
+  res.error ? [] : ((res.data ?? []) as FeedTrack[]).map(feedTrackToPoolTrack)
 
-const { data: uploaderRows, error: uploaderError } =
-  await Astro.locals.supabase.rpc('pool_uploaders')
-if (uploaderError) console.error('pool_uploaders failed:', uploaderError.message)
-const uploaders = uploaderRows ?? []
+const freshTracks = tracksFrom(fresh)
+const hotTracks = tracksFrom(hot)
+const topTracks = tracksFrom(top)
 
-// pool_uploaders() groups over stored files, so zero groups means the pool
-// itself is empty — a different message from "your filters matched nothing".
-const poolEmpty = uploaders.length === 0
+/** feed_new_crates()'s row shape (migration 31) — see that migration for
+ * why track_count/total_duration_ms follow crate_list()'s lateral shape. */
+type FeedCrate = {
+  id: string
+  name: string
+  owner_name: string
+  track_count: number
+  total_duration_ms: number
+  made_public_at: string | null
+}
+const crateCards = (crates.error ? [] : (crates.data ?? [])) as FeedCrate[]
+
+/** Same ISO-slice convention as TrackRow.astro's "added" column and
+ * /crates.astro's "updated" line. */
+const publicDate = (c: FeedCrate): string | null =>
+  c.made_public_at ? new Date(c.made_public_at).toISOString().slice(0, 10) : null
 ---
-<Shell title="localchune">
-  <h1>Pool</h1>
-  <FilterBar query={query} uploaders={uploaders} />
-  <TrackTable tracks={tracks} query={query} nextCursor={nextCursor} poolEmpty={poolEmpty} />
+<Shell title="localchune — home">
+  <h1>Home</h1>
+
+  <section class="feedsection">
+    <h2>Fresh</h2>
+    {fresh.error ? (
+      <p class="explain">Could not load — try again.</p>
+    ) : freshTracks.length === 0 ? (
+      <p class="explain">Nothing here this week.</p>
+    ) : (
+      <ul class="feedlist">
+        {freshTracks.map((t) => <FeedRow track={t} />)}
+      </ul>
+    )}
+  </section>
+
+  <section class="feedsection">
+    <h2>Hot this week</h2>
+    {hot.error ? (
+      <p class="explain">Could not load — try again.</p>
+    ) : hotTracks.length === 0 ? (
+      <p class="explain">Nothing here this week.</p>
+    ) : (
+      <ul class="feedlist">
+        {hotTracks.map((t) => <FeedRow track={t} />)}
+      </ul>
+    )}
+  </section>
+
+  <section class="feedsection">
+    <h2>Most liked</h2>
+    {top.error ? (
+      <p class="explain">Could not load — try again.</p>
+    ) : topTracks.length === 0 ? (
+      <p class="explain">Nothing here this week.</p>
+    ) : (
+      <ul class="feedlist">
+        {topTracks.map((t) => <FeedRow track={t} />)}
+      </ul>
+    )}
+  </section>
+
+  <section class="feedsection">
+    <h2>New public crates</h2>
+    {crates.error ? (
+      <p class="explain">Could not load — try again.</p>
+    ) : crateCards.length === 0 ? (
+      <p class="explain">No public crates yet.</p>
+    ) : (
+      <ul class="cratelist">
+        {crateCards.map((c) => (
+          <li class="cratecard">
+            <a href={crateHref(c.id)}>{c.name}</a>
+            <div class="explain">
+              by {c.owner_name} · {formatCrateMeta(c)}
+              {publicDate(c) && ` · public since ${publicDate(c)}`}
+            </div>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
 </Shell>

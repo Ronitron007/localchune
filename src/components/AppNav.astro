@@ -25,7 +25,10 @@ if (m.role === 'owner') {
 }
 ---
 <nav class="appnav">
-  <a href="/" aria-current={here === '/' ? 'page' : undefined}>Pool</a>
+  {/* M6c Task 2: "/" is now the home feed; the browse table moved to
+      "/pool". */}
+  <a href="/" aria-current={here === '/' ? 'page' : undefined}>Home</a>
+  <a href="/pool" aria-current={here === '/pool' ? 'page' : undefined}>Pool</a>
   <a href="/upload" aria-current={here === '/upload' ? 'page' : undefined}>Upload</a>
   <a href="/uploads" aria-current={here === '/uploads' ? 'page' : undefined}>My uploads</a>
   {/* M6a Task 6. */}
