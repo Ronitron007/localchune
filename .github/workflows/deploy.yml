@@ -1,8 +1,18 @@
 # localchune — MIT licensed. See LICENSE.
-# Manual app-Worker deploy from GitHub's runners. Exists because Cloudflare's
-# API edge bot-challenges large script uploads from some residential IPs
-# (observed 2026-07-29: HTML challenge page on POST /workers/scripts/*/versions,
-# while small uploads pass) — CI runners are never challenged.
+# Manual app-Worker deploy from GitHub's runners. A second deploy path, so a
+# merge is not stranded when the laptop cannot deploy.
+#
+# History, kept so nobody re-derives a wrong theory. On 2026-07-29 the
+# version upload (POST .../workers/scripts/localchune/versions) returned a
+# 403 HTML challenge page for ~8 h. It failed from every path: laptop OAuth
+# and this workflow's API token (run 30485861036). Other scripts on the same
+# account uploaded fine at the same time. In that failed run, the asset
+# API calls succeeded seconds before the versions POST failed — so neither
+# the runner IP nor the token was the trigger. Root cause: stuck server-side
+# state on the `localchune` script object. One `npx wrangler versions
+# upload` pushed a version through and cleared it; deploys worked
+# immediately after. If this job hits that 403 again, run that probe first.
+# Do not chase IP, token, or bundle-size theories.
 #
 # workflow_dispatch only: deploys stay a human decision, same policy as
 # ci.yml. Fork PRs can never reach this (no pull_request trigger, and GitHub
@@ -13,6 +23,16 @@
 # already ship in every page's client bundle — stored as secrets for tidiness,
 # not confidentiality). DB migrations are NOT run here — apply them first,
 # per CLAUDE.md's migrations-before-deploy rule.
+#
+# The verify step polls /api/build-info until it serves this run's commit,
+# and fails the job otherwise. A deploy can not report green unless the
+# live site actually serves the deployed sha.
+#
+# No lock spans the two deploy paths: `concurrency: deploy` serializes runs
+# of this workflow, but a laptop `npm run deploy` can land at any moment.
+# On 2026-07-31 a laptop deploy superseded run 30612658674 seconds after
+# its wrangler step succeeded; the verify step is what made that visible.
+# If verify reports a NEWER live commit, that is a supersede, not an outage.
 name: deploy
 
 on:
@@ -42,3 +62,21 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 75b6ab7ee7a297043ad3e90490cb4094
+      - name: verify the live site serves this commit
+        run: |
+          for i in $(seq 1 24); do
+            # Unique query per attempt: build-info is public with max-age=60,
+            # so a repeated URL can pin one edge cache's stale copy (run
+            # 30612658674 read a 60 s-old body exactly that way).
+            url="https://localchune.butternutcrack.com/api/build-info?ci=${{ github.run_id }}-${i}-${RANDOM}"
+            body="$(curl -fsS --max-time 10 "$url" || true)"
+            live="$(jq -r '.sha // empty' <<<"$body" 2>/dev/null || true)"
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "live: $body"
+              exit 0
+            fi
+            echo "attempt $i/24: live sha is '${live:-none}', want $GITHUB_SHA"
+            sleep 5
+          done
+          echo "::error::wrangler deploy reported success, but the live site never served $GITHUB_SHA. A newer live sha above means a concurrent deploy superseded this run."
+          exit 1
