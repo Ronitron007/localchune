@@ -11,6 +11,10 @@
   once sat a full day behind main with nothing red anywhere. No lock spans
   the two deploy paths: a laptop deploy superseded a CI deploy mid-run on
   2026-07-31. Last deploy wins; check build-info when paths could race.
+  **build-info is edge-cached and lies for ~8 minutes after a deploy**,
+  through a query string and `no-cache` (seen 2026-08-05). For an immediate
+  answer, use `npx wrangler deployments list` or fetch a brand-new asset
+  hash; build-info is the truth only once the cache turns over.
 - If a deploy gets a 403 HTML challenge page on POST
   `.../workers/scripts/localchune/versions` from every network and auth,
   while other scripts upload fine: that is stuck server-side state on the
@@ -50,6 +54,15 @@
 - Each Worker deploys separately. `npm run deploy` deploys the app Worker
   only; `npm run deploy:maintenance` and `npm run deploy:analysis` the other
   two.
+- **A container-Worker deploy is not atomic — check the image digest, not
+  the exit code.** On 2026-08-05 a `wrangler deploy` of `localchune-analysis`
+  moved the version pointer to 100% and *then* failed the 2 GB image-layer
+  push: the version list said the new code was live while the container app
+  still ran the old digest. After any deploy that rebuilds the image, confirm
+  `npx wrangler containers info` shows the NEW digest (and the app version
+  bumped) before believing the deploy. This is a different failure from the
+  gradual `[10,100]` rollout documented under Queues — that one converges by
+  itself; this one never does.
 - Pool-ux and later: apply migrations BEFORE `npm run deploy` — the claim
   gate fails open (username undefined) on the old schema, and `/welcome`
   would 500 without `username_set()`.
@@ -77,6 +90,29 @@ Migration 10 closed the remaining open ACLs: `files`, `upload_batches`,
 **new** table added after migration 10 starts from the same open hosted
 default and needs the same revoke-first treatment on day one, not as a
 follow-up.
+
+## Astro ClientRouter and POST forms
+
+**Every `<form method="post">` must carry `data-astro-reload`.** Without it,
+ClientRouter intercepts the submit and re-sends the body as
+`multipart/form-data`. Our API routes branch on
+`application/x-www-form-urlencoded`, so the request falls into the JSON
+branch and fails; the router then gives up and **navigates (GET) to the
+POST-only action URL**, which renders the Astro 404 page. The user sees a
+404 at an `/api/...` path and the button "never works".
+
+This bug shipped three separate times before the rule was enforced: the
+like button (fixed in PR #24), the review verdict form, and the `/merges`
+undo form (both fixed in PR #27). The undo variant is the nastiest shape:
+the RPC had already run when the 404 appeared, so the action *succeeded*
+while looking like a failure — put the side effect after the content-type
+read, not before.
+
+`src/lib/astro-forms.test.ts` enforces the rule repo-wide: it fails the
+build on any POST form without `data-astro-reload`. If a form genuinely
+wants router-mediated submit someday, it must ALSO make its endpoint accept
+`multipart/form-data` — ten API routes currently branch on the urlencoded
+type alone.
 
 ## Queues
 
