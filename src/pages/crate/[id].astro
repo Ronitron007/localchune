@@ -68,7 +68,10 @@ const HEADERS = [
     <header class="cratehead">
       <h1>{meta.name}</h1>
       <p class="explain">
-        {!isOwner && <>by {meta.owner_name} · </>}
+        {/* M6c Task 3: owner_name links to their member page. Unconditional,
+            same never-claimed-member caveat as TrackRow.astro's uploader
+            link — see that comment. */}
+        {!isOwner && <>by <a href={`/member/${meta.owner_name}`}>{meta.owner_name}</a> · </>}
         {formatCrateMeta(meta)}
         {!meta.is_public && <span class="privatechip">PRIVATE</span>}
       </p>

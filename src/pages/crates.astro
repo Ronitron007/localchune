@@ -82,7 +82,10 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
             {pool.map((c) => (
               <li class="cratecard">
                 <a href={crateHref(c.id)}>{c.name}</a>
-                <div class="explain">by {c.owner_name} · {formatCrateMeta(c)} · updated {updatedDate(c)}</div>
+                {/* M6c Task 3: owner_name links to their member page.
+                    Unconditional, same never-claimed-member caveat as
+                    TrackRow.astro's uploader link — see that comment. */}
+                <div class="explain">by <a href={`/member/${c.owner_name}`}>{c.owner_name}</a> · {formatCrateMeta(c)} · updated {updatedDate(c)}</div>
               </li>
             ))}
           </ul>

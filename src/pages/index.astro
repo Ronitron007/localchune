@@ -109,8 +109,11 @@ const publicDate = (c: FeedCrate): string | null =>
         {crateCards.map((c) => (
           <li class="cratecard">
             <a href={crateHref(c.id)}>{c.name}</a>
+            {/* M6c Task 3: owner_name links to their member page.
+                Unconditional, same never-claimed-member caveat as
+                TrackRow.astro's uploader link — see that comment. */}
             <div class="explain">
-              by {c.owner_name} · {formatCrateMeta(c)}
+              by <a href={`/member/${c.owner_name}`}>{c.owner_name}</a> · {formatCrateMeta(c)}
               {publicDate(c) && ` · public since ${publicDate(c)}`}
             </div>
           </li>
