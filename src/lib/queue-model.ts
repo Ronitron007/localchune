@@ -36,6 +36,20 @@
 /** The owner's number. The whole array, `current` included. The only cap. */
 export const QUEUE_MAX = 25
 
+/**
+ * `history` is CONSUMED tracks, not queued ones. Nothing in it is playable, so
+ * the 25 cap has no opinion about it and this is not the hidden backlog §1.2
+ * bans. It is bounded anyway: it is persisted, it only grows, and an unbounded
+ * array in localStorage is a slow leak. 200 is far past the point where
+ * recency-aware ranking or a future PREV would care.
+ *
+ * It lives HERE rather than in queue-engine.ts because queue-store.ts also
+ * bounds history on the way in, and the store must not import the engine —
+ * that would pull the strategies and the candidate client into every page's
+ * graph through Shell.astro. Two constants that have to agree is worse.
+ */
+export const HISTORY_MAX = 200
+
 /** The v1 methods. A future genre/artist strategy adds an id here and a file
  *  in queue-strategies.ts — §3.6's whole extensibility claim. */
 export const AUTO_METHODS = ['off', 'harmonic', 'bpm', 'shuffle'] as const

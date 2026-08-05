@@ -35,21 +35,12 @@
  */
 
 import {
-  assembleQueue, excludedIds, QUEUE_MAX, slotsFor, truncateIntent,
+  assembleQueue, excludedIds, HISTORY_MAX, QUEUE_MAX, slotsFor, truncateIntent,
   type AutoMethod, type QueueEntry, type QueueState,
 } from './queue-model'
 import {
   FALLBACK_METHOD, STRATEGIES, type StrategyContext, type TrackFeatures,
 } from './queue-strategies'
-
-/**
- * `history` is consumed tracks, not queued ones — it is NOT a backlog and
- * nothing in it is playable, so the 25 cap has no opinion about it. It is
- * bounded anyway: it is persisted, it only grows, and an unbounded array in
- * localStorage is a slow leak. 200 is far past the point where recency-aware
- * ranking or a future PREV cares.
- */
-export const HISTORY_MAX = 200
 
 /**
  * The ten events of §1.4. The four that advance or address a row carry the
@@ -433,5 +424,5 @@ export async function regenerate(
   return assembleQueue(state, auto)
 }
 
-/** Re-exported so a caller never has to import two modules to know the cap. */
-export { QUEUE_MAX }
+/** Re-exported so a caller never has to import two modules to know the bounds. */
+export { HISTORY_MAX, QUEUE_MAX }
