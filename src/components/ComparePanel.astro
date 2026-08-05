@@ -116,10 +116,33 @@ const sides = [
     )}
   </div>
 
+  {/* THE VERDICT FORM'S data-astro-reload IS LOAD-BEARING. Not a preference.
+      ClientRouter intercepts every same-origin form submit and re-sends the
+      body itself. It only sends application/x-www-form-urlencoded when the
+      form carries an explicit enctype attribute; without one it posts a
+      FormData object, and fetch then labels the request multipart/form-data.
+      resolve.ts keys `isForm` on x-www-form-urlencoded, so a multipart body
+      falls through to the JSON branch, request.json() throws on it, and the
+      route answers jsonError(400) — JSON.
+      ClientRouter's fetchHTML() returns null for any media type that is not
+      text/html, and navigate() then does `location.href = to.href`. That is
+      a GET to a route which exports POST only, so Astro renders the 404 page
+      AT /api/review/<id>/resolve and no verdict is recorded. This is the
+      failure PR #24 named "the production ♥→404" and fixed on the like,
+      crate and tag forms; /review shipped in a parallel PR and was missed.
+      data-astro-reload makes ClientRouter stand aside, so the browser
+      submits natively, the body really is x-www-form-urlencoded, and the
+      POST→303 round trip works. src/lib/astro-forms.test.ts now holds the
+      rule for every form in the repo. */}
   {pair.verdict !== null ? (
     <p class="explain">Answered: <strong>{pair.verdict}</strong>.</p>
   ) : canResolve ? (
-    <form method="post" action={`/api/review/${pair.decision_id}/resolve`} class="verdictform">
+    <form
+      method="post"
+      action={`/api/review/${pair.decision_id}/resolve`}
+      class="verdictform"
+      data-astro-reload
+    >
       <button type="submit" name="verdict" value="same" class="btn">Same recording</button>
       <button type="submit" name="verdict" value="version" class="btn-secondary">Different version</button>
       <button type="submit" name="verdict" value="different" class="btn-secondary">Not a duplicate</button>

@@ -28,6 +28,14 @@ import {
 
 const status = parseReviewQuery(Astro.url.searchParams)
 
+// The THIRD gate, and the weakest of the three on purpose. review_queue()
+// below raises 42501 for anyone who is not the owner, which already makes
+// this page a 404 for a member, so no member ever reaches the render. This
+// line exists so the markup states the rule too: a component that draws a
+// lever must be told who may pull it, rather than assuming the page it sits
+// on was reached legally. Same idiom as merges.astro:22.
+const isOwner = Astro.locals.member?.role === 'owner'
+
 const { data, error } = await Astro.locals.supabase.rpc('review_queue', {
   p_limit: REVIEW_PAGE_SIZE,
   p_status: status,
@@ -85,7 +93,7 @@ const thresholds = cfg?.[0] ?? null
     </p>
   ) : (
     <section class="reviewqueue">
-      {pairs.map((pair) => <ComparePanel pair={pair} canResolve={true} />)}
+      {pairs.map((pair) => <ComparePanel pair={pair} canResolve={isOwner} />)}
     </section>
   )}
 
