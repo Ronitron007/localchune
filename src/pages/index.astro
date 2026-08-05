@@ -113,7 +113,7 @@ const publicDate = (c: FeedCrate): string | null =>
                 Unconditional, same never-claimed-member caveat as
                 TrackRow.astro's uploader link — see that comment. */}
             <div class="explain">
-              by <a href={`/member/${c.owner_name}`}>{c.owner_name}</a> · {formatCrateMeta(c)}
+              by <a href={`/member/${encodeURIComponent(c.owner_name)}`}>{c.owner_name}</a> · {formatCrateMeta(c)}
               {publicDate(c) && ` · public since ${publicDate(c)}`}
             </div>
           </li>

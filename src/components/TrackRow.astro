@@ -83,7 +83,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       pool_tracks exposes no flag to tell the two apart here. That case
       404s at /member/[username] instead of silently not linking; accepted
       for the current ~ten-member scale (see M6c task-3 brief). */}
-  <td class="uploader"><a href={`/member/${track.uploader_name}`}>{track.uploader_name}</a></td>
+  <td class="uploader"><a href={`/member/${encodeURIComponent(track.uploader_name)}`}>{track.uploader_name}</a></td>
   <td class="added num">{added}</td>
   <td class="downloads num">{track.download_count}</td>
   {/* Task 3 (M6a): live now. A mini <form> POST, brutalist idiom (like
