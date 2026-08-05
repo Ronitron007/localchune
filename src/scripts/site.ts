@@ -156,7 +156,9 @@ async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<boole
 if (audio && toggle) {
   toggle.addEventListener('click', () => {
     if (audio.paused) {
-      void audio.play().catch(async () => {
+      void audio.play().catch(async (err: unknown) => {
+        // Same AbortError rule as the play-link handler: superseded, not broken.
+        if (err instanceof DOMException && err.name === 'AbortError') return
         const recovered = await refreshSource(audio.currentTime, true)
         if (!recovered && label && currentFileId === null) {
           label.textContent = 'Nothing to play yet.'
@@ -290,7 +292,11 @@ document.addEventListener('click', (e) => {
     // duration.
     if (time) time.textContent = `${formatDuration(0)} / --:--`
     if (seek) { seek.value = '0'; seek.max = '0' }
-    void audio.play().catch(() => {
+    void audio.play().catch((err: unknown) => {
+      // AbortError = a NEWER load superseded this play() (the user clicked
+      // another row, or clicked fast twice). Playback of the newer track is
+      // fine — surfacing it as an error was the "sometimes it fails" noise.
+      if (err instanceof DOMException && err.name === 'AbortError') return
       if (label) label.textContent = 'That track would not play. Try downloading it.'
     })
   })()
