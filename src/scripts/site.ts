@@ -176,6 +176,17 @@ if (audio) {
   window.addEventListener('beforeunload', savePlayerMemory)
 }
 
+/*
+ * CAPTURE PHASE, here and on every delegation below that preventDefaults:
+ * ClientRouter's module loads before this one, so its document-level
+ * bubble listeners registered first and would run first — intercepting
+ * the same clicks/submits (double POST, then a swap to the form's action
+ * URL: the production "♥ → 404" bug, 2026-07-31). ClientRouter skips
+ * events whose defaultPrevented is already set, and capture listeners run
+ * before all bubble listeners — so capture + preventDefault is the whole
+ * fix. Plain management forms opt out declaratively with
+ * data-astro-reload instead (see crate/[id].astro).
+ */
 document.addEventListener('click', (e) => {
   const a = (e.target as Element).closest?.('a.play[data-track-id]')
   if (!(a instanceof HTMLAnchorElement) || audio === null) return
@@ -229,7 +240,7 @@ document.addEventListener('click', (e) => {
       if (label) label.textContent = 'That track would not play. Try downloading it.'
     })
   })()
-})
+}, true)
 
 /**
  * M6a Task 3 — the ♥ toggle. `form.likeform` renders in two places
@@ -261,7 +272,7 @@ document.addEventListener('submit', (e) => {
   if (!(form instanceof HTMLFormElement)) return
   const msg = form.dataset.confirm
   if (msg && !window.confirm(msg)) e.preventDefault()
-})
+}, true)
 
 document.addEventListener('submit', (e) => {
   const form = (e.target as Element).closest?.('form.likeform')
@@ -299,7 +310,7 @@ document.addEventListener('submit', (e) => {
       button.disabled = false
     }
   })()
-})
+}, true)
 
 /**
  * M6a Task 7 — crate drag-to-reorder. TrackRow.astro's rows render
@@ -659,7 +670,7 @@ document.addEventListener('submit', (e) => {
       if (submit instanceof HTMLButtonElement) submit.disabled = false
     }
   })()
-})
+}, true)
 
 /**
  * Player-resume, restore half. Runs once, at script init. Populates the
