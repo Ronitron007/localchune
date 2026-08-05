@@ -304,6 +304,55 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   .playerbar .playerseek { order: 4; flex: 1 1 100%; }
 }
 
+/* --- upload chip (UX.12) ---
+   The batch, visible from every page that is not /upload. Same brutalist
+   grammar as the player bar it sits above: --bg fill, one 1px --line edge,
+   no radius, no shadow.
+
+   The slot is the fixed positioning context and is ALWAYS in the DOM (it
+   carries the aria-live region), so it must not swallow clicks meant for the
+   page underneath — hence pointer-events: none on the slot and auto on the
+   link that is sometimes inside it.
+
+   The `bottom` offsets clear the player bar, which is also position: fixed
+   and cannot be measured from CSS. They are derived from its own box:
+   var(--pad-1) padding top and bottom around a single control row on
+   desktop, and around TWO rows below 640px, where the seek slider is forced
+   onto its own line (see the .playerbar media query above). Change the
+   player's padding or its mobile reflow and these two numbers need
+   rechecking — there is no way to bind them automatically. */
+.uploadchip-slot {
+  position: fixed;
+  right: var(--pad-2);
+  bottom: 3.5rem;
+  pointer-events: none;
+}
+/* Below 640px the player bar is TWO rows (the seek slider is forced onto its
+   own line), so the chip has to clear roughly twice as much. It stays
+   right-anchored and content-sized here rather than stretching to the full
+   width — the text is a dozen characters, and a full-width bar on a phone
+   reads as a second toolbar rather than as a pill. */
+@media (max-width: 640px) {
+  .uploadchip-slot { bottom: 6.75rem; }
+}
+.uploadchip {
+  pointer-events: auto;
+  display: block;
+  padding: calc(var(--pad-1) / 2) var(--pad-1);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  text-decoration: none;
+}
+.uploadchip-text { display: block; white-space: nowrap; }
+.uploadchip-bar {
+  display: block;
+  margin-top: calc(var(--pad-1) / 2);
+  height: 3px;
+  background: var(--faint);
+}
+.uploadchip-fill { display: block; height: 100%; background: var(--fg); }
+
 /* --- odds and ends --- */
 .keychip {
   background: var(--fg);
