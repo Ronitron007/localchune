@@ -133,7 +133,7 @@ const HEADERS = [
                 ))}
               </tr>
             </thead>
-            <tbody>
+            <tbody data-queue-list={`${member.username} uploads`}>
               {tracks.map((t) => <TrackRow track={t} />)}
             </tbody>
           </table>

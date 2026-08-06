@@ -14,6 +14,14 @@
 // Sort: crate_list() has no ORDER BY of its own (see the migration's
 // comment on crates.updated_at — "/crates sorts on it"), so this page is
 // the one place that decides the order: newest-content-change first.
+//
+// M6b: every card carries a `+ QUEUE` button, `hidden` until site.ts
+// unhides it. A card has no track list of its own to scrape — the page
+// renders names and counts, not rows — so this is the one `+ queue` surface
+// that fetches: GET /api/crate/[id]/tracks, cached per crate for the life
+// of the document. Play is deliberately NOT offered here; playing a crate
+// REPLACES the queue after a prompt, and the crate page (one click away) is
+// where that belongs, next to the tracks it would replace.
 import Shell from '../layouts/Shell.astro'
 import EmptyState from '../components/EmptyState.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../lib/org-api'
@@ -66,6 +74,14 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
                     which is expected and fine for this task. */}
                 <a href={crateHref(c.id)}>{c.name}</a>
                 {!c.is_public && <span class="privatechip">PRIVATE</span>}
+                <button
+                  type="button"
+                  class="queueadd btn-secondary"
+                  hidden
+                  data-crate-id={c.id}
+                  data-crate-name={c.name}
+                  aria-label={`Add ${c.name} to the queue`}
+                >+ QUEUE</button>
                 <div class="explain">{formatCrateMeta(c)} · updated {updatedDate(c)}</div>
               </li>
             ))}
@@ -82,6 +98,14 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
             {pool.map((c) => (
               <li class="cratecard">
                 <a href={crateHref(c.id)}>{c.name}</a>
+                <button
+                  type="button"
+                  class="queueadd btn-secondary"
+                  hidden
+                  data-crate-id={c.id}
+                  data-crate-name={c.name}
+                  aria-label={`Add ${c.name} to the queue`}
+                >+ QUEUE</button>
                 {/* M6c Task 3: owner_name links to their member page.
                     Unconditional, same never-claimed-member caveat as
                     TrackRow.astro's uploader link — see that comment. */}

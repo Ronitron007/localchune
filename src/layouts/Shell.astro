@@ -48,7 +48,41 @@ const { title, center = false } = Astro.props
       survives a ClientRouter navigation exactly like the old markup did;
       see src/scripts/site.ts for the wiring. */}
   <div class="playerbar" transition:persist="player">
+    {/* M6b Task 7 — the visible queue. INERT MARKUP ONLY: site.ts fills both
+        containers and builds every control inside them. That is not laziness,
+        it is the bundle rule — this layout mounts on every page, so an island
+        here would ship the engine, the four strategies and the candidate
+        client to /login. Nothing in this file imports a queue module at all,
+        and src/layouts/shell-bundle.test.ts fails the build if that changes.
+
+        It lives INSIDE the persisted player node so a ClientRouter navigation
+        moves it rather than recreating it — otherwise the drawer would close
+        itself on every filter submit and every sort click, which is exactly
+        the navigation a member does while building a queue.
+
+        Zero <form> elements, and that is the honest position rather than a
+        dodge: the queue is client state, so there is no server resource for a
+        queue operation to POST to. Every control is <button type="button">,
+        which is also why astro-forms.test.ts stays green — this milestone
+        adds no POST form anywhere. */}
+    <div id="queue-drawer" class="queuedrawer" hidden aria-label="Playback queue">
+      <div class="queuedrawer-head">
+        <div id="queue-methods" class="queuemethods" role="group" aria-label="Autoplay method"></div>
+        <button type="button" id="queue-clear" class="btn-danger">CLEAR</button>
+      </div>
+      <div id="queue-sections" class="queuesections"></div>
+    </div>
     <span id="player-label" class="nowplaying" aria-live="polite"></span>
+    {/* Hidden until site.ts unhides it: with no JS there is no queue for it
+        to open, and a control that does nothing must not be visible. */}
+    <button
+      id="queue-toggle"
+      type="button"
+      class="queuetoggle btn-secondary"
+      hidden
+      aria-expanded="false"
+      aria-controls="queue-drawer"
+    >☰ QUEUE</button>
     <button id="player-toggle" type="button" class="playertoggle" aria-label="Play">▶</button>
     <input id="player-seek" type="range" class="playerseek" min="0" max="0" step="1" value="0" aria-label="Seek" />
     <span id="player-time" class="playertime num">0:00 / --:--</span>

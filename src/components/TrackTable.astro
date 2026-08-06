@@ -61,7 +61,14 @@ const emptyVariant = poolEmpty ? 'pool-empty' : query.q !== '' ? 'no-search-matc
           )}
         </tr>
       </thead>
-      <tbody>
+      {/* M6b: `data-queue-list` is the container site.ts scrapes when a play
+          link inside it is clicked — its value is the queue's `source_label`,
+          the one thing that lets a member tell "these came from the pool"
+          from "these came from a crate" without reading the code. It is also
+          what the replace prompt names: Playing "pool (filtered)" clears your
+          queue of 7 tracks. A play link OUTSIDE any such container (the track
+          page, /review) plays alone and queues nothing, which is correct. */}
+      <tbody data-queue-list={isDefaultQuery(query) ? 'pool' : 'pool (filtered)'}>
         {tracks.map((track) => <TrackRow track={track} />)}
       </tbody>
     </table>

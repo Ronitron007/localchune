@@ -12,9 +12,15 @@ The PRD covers eight subsystems. Each gets its own plan, and each produces worki
 | 4 | **Dedup** — fingerprint index, BER matching, merge/undo, review queue | Planned — plan complete (Tasks 1–8), not yet implemented | [`04-dedup.md`](2026-07-29-04-dedup.md) | 3 | Duplicate uploads resolve to one `track_id`, reversibly |
 | 5 | **Pool UI** — track list, filters, player, download | Planned — plan complete | [`05-pool-ui.md`](2026-07-28-05-pool-ui.md) | 3 (Task 9) | The pool is usable |
 | 6 | **Org layer** — three slices, order a→c→b. Spec: [`m6-org-layer-design.md`](../specs/2026-07-29-m6-org-layer-design.md) | — | — | 5 | — |
+<<<<<<< HEAD
 | 6a | **Substrate** — likes, play events, crates (public toggle, manual order), row actions, `/crates`, signal columns | **Implemented** — pending deploy | [`08-m6a-substrate.md`](2026-07-29-08-m6a-substrate.md) | 5 | Like, play-count, crate CRUD live |
 | 6c | **Discovery** — home feed at `/`, table to `/pool`, member pages | **Implemented** | [`09-m6c-discovery.md`](2026-08-05-09-m6c-discovery.md) | 6a | `/` answers "what is good right now?" |
 | 6b | **Playback** — visible queue, autoplay, harmonic mix mode | Not started | *not yet written* | 6a | — |
+=======
+| 6a | **Substrate** — likes, play events, crates (public toggle, manual order), row actions, `/crates`, signal columns | **Shipped** — merged (PR #20) and live in prod | [`08-m6a-substrate.md`](2026-07-29-08-m6a-substrate.md) | 5 | Like, play-count, crate CRUD live |
+| 6c | **Discovery** — home feed at `/`, table to `/pool`, member pages | Not started | *not yet written* | 6a | — |
+| 6b | **Playback** — one queue engine: two-layer queue (user intent + pluggable auto-queue), 25-cap, visible drawer, opt-in autoplay, harmonic mix mode | **Implemented** — Tasks 1–9 done, no migrations | [`09-m6b-playback.md`](2026-08-05-09-m6b-playback.md) | 6a | Playing a crate fills a visible queue; one tap makes it refill itself harmonically |
+>>>>>>> origin/main
 | 7 | **Catalogue matching** — AcoustID → MB → Apple → artwork | Not started | *not yet written* | 3 | Tracks carry canonical metadata and art |
 | 8 | **Genre** — Discogs dump ingest, MB join, normalisation, facet | Not started | *not yet written* | 7 | Genre facet works |
 

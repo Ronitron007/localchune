@@ -66,7 +66,7 @@ const publicDate = (c: FeedCrate): string | null =>
     ) : freshTracks.length === 0 ? (
       <p class="explain">Nothing here this week.</p>
     ) : (
-      <ul class="feedlist">
+      <ul class="feedlist" data-queue-list="Fresh">
         {freshTracks.map((t) => <FeedRow track={t} />)}
       </ul>
     )}
@@ -79,7 +79,7 @@ const publicDate = (c: FeedCrate): string | null =>
     ) : hotTracks.length === 0 ? (
       <p class="explain">Nothing here this week.</p>
     ) : (
-      <ul class="feedlist">
+      <ul class="feedlist" data-queue-list="Hot this week">
         {hotTracks.map((t) => <FeedRow track={t} />)}
       </ul>
     )}
@@ -96,6 +96,16 @@ const publicDate = (c: FeedCrate): string | null =>
         {crateCards.map((c) => (
           <li class="cratecard">
             <a href={crateHref(c.id)}>{c.name}</a>
+            {/* M6b parity with /crates cards: hidden until site.ts unhides
+                it — the queue is client state with no server fallback. */}
+            <button
+              type="button"
+              class="queueadd btn-secondary"
+              hidden
+              data-crate-id={c.id}
+              data-crate-name={c.name}
+              aria-label={`Add ${c.name} to the queue`}
+            >+ QUEUE</button>
             {/* M6c Task 3: owner_name links to their member page.
                 Unconditional, same never-claimed-member caveat as
                 TrackRow.astro's uploader link — see that comment. */}
@@ -116,7 +126,7 @@ const publicDate = (c: FeedCrate): string | null =>
     ) : topTracks.length === 0 ? (
       <p class="explain">No likes yet — ♥ something.</p>
     ) : (
-      <ul class="feedlist">
+      <ul class="feedlist" data-queue-list="Most liked">
         {topTracks.map((t) => <FeedRow track={t} />)}
       </ul>
     )}
