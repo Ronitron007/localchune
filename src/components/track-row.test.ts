@@ -19,12 +19,17 @@
 //    only `data-file-id`. The "file id and nothing else to say" case below
 //    is the real contract assertion — the byte number is downstream of it.
 //    Measured: 2,957 → 2,753 B per row, 1,505 → 1,301 B per feed row.
+//    Then 2,797 / 1,345 when the retina `srcset` landed. Then re-baselined
+//    to a NORMALISED number — see `normalize` below — because the art URLs
+//    made the count depend on a deployment setting rather than on the row.
+//    The figures the budgets now hold are 2,590 and 1,138.
 //
-//    `data-label` on the play link is dead weight too — site.ts derives the
-//    same string from artist and title in `entryLabel()` and never reads
-//    the attribute — but it is named in survive-list #7 and removing it
-//    belongs in the commit that updates the selector-contract test, not
-//    this one. It is worth another ~116 B per row when that lands.
+//    `data-label` WAS dead weight — site.ts derives the same string from
+//    artist and title in `entryLabel()` and never read the attribute. It is
+//    gone, in the commit that reworked the row-tap contract, and two
+//    surfaces that carried it INSTEAD of artist/title (track/[id] and
+//    /review's ComparePanel) were queueing entries with a blank title as a
+//    result. Both now carry the attributes site.ts actually reads.
 //
 //  - It does NOT pin ≤10 elements per row, and the reason is arithmetic
 //    rather than effort. The owner's decision Q3 keeps the 15-column table
@@ -78,45 +83,79 @@ const elementCount = (html: string): number =>
 
 type Renderable = Parameters<AstroContainer['renderToString']>[0]
 
-async function render(Component: unknown, props: Record<string, unknown>): Promise<string> {
+/**
+ * THE ART URLs ARE NOT PART OF THE BUDGET, and leaving them in made this
+ * file fail twice for reasons that had nothing to do with the row.
+ *
+ * `artThumbUrl` returns `${PUBLIC_ART_BASE_URL}/derived/<id>/thumb.jpg`
+ * when that variable is set, and the signed `/api/track/<id>/art?full=1`
+ * fallback when it is not — a 62-character swing on this file id, doubled
+ * once `srcset` named the 2x key as well. So the measured byte count moved
+ * with a DEPLOYMENT SETTING, in both directions:
+ *
+ *   - a developer whose `.env` names a longer art host (a local Supabase
+ *     storage path is 84 bytes longer than the fallback) got a red budget
+ *     and no defect;
+ *   - CI, which sets no `PUBLIC_ART_BASE_URL` at all, got a red
+ *     `thumb.jpg` assertion against the fallback route and no defect.
+ *
+ * Both are the same mistake: measuring a deployment setting inside a
+ * per-row budget. The budget is about what the ROW serialises; how long a
+ * CDN hostname is is neither the row's fault nor the row's to fix.
+ *
+ * Normalising `src` AND `srcset` to one byte each makes the number depend
+ * on the template alone, in every checkout and in CI. It costs no
+ * strictness: the attributes are still counted, and the assertion below
+ * compares the UNnormalised markup against the URL BUILDERS' own output,
+ * which is true whichever state the variable is in. The URLs themselves
+ * are asserted in both states in track-format.test.ts, where the base is
+ * an argument rather than an ambient.
+ */
+const normalize = (html: string): string =>
+  html.replace(/src="[^"]*"/g, 'src="#"').replace(/srcset="[^"]*"/g, 'srcset="#"')
+
+async function renderRaw(Component: unknown, props: Record<string, unknown>): Promise<string> {
   const container = await AstroContainer.create()
   return container.renderToString(Component as Renderable, { props })
 }
 
-/* The budgets moved 2,753 -> 2,797 and 1,301 -> 1,345 for the retina
- * thumb: `srcset="<...>/thumb-2x.jpg 2x"` costs 44 bytes a row here and
- * ~101 in production, where PUBLIC_ART_BASE_URL is baked in and the URL is
- * absolute. Note that this file measures the SHORTER shape — with no .env,
- * `artThumbUrl` returns the signed-route fallback — so it under-reports
- * production by design and always has.
- *
- * Raw bytes are the wrong unit for the decision and gzip is the right one.
- * Measured over 100 production-shaped rows: 238.3 KB -> 247.9 KB raw, but
- * 5.11 KB -> 5.42 KB gzipped — +323 bytes for the whole page, because the
- * file id already appears four times in every row and the base URL is
- * identical on all 100. That buys a thumb that is no longer upscaled on
- * every phone made since 2014. */
+async function render(Component: unknown, props: Record<string, unknown>): Promise<string> {
+  return normalize(await renderRaw(Component, props))
+}
+
 describe('TrackRow — the per-row budget', () => {
-  it('stays at or under 2,797 bytes with realistic strings (was 2,957)', async () => {
+  it('stays at or under 2,590 bytes with realistic strings (was 2,957)', async () => {
     const html = await render(TrackRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_797)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_590)
   })
 
-  /* One candidate, not two: `src` is the 1x, so naming it again in the
-     srcset would pay for a URL the browser already has. If the 2x object
-     is missing the browser abandons the element rather than falling back,
-     which is what `artFallback` exists to repair.
-     Asserted through the builders, not against a literal: with no .env
-     both URLs collapse to the signed-route fallback, and a test that
-     hard-coded `/thumb-2x.jpg` would only ever pass on a machine that
-     happens to have PUBLIC_ART_BASE_URL set. */
+  /* SURVIVE-LIST #15, AND THE TWO DERIVATIVE KEYS.
+     One srcset candidate, not two: `src` is the 1x, so naming it again in
+     the srcset would pay for a URL the browser already has. If the 2x
+     object is missing the browser abandons the element rather than falling
+     back, which is what `artFallback` exists to repair.
+
+     ASSERTED THROUGH THE BUILDERS, NEVER AGAINST A LITERAL, and that is
+     what makes this file env-deterministic. `artThumbUrl` returns the
+     bucket URL when PUBLIC_ART_BASE_URL is set and the signed route when
+     it is not, so a test containing the string `thumb.jpg` passes on a
+     laptop with a .env and fails in CI without one — which is exactly the
+     red this file shipped once. Comparing against the builder's own output
+     asserts the WIRING (this component builds its URLs the one supported
+     way) and is true in both states. The URLs THEMSELVES are asserted in
+     both states in track-format.test.ts, where the base is an argument
+     rather than an ambient. */
   it('offers the 2x thumb as the only srcset candidate, and adds no element', async () => {
-    const html = await render(TrackRow, { track })
+    const html = await renderRaw(TrackRow, { track })
     const img = /<img[^>]*class="thumb"[^>]*>/.exec(html)?.[0] ?? ''
     const b = import.meta.env.PUBLIC_ART_BASE_URL
+    expect(img, 'the row renders a thumb <img>').not.toBe('')
     expect(img).toContain(`src="${artThumbUrl(b, track.file_id)}"`)
     expect(img).toContain(`srcset="${artThumb2xUrl(b, track.file_id)} 2x"`)
-    expect(img).toContain('width="28"')
+    // 44, not 28: the artwork IS the play control now, so it has to be a
+    // real tap target rather than a decoration beside one.
+    expect(img).toContain('width="44"')
+    expect(img).toContain('height="44"')
     expect(img).toContain('loading="lazy"')
   })
 
@@ -162,9 +201,9 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-  it('stays at or under 1,345 bytes (was 1,505)', async () => {
+  it('stays at or under 1,138 bytes (was 1,505)', async () => {
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_345)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_138)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
