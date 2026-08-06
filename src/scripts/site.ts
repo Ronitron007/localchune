@@ -14,7 +14,7 @@ import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
-import { artFallback, artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
+import { artFallback, artMediumUrl, artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
@@ -599,11 +599,26 @@ function updateMediaSession(): void {
       // audio URL it does not expire. A QueueEntry carries no `has_thumb`, so
       // this is emitted unconditionally: a 404 costs one request and the OS
       // simply shows no art, which is exactly what it would show anyway.
-      artwork: [{
-        src: artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, entry.file_id),
-        sizes: '256x256',
-        type: 'image/jpeg',
-      }],
+      //
+      // Both sizes, smallest first, with HONEST `sizes` — this used to offer
+      // the 64 px thumb alone and declare it 256x256, so every lock screen
+      // scaled it up 4x. The OS picks per its own display, and if the medium
+      // is missing (a file analysed since the last derivatives sweep) it
+      // falls back to the thumb by itself, which is the whole point of
+      // listing two. 512 is the medium's BOX, not a promise of squareness:
+      // the long edge is capped there and the short edge follows the source.
+      artwork: [
+        {
+          src: artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, entry.file_id),
+          sizes: '64x64',
+          type: 'image/jpeg',
+        },
+        {
+          src: artMediumUrl(import.meta.env.PUBLIC_ART_BASE_URL, entry.file_id),
+          sizes: '512x512',
+          type: 'image/jpeg',
+        },
+      ],
     })
     ms.playbackState = audio !== null && !audio.paused ? 'playing' : 'paused'
   } catch {
