@@ -84,11 +84,18 @@ const sides = [
     {sides.map((s) => (
       <section class="compareside">
         <h3>
+          {/* data-artist + data-title, not the joined data-label — the
+              same bug fix track/[id].astro carries. site.ts's scrapeOne
+              reads dataset.artist and dataset.title and has never read
+              dataset.label, so auditioning a review pair queued an entry
+              with an empty title and the bar announced nothing. */}
           <a
             class="play"
             href={`/track/${s.fileId}`}
             data-track-id={s.fileId}
-            data-label={`${s.artist} — ${s.title}`}
+            data-artist={s.artist}
+            data-title={s.title}
+            data-duration={s.duration ?? undefined}
             data-start={startAt > 0 ? String(startAt) : undefined}
             aria-label={`Play ${s.title}`}
           >▶</a>

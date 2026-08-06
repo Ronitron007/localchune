@@ -34,8 +34,14 @@ const artist = track.display_artist ?? 'Unknown artist'
 const noBeat = track.bpm === null || track.bpm <= 0
 const added = new Date(track.created_at).toISOString().slice(0, 10)
 ---
+{/* data-play-row — OWNER, 2026-08-06: "list rows lose the play button;
+    whole-row tap plays, matching the queue drawer's grammar." site.ts
+    resolves a tap anywhere in here to the row's own `a.play`, and lets
+    every inner control (♥, +Q, ⋮, the two title links, download, the
+    crate picker) win its own tap. See playLinkFromTap in site.ts. */}
 <tr
   class="trackrow"
+  data-play-row
   draggable={reorderable ? 'true' : undefined}
   data-file-id={reorderable ? track.file_id : undefined}
 >
@@ -60,19 +66,54 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       row's own `a.play` for that metadata — the same link it already
       scrapes to build the list a play means. `title="add to queue"` went
       with them: it repeated the aria-label and is invisible on touch. */}
-  <td class="controls">
+  {/* ARTWORK LEADS, AND THE ARTWORK IS THE PLAY LINK. The `▶` used to be
+      a bare text glyph 14x18px in its own cell — the audit's offender #2
+      — beside a 28px thumb that did nothing. They are one control now:
+      the link wraps the art and carries a play icon over it, so the
+      visual affordance sits where a member's thumb already goes and the
+      whole row is the hit area besides.
+
+      The class, the href and the six data-* site.ts reads are what they
+      were. site.ts scrapes `a.play` inside `[data-queue-list]` to build
+      the list a play means, so the attributes belong on the LINK and not
+      on the row: /track/[id] and /review render a play link with no row
+      at all. Survive-list #7, unmoved.
+
+      THE 44px BOX IS WHY THE 2x KEY MATTERS. The stored `thumb.jpg` is
+      64px, so a 44 CSS px box on a 2x phone wants 88 real pixels and used
+      to upscale. `thumb-2x.jpg` is 128px and covers it with room to
+      spare — one srcset candidate, because `src` already names the 1x and
+      repeating it would pay for a URL the browser has. A file uploaded
+      since the last derivatives sweep has no 2x object; site.ts's
+      `artFallback` drops the srcset on error rather than letting the
+      browser abandon the element. */}
+  <td class="art">
     <a
       class="play"
       href={`/track/${track.file_id}`}
       data-track-id={track.file_id}
-      data-label={`${artist} — ${track.display_title}`}
       data-artist={track.display_artist ?? undefined}
       data-title={track.display_title}
       data-duration={track.duration_ms ?? undefined}
       data-bpm={track.bpm ?? undefined}
       data-key={track.key_camelot ?? undefined}
       aria-label={`Play ${track.display_title}`}
-    >▶</a>
+    >{track.has_thumb
+      ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} srcset={`${artThumb2xUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} 2x`} alt="" width="44" height="44" loading="lazy" />
+      : <span class="thumb-empty" aria-hidden="true"></span>}</a>
+  </td>
+  {/* `+Q` is play's companion (§4: "+ queue is a companion to play,
+      everywhere play appears"). It is `hidden` in the markup and unhidden
+      by site.ts, because a button that would do nothing without JS must
+      not be visible without JS — the queue is client state and there is
+      no server endpoint for it to fall back to.
+
+      PERF TASK 2.2 — the button carries `data-file-id` AND NOTHING ELSE.
+      It used to repeat artist/title/duration/bpm/key, which is five of
+      the eight times the audit found artist and title serialised in one
+      row, on every one of a hundred rows. site.ts's `+Q` delegation now
+      reads the row's own `a.play` for that metadata. */}
+  <td class="controls">
     <button
       type="button"
       class="queueadd btn-secondary"
@@ -80,11 +121,6 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       data-file-id={track.file_id}
       aria-label={`Add ${track.display_title} to the queue`}
     >+Q</button>
-  </td>
-  <td class="art">
-    {track.has_thumb
-      ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} srcset={`${artThumb2xUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} 2x`} alt="" width="28" height="28" loading="lazy" />
-      : <span class="thumb-empty" aria-hidden="true"></span>}
   </td>
   {/* Task 8: artist and title are now independent columns — each still
       links to the track page, and the tag chips move to the title cell

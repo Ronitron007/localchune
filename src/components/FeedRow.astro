@@ -29,19 +29,24 @@ const { track } = Astro.props
 const artist = track.display_artist ?? 'Unknown artist'
 const label = `${artist} — ${track.display_title}`
 ---
-<li class="feedrow">
+{/* data-play-row and the artwork-as-play-link: TrackRow.astro's exact
+    rework, for the same owner directive and by the same mechanism. The
+    two rows converge rather than diverge — that was the whole point of
+    giving them one `a.play` contract in the first place. */}
+<li class="feedrow" data-play-row>
   <a
     class="play"
     href={`/track/${track.file_id}`}
     data-track-id={track.file_id}
-    data-label={label}
     data-artist={track.display_artist ?? undefined}
     data-title={track.display_title}
     data-duration={track.duration_ms ?? undefined}
     data-bpm={track.bpm ?? undefined}
     data-key={track.key_camelot ?? undefined}
     aria-label={`Play ${track.display_title}`}
-  >▶</a>
+  >{track.has_thumb
+    ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} srcset={`${artThumb2xUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} 2x`} alt="" width="44" height="44" loading="lazy" />
+    : <span class="thumb-empty" aria-hidden="true"></span>}</a>
   {/* PERF TASK 2.2 — `data-file-id` only, exactly as TrackRow.astro's
       companion: site.ts reads this row's own `a.play` for the queue
       metadata rather than a second copy of it on the button. */}
@@ -52,9 +57,6 @@ const label = `${artist} — ${track.display_title}`
     data-file-id={track.file_id}
     aria-label={`Add ${track.display_title} to the queue`}
   >+Q</button>
-  {track.has_thumb
-    ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} srcset={`${artThumb2xUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} 2x`} alt="" width="28" height="28" loading="lazy" />
-    : <span class="thumb-empty" aria-hidden="true"></span>}
   <span class="feedrow-body">
     <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
     <span class="feedrow-meta">

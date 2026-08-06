@@ -1215,9 +1215,51 @@ if (audio) {
  * safe but could look broken. The drawer's CLEAR button is the always-
  * available manual path (clear, then play, no prompt).
  */
+/**
+ * Everything inside a row that owns its own tap: the ♥ form's button, the
+ * queue-add, the three-dot, the title and artist links to /track/[id],
+ * the download link, the crate picker's disclosure. Written as one list
+ * so a control added to a row tomorrow is exempt by being a control,
+ * rather than by someone remembering to add it here.
+ */
+const ROW_TAP_EXEMPT = 'a, button, input, select, textarea, label, summary'
+
+/**
+ * WHICH PLAY LINK A TAP MEANS — owner directive, 2026-08-06: "list rows
+ * lose the play button; whole-row tap plays, matching the queue drawer's
+ * grammar." The drawer has read that way since M6b, where
+ * `.queuerow-play` spans the row; every other list shipped a 14x18px
+ * glyph, which the audit ranked as offender #2.
+ *
+ * THE SELECTOR CONTRACT DOES NOT MOVE. `a.play[data-track-id]` is still
+ * the element carrying data-artist/-title/-duration/-bpm/-key, still the
+ * thing `scrapeRows` collects in rendered order, still the no-JS path to
+ * the track page. It has become the artwork rather than a glyph, and the
+ * row has gained a way to reach it — that is the entire change. Moving
+ * those attributes onto the row would have meant rewriting scrapeRows,
+ * playLinkFor and scrapeOne at once, and their shared failure mode is a
+ * queue of nameless entries, which the crate route has already paid for.
+ *
+ * Returns null when the tap belongs to something else, which is most
+ * taps: a row is mostly other controls.
+ */
+function playLinkFromTap(target: Element): HTMLAnchorElement | null {
+  const direct = target.closest?.('a.play[data-track-id]')
+  if (direct instanceof HTMLAnchorElement) return direct
+  const row = target.closest?.('[data-play-row]')
+  if (!(row instanceof HTMLElement)) return null
+  // An inner control BELONGING TO THIS ROW wins. The containment test is
+  // load-bearing: closest() climbs past the row, so a row nested inside
+  // some future <a> would otherwise never play.
+  const own = target.closest?.(ROW_TAP_EXEMPT)
+  if (own instanceof Element && row.contains(own)) return null
+  const a = row.querySelector('a.play[data-track-id]')
+  return a instanceof HTMLAnchorElement ? a : null
+}
+
 document.addEventListener('click', (e) => {
-  const a = (e.target as Element).closest?.('a.play[data-track-id]')
-  if (!(a instanceof HTMLAnchorElement) || audio === null) return
+  const a = playLinkFromTap(e.target as Element)
+  if (a === null || audio === null) return
   e.preventDefault()
   const trackId = a.dataset.trackId
   if (trackId === undefined) return

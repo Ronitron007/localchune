@@ -177,11 +177,22 @@ describe('TrackRow — the per-row budget', () => {
     const html = await render(TrackRow, { track })
     const play = /<a[^>]*class="play"[^>]*>/.exec(html)?.[0] ?? ''
     for (const attr of [
-      'data-track-id=', 'data-label=', 'data-artist=', 'data-title=',
+      'data-track-id=', 'data-artist=', 'data-title=',
       'data-duration=', 'data-bpm=', 'data-key=',
     ]) {
       expect(play).toContain(attr)
     }
+  })
+
+  it('no longer carries data-label, which nothing ever read', async () => {
+    // scrapeOne reads dataset.artist and dataset.title; entryLabel()
+    // rebuilds "Artist — Title" from the two. dataset.label has never
+    // been read anywhere in site.ts. It was ~110 B on every one of a
+    // hundred rows. Removed together with the two surfaces that carried
+    // it INSTEAD of artist/title and therefore queued a blank name —
+    // track/[id] and /review's ComparePanel.
+    const html = await render(TrackRow, { track })
+    expect(html).not.toContain('data-label=')
   })
 
   it('keeps the like form, its glyph and its count', async () => {
