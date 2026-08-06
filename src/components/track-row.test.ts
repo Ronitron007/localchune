@@ -159,9 +159,9 @@ describe('TrackRow — the per-row budget', () => {
     expect(img).toContain('loading="lazy"')
   })
 
-  it('stays at or under 37 elements — the 15-column floor plus its cells', async () => {
+  it('stays at or under 38 elements — the 15-column floor plus its cells', async () => {
     const html = await render(TrackRow, { track })
-    expect(elementCount(html)).toBeLessThanOrEqual(37)
+    expect(elementCount(html)).toBeLessThanOrEqual(38)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
@@ -212,9 +212,15 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
+<<<<<<< HEAD
   it('stays at or under 1,138 bytes (was 1,505)', async () => {
     const html = await render(FeedRow, { track })
     expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_138)
+=======
+  it('stays at or under 1,279 bytes (was 1,505)', async () => {
+    const html = await render(FeedRow, { track })
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_279)
+>>>>>>> 56b4601 (feat(rows): the three-dot sheet — six 8-30px controls become six 44px rows)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {

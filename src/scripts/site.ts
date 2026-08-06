@@ -1405,8 +1405,13 @@ document.addEventListener('click', (e) => {
  * again on a soft navigation.
  */
 function revealQueueControls(): void {
-  document.querySelectorAll<HTMLElement>('button.queueadd[hidden], button.crateplay[hidden]')
-    .forEach((el) => { el.hidden = false })
+  document.querySelectorAll<HTMLElement>(
+    'button.queueadd[hidden], button.crateplay[hidden], button.rowmenu[hidden]',
+  ).forEach((el) => { el.hidden = false })
+  // The row menu is the whole control set below 640px, so the cells it
+  // replaces are hidden only once it is real. Without JS this class is
+  // never added and every row keeps every control it always had.
+  document.documentElement.classList.add('has-rowmenu')
 }
 revealQueueControls()
 document.addEventListener('astro:after-swap', revealQueueControls)
@@ -2374,4 +2379,115 @@ document.addEventListener('click', (e) => {
       if (id === 'signout') signout?.requestSubmit()
     },
   })
+}, true)
+
+/* ============================================================
+   THE ROW'S ⋮ — TASK 3.3
+   ============================================================
+   Six controls that are 8-30px in a dense row become six 44px rows in a
+   sheet, plus the eight metadata columns the mobile card drops. That is
+   the owner's "three dot menus" in one component, and it is what lets the
+   card be two lines of text instead of two lines and a strip of buttons.
+
+   NO SECOND CODE PATH FOR ANYTHING. Every action row reaches the control
+   the ROW ALREADY CARRIES — `button.queueadd` gets clicked, `form.likeform`
+   gets requestSubmit()ed, a crate choice clicks that row's own
+   `button.cratepick-option`. So the one delegation that has always served
+   each action still serves it, with its own status message, its own
+   optimistic repaint and its own error branch. A sheet that called the
+   like API itself would be a second implementation of a feature that
+   already has one, and two implementations of one feature drift.
+
+   The METADATA is read from the row's own cells. They are `display: none`
+   below 640px, not absent — one DOM, one template — and textContent reads
+   through `display: none` perfectly well. So the sheet carries no copy of
+   any value and the row carries no bytes for the sheet. */
+
+/** Cell class → the label the sheet gives it. Order is the sheet's order. */
+const ROW_META: ReadonlyArray<readonly [string, string]> = [
+  ['bpm', 'BPM'], ['key', 'Key'], ['duration', 'Length'], ['quality', 'Quality'],
+  ['uploader', 'Uploader'], ['added', 'Added'], ['plays', 'Plays'],
+  ['downloads', 'Downloads'],
+]
+
+const cellText = (row: Element, cls: string): string | undefined => {
+  const t = row.querySelector(`.${cls}`)?.textContent?.trim()
+  return t === undefined || t === '' ? undefined : t
+}
+
+/**
+ * The second sheet: which crate. Reached only from the first one, and it
+ * closes the first by opening — one sheet at a time, because a stack of
+ * sheets on a phone is a member who cannot tell what dismissing one will
+ * reveal.
+ */
+function openCrateSheet(row: HTMLElement, from: HTMLElement): void {
+  void loadCrateList().then((crates) => {
+    populateCratePickers(crates)
+    openActionSheet({
+      title: 'Add to a crate',
+      returnFocusTo: from,
+      rows: crates.length === 0
+        ? [{ id: 'none', label: 'No crates yet — make one on the track page', disabled: true }]
+        : crates.map((c) => ({ id: c.id, label: c.name, icon: 'crate' as const })),
+      onChoose: (id) => {
+        // The row's OWN option button, clicked. addToCrate() is called in
+        // exactly one place in this file and this is not it.
+        const opt = row.querySelector<HTMLButtonElement>(
+          `details.cratepick button.cratepick-option[data-crate-id="${CSS.escape(id)}"]`,
+        )
+        opt?.click()
+      },
+    })
+  })
+}
+
+function openRowSheet(btn: HTMLElement): void {
+  const row = btn.closest<HTMLElement>('[data-play-row]')
+  if (row === null) return
+  const play = row.querySelector<HTMLAnchorElement>('a.play[data-track-id]')
+  const fileId = play?.dataset.trackId
+  if (play === null || fileId === undefined) return
+
+  const like = row.querySelector<HTMLFormElement>('form.likeform')
+  const likeBtn = like?.querySelector<HTMLButtonElement>('button.likebtn')
+  const liked = likeBtn?.getAttribute('aria-pressed') === 'true'
+  const queueadd = row.querySelector<HTMLButtonElement>('button.queueadd')
+  const hasCrates = row.querySelector('details.cratepick') !== null
+
+  openActionSheet({
+    title: play.dataset.title ?? 'Track',
+    returnFocusTo: btn,
+    rows: [
+      { id: 'play', label: 'Play', icon: 'play' },
+      queueadd !== null && { id: 'queue', label: 'Add to queue', icon: 'queue-add' },
+      like !== null && {
+        id: 'like', label: liked ? 'Unlike' : 'Like', icon: 'heart', pressed: liked,
+        meta: likeBtn?.querySelector('.likecount')?.textContent?.trim(),
+      },
+      hasCrates && { id: 'crate', label: 'Add to a crate…', icon: 'crate' },
+      { id: 'download', label: 'Download', icon: 'download', href: `/api/track/${fileId}/download` },
+      { id: 'open', label: 'Open track page', href: `/track/${fileId}` },
+      ...ROW_META.map(([cls, label]) => {
+        const value = cellText(row, cls)
+        return value === undefined ? null : { id: cls, label, meta: value, disabled: true }
+      }),
+    ],
+    onChoose: (id) => {
+      if (id === 'play') play.click()
+      if (id === 'queue') queueadd?.click()
+      // requestSubmit, never submit(): submit() fires no submit event, so
+      // the delegation that owns the ♥ would never see it and the form
+      // would POST as a full navigation instead.
+      if (id === 'like') like?.requestSubmit()
+      if (id === 'crate') openCrateSheet(row, btn)
+    },
+  })
+}
+
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.rowmenu')
+  if (!(btn instanceof HTMLButtonElement)) return
+  e.preventDefault()
+  openRowSheet(btn)
 }, true)

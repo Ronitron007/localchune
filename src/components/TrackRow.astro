@@ -113,6 +113,23 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       the eight times the audit found artist and title serialised in one
       row, on every one of a hundred rows. site.ts's `+Q` delegation now
       reads the row's own `a.play` for that metadata. */}
+  {/* THE THREE-DOT — the owner's "three dot menus", one per row. Below
+      640px it is the row's whole control set: +Q, ♥, add-to-crate,
+      download, the track page, and the eight metadata columns the card
+      drops. site.ts builds it from THIS ROW — the cells for the values,
+      the row's own controls for the actions — so the sheet adds no second
+      copy of anything and no bytes beyond this button.
+
+      `hidden` for the same reason `+Q` is: a sheet is client state with
+      no server fallback, and a control that would do nothing without JS
+      must not be visible without JS. Without JS the row still shows every
+      control it always did, because the CSS that hides them is scoped to
+      the JS-only case (see .rowmenu in global.css).
+
+      A text glyph, not the icon set. `⋮` is three bytes; the kebab SVG is
+      ~300, which is 30 KB on a hundred-row page for a shape the character
+      already draws. The icons in the SHEET are free by comparison —
+      site.ts builds those once, at open. */}
   <td class="controls">
     <button
       type="button"
@@ -121,6 +138,13 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       data-file-id={track.file_id}
       aria-label={`Add ${track.display_title} to the queue`}
     >+Q</button>
+    <button
+      type="button"
+      class="rowmenu"
+      hidden
+      aria-haspopup="dialog"
+      aria-label={`More actions for ${track.display_title}`}
+    >⋮</button>
   </td>
   {/* Task 8: artist and title are now independent columns — each still
       links to the track page, and the tag chips move to the title cell

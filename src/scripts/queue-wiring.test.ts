@@ -282,7 +282,14 @@ describe('the player bar\'s ♥ and title link', () => {
     // toggleLike call site would mean the bar grew a private code path, and
     // the two would drift on rollback, on error reporting, or on both.
     expect(count(/toggleLike\(/g)).toBe(1)
-    expect(count(/form\.likeform/g)).toBe(1)
+    // ONE SUBMIT DELEGATION, not one mention. This used to count every
+    // occurrence of the class, which was the same number until Task 3.3's
+    // row sheet needed to FIND a row's like form in order to
+    // requestSubmit() it — a use that strengthens the invariant rather
+    // than breaking it, since it routes the sheet back through this very
+    // delegation. What must stay unique is the handler, so that is what
+    // is counted now.
+    expect(count(/closest\?\.\('form\.likeform'\)/g)).toBe(1)
   })
 
   it('writes the bar\'s ♥ from exactly two places, and names them', () => {
@@ -386,6 +393,21 @@ describe('a row is the play control — the whole row, not a glyph', () => {
     const fn = code.slice(at, code.indexOf('\n}', at) + 2)
     expect(fn).toContain('a.play[data-track-id]')
     expect(fn).toContain('data-play-row')
+  })
+
+  it('reaches every row action through the control that already exists', () => {
+    // TASK 3.3. The row's ⋮ sheet adds NO second code path for queueing,
+    // liking or crate-adding: each row clicks or submits the control the
+    // row already carries, so the one delegation that has always served
+    // that action still serves it. A sheet with its own toggleLike() call
+    // is two implementations of one feature and they drift.
+    const at = code.indexOf('function openRowSheet')
+    expect(at, 'the row sheet is one named function').toBeGreaterThan(-1)
+    const fn = code.slice(at, code.indexOf('\nfunction ', at + 10))
+    expect(fn).toContain('button.queueadd')
+    expect(fn).toContain('form.likeform')
+    // Exactly one toggleLike call in the whole file — the delegation's.
+    expect(count(/toggleLike\(/g)).toBe(1)
   })
 
   it('lets an inner control win its own tap', () => {

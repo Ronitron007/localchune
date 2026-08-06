@@ -65,4 +65,14 @@ const label = `${artist} — ${track.display_title}`
       <span class="feedrow-likes">♥ {track.like_count}</span>
     </span>
   </span>
+  {/* The row menu, exactly as TrackRow.astro's — see the long note there.
+      A feed row has no metadata cells to unpack, so its sheet is the
+      action half only. Last in the DOM because it is last in the row. */}
+  <button
+    type="button"
+    class="rowmenu"
+    hidden
+    aria-haspopup="dialog"
+    aria-label={`More actions for ${track.display_title}`}
+  >⋮</button>
 </li>

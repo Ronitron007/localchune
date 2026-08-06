@@ -416,7 +416,12 @@ h3 { font-size: var(--text-base); }
   color: var(--bg);
   text-decoration: none;
 }
-.wordmark[aria-current='page'] { background: none; color: inherit; }
+/* The wordmark is the Home link and carries aria-current on "/", but it
+   is a wordmark, not a nav chip — inverting it turns the app's name into
+   a black box. Scoped under .appnav so it OUT-SPECIFIES the rule above
+   (0,3,0 against 0,2,1); the shorter selector loses and the wordmark went
+   black on the home page. */
+.appnav .wordmark[aria-current='page'] { background: none; color: inherit; }
 .appnav .who, .appnav .credits {
   color: var(--ink-55);
   font-size: var(--text-xs);
@@ -859,6 +864,32 @@ td.download > a {
   text-decoration: none;
 }
 
+/* THE ROW'S ⋮. A 44px ghost button carrying a text glyph — see the note
+   in TrackRow.astro for why the character and not the icon set. It is the
+   mobile grammar only: above 640px the table shows every column and every
+   control, which is owner decision Q3, so a menu there would offer what
+   is already on screen. */
+.rowmenu {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+.rowmenu:hover, .rowmenu:active { background: var(--surface-2); }
+@media (max-width: 640px) {
+  .rowmenu:not([hidden]) { display: inline-flex; }
+}
+
 /* ROW FEEDBACK IS A BACKGROUND STEP. Rows do NOT lift: a hundred lifting
    rows is the black-rectangle collapse in its purest form (§4.3). A tap
    anywhere that is not an inner control plays, so the row has to say so
@@ -1242,6 +1273,7 @@ body.queueopen .uploadchip-slot {
 }
 .feedlist > .feedrow:last-child { border-bottom: 0; }
 .feedrow .play { flex: none; }
+.feedrow .feedrow-body { flex: 1 1 auto; }
 .feedrow-body { min-width: 0; display: flex; flex-direction: column; gap: 0.15em; }
 .feedrow-title {
   overflow: hidden;
@@ -1670,18 +1702,23 @@ dd { margin: 0; }
     overflow-wrap: anywhere;
   }
 
-  /* The art spans the whole card and sits at its top — it is the play
-     control now, so it leads the row the way it does on every music app
-     the owner named. align-self keeps it 44px instead of stretching to
-     three rows of text. */
-  .tracktable td.art      { grid-column: 1; grid-row: 1 / 4; align-self: start; }
-  .tracktable td.title    { grid-column: 2 / -1; grid-row: 1; }
-  .tracktable td.artist   { grid-column: 2 / -1; grid-row: 2; color: var(--mid); }
-  .tracktable td.controls { grid-column: 2; grid-row: 3; }
-  .tracktable td.likes    { grid-column: 3; grid-row: 3; }
-  .tracktable td.download { grid-column: 4; grid-row: 3; }
-  .tracktable td.addcrate { grid-column: 5; grid-row: 3; }
+  /* TWO LINES AND TWO CONTROLS. The card was artwork + title + artist +
+     a strip of four 44px buttons — 113px tall, and the strip was most of
+     it. Task 3.3's ⋮ carries every one of those four (and the eight
+     metadata columns), so the card is what §5.1 asked for: artwork leads,
+     two lines of text, one three-dot. The buttons stay in the DOM and
+     stay reachable — the sheet clicks them. */
+  .tracktable tbody > tr { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .tracktable td.art      { grid-column: 1; grid-row: 1 / 3; align-self: center; }
+  .tracktable td.title    { grid-column: 2; grid-row: 1; }
+  .tracktable td.artist   { grid-column: 2; grid-row: 2; color: var(--mid); font-size: var(--text-xs); }
+  .tracktable td.controls { grid-column: 3; grid-row: 1 / 3; align-self: center; }
 
+  /* HIDDEN ONLY WHEN THE ⋮ IS REAL. `html.has-rowmenu` is written by
+     site.ts, so with JS off every one of these comes back and the row is
+     the fully-controlled card it was before the sheet existed. That is
+     survive-list #10 read the right way round: the JS-only control hides
+     the fallback, the fallback never hides itself. */
   .tracktable td.bpm,
   .tracktable td.key,
   .tracktable td.duration,
@@ -1690,6 +1727,15 @@ dd { margin: 0; }
   .tracktable td.added,
   .tracktable td.downloads,
   .tracktable td.plays { display: none; }
+  .has-rowmenu .tracktable td.likes,
+  .has-rowmenu .tracktable td.download,
+  .has-rowmenu .tracktable td.addcrate,
+  .has-rowmenu .tracktable td.controls .queueadd,
+  .has-rowmenu .feedrow .queueadd { display: none; }
+  /* Without JS the ⋮ never unhides, so these keep their grid slots. */
+  .tracktable td.likes    { grid-column: 2; grid-row: 3; }
+  .tracktable td.download { grid-column: 3; grid-row: 3; }
+  .tracktable td.addcrate { grid-column: 3; grid-row: 4; }
 
   /* The 44px thumb override that lived here is gone: the art is the play
      control at EVERY breakpoint now, so 44px is the global size and this
