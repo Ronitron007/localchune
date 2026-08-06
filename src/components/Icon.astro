@@ -1,0 +1,72 @@
+---
+// src/components/Icon.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// Renders one glyph from src/lib/icons.ts, server-side. No client JS, no
+// sprite request, no font.
+//
+// aria-hidden="true" ALWAYS, and that is the load-bearing decision. An
+// icon is never the accessible name of anything: the glyphs being
+// replaced (▶ +Q ♥ ↓ ✕ ☰) are text nodes a screen reader announces today,
+// so the name has to move to the CONTROL. Every icon-only button in this
+// app carries its own aria-label; this component makes sure the <svg>
+// never competes with it or, worse, silently replaces it with nothing.
+//
+// Sizes, per the design system: 12px in dense meta runs, 16px beside
+// --text-sm, 20px in the collapsed player bar, 28px in the now-playing
+// sheet's transport, and the glyph centred inside a 44px icon-only
+// button.
+//
+// The two variants are done by REWRITING THE MARKUP, not with CSS, and
+// both reasons are worth stating because both are traps:
+//   1. `stroke-width` on the <svg> does NOT override a stroke-width
+//      attribute on a child path — the child's presentation attribute
+//      wins over an inherited one.
+//   2. Content inserted with `set:html` is never processed by Astro's
+//      style scoper, so a scoped `.icon path { … }` rule silently matches
+//      nothing.
+import { renderGlyph, type IconName } from '../lib/icons'
+
+interface Props {
+  name: IconName
+  /** Rendered px. Both width and height — every glyph is square. */
+  size?: number
+  /** Extra classes on the <svg>. Colour comes from the parent. */
+  class?: string
+  /**
+   * `heart` only: fills the glyph instead of stroking it. The one glyph
+   * whose paint carries state, which is why it is stroked at rest.
+   */
+  filled?: boolean
+}
+
+const { name, size = 16, class: className, filled = false } = Astro.props
+
+// A 2px stroke scaled to 12px is a hairline, and the set stops reading as
+// one family. `check` already declares 2.5 because a tick is mostly
+// diagonal and thins optically; renderGlyph leaves it there.
+const markup = renderGlyph(name, { small: size <= 14, filled })
+---
+<svg
+  class:list={['icon', className]}
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  aria-hidden="true"
+  focusable="false"
+  set:html={markup}
+/>
+<style>
+  /* vertical-align keeps a glyph on the text baseline when it sits inline
+     beside a label; a flex parent ignores it. currentColor is inherited
+     by every path in icons.ts, so an icon needs no colour rule of its own
+     — it is white in a .btn and --ink-55 in a meta run for free. */
+  .icon {
+    display: inline-block;
+    vertical-align: -0.125em;
+    flex: none;
+  }
+</style>

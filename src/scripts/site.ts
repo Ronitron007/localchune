@@ -5,6 +5,11 @@
 
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
+import { renderGlyph, type IconName } from '../lib/icons'
+import {
+  classifyGesture, exitDelayMs, nextFocusIndex, normalizeRows, shouldDismiss,
+  velocityPxPerMs, type SheetRow, type SheetRowInput,
+} from '../lib/sheet'
 import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
@@ -1939,3 +1944,287 @@ document.addEventListener('input', (e) => {
   if (el instanceof HTMLInputElement && el.name === 'q'
       && el.form?.hasAttribute('data-autosubmit')) autosubmit(el.form)
 })
+
+/* ============================================================
+   THE BOTTOM ACTION SHEET
+   ============================================================
+   The owner's "modals and three dot menus", built once. The nav's ⋮,
+   every row's ⋮, the filter panel and the crate picker are all this one
+   component; building it per surface is how an app ends up with four
+   dismissal behaviours and a member who has learned only one of them.
+
+   Vanilla DOM, NOT an island. Shell.astro mounts on every page, so an
+   island here would ship to /login — the same rule shell-bundle.test.ts
+   already enforces for the queue drawer.
+
+   The maths lives in src/lib/sheet.ts and is tested there with no DOM.
+   Everything below is the part that has to touch `document`.
+
+   TWO RULES THAT ARE NOT OBVIOUS AND ARE LOAD-BEARING:
+
+   1. THE SHEET CLOSES ON `astro:before-swap`. It is portalled to <body>,
+      so it sits OUTSIDE transition:persist and ClientRouter would destroy
+      its node while this module still held a reference and <body> was
+      still scroll-locked. Closing it explicitly is the difference between
+      "the sheet is ephemeral by design" and "the page is frozen after you
+      tap a link in a menu". It is also exactly why the now-playing sheet
+      is deliberately NOT portalled — see the spec's §5.3.
+
+   2. NO INLINE HANDLERS, EVER. An inline `onclick=` in this bundle trips
+      Cloudflare's API WAF and 403s the deploy (survive-list #6). Every
+      control below is wired with addEventListener on a node this module
+      created.
+
+   The sheet creates no second aria-live region either: #player-label is
+   THE status region (survive-list #12) and two regions race. */
+
+interface SheetOptions {
+  title: string
+  rows: readonly (SheetRowInput | null | undefined | false)[]
+  /** Called with the row id when a non-link row is chosen. */
+  onChoose?: (id: string, row: SheetRow) => void
+  /** Focus returns here on close — the ⋮ that opened it. */
+  returnFocusTo?: HTMLElement | null
+}
+
+const prefersReducedMotion = (): boolean =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+
+let openSheet: { close: (immediate?: boolean) => void } | null = null
+
+function svgIcon(name: IconName, size = 20): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('fill', 'none')
+  // aria-hidden always: the accessible name belongs to the ROW, not to
+  // the glyph. The text controls this replaces are announced today, and
+  // an <svg aria-hidden> is silent.
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  svg.classList.add('icon')
+  svg.innerHTML = renderGlyph(name, { small: size <= 14 })
+  return svg
+}
+
+function sheetRowEl(row: SheetRow): HTMLElement {
+  const el = document.createElement(row.href ? 'a' : 'button')
+  el.className = 'sheet-row'
+  if (el instanceof HTMLButtonElement) el.type = 'button'
+  if (el instanceof HTMLAnchorElement && row.href) el.href = row.href
+  if (row.danger) el.classList.add('is-danger')
+  if (row.isLast) el.classList.add('is-last')
+  if (row.disabled) {
+    el.setAttribute('aria-disabled', 'true')
+    if (el instanceof HTMLButtonElement) el.disabled = true
+  }
+  if (row.pressed !== undefined) el.setAttribute('aria-pressed', String(row.pressed))
+  el.dataset.sheetRow = row.id
+
+  if (row.icon) el.appendChild(svgIcon(row.icon))
+  // `labelEl`, not `label`: #player-label is the app's one aria-live
+  // region and queue-wiring.test.ts guards it with a blunt text match on
+  // `label.textContent =`. A local named `label` here would defeat that
+  // guard by coincidence, and the guard is protecting the title anchor
+  // from being detached — worth more than the shorter name.
+  const labelEl = document.createElement('span')
+  labelEl.className = 'sheet-row-label'
+  labelEl.textContent = row.label
+  el.appendChild(labelEl)
+  if (row.meta) {
+    const meta = document.createElement('span')
+    meta.className = 'sheet-row-meta'
+    meta.textContent = row.meta
+    el.appendChild(meta)
+  }
+  return el
+}
+
+/**
+ * Opens a sheet. Returns a function that closes it.
+ *
+ * Only one sheet exists at a time — opening a second closes the first
+ * immediately rather than stacking. A stack of sheets on a phone is a
+ * member who cannot tell what dismissing one will reveal.
+ */
+export function openActionSheet(opts: SheetOptions): () => void {
+  openSheet?.close(true)
+
+  const rows = normalizeRows(opts.rows)
+  const returnFocusTo = opts.returnFocusTo ?? null
+
+  const root = document.createElement('div')
+  root.className = 'sheet'
+  root.dataset.sheet = ''
+
+  const scrim = document.createElement('div')
+  scrim.className = 'sheet-scrim'
+
+  const panel = document.createElement('div')
+  panel.className = 'sheet-panel'
+  panel.setAttribute('role', 'dialog')
+  panel.setAttribute('aria-modal', 'true')
+  panel.setAttribute('aria-label', opts.title)
+
+  const handle = document.createElement('button')
+  handle.type = 'button'
+  handle.className = 'sheet-handle'
+  handle.setAttribute('aria-label', 'Close')
+
+  const head = document.createElement('div')
+  head.className = 'sheet-head'
+  const heading = document.createElement('span')
+  heading.className = 'sheet-title'
+  heading.textContent = opts.title
+  head.appendChild(heading)
+
+  // The ROW LIST is the scroller, not the panel — a panel that scrolls
+  // takes its own header and handle out of reach.
+  const list = document.createElement('div')
+  list.className = 'sheet-list'
+  for (const row of rows) list.appendChild(sheetRowEl(row))
+
+  // appendChild rather than the variadic append(): the Workers type
+  // definitions in this project shadow Element.append with a streaming
+  // signature, so the variadic form does not type-check here.
+  panel.appendChild(handle)
+  panel.appendChild(head)
+  panel.appendChild(list)
+  root.appendChild(scrim)
+  root.appendChild(panel)
+
+  const scrollY = window.scrollY
+  const prevOverflow = document.body.style.overflow
+  // Body scroll is LOCKED while open, and that differs from the reference
+  // design deliberately: theirs is a comparison panel read against the
+  // page behind it; ours is a menu, and a menu that lets the page scroll
+  // under it loses the row it was opened on.
+  document.body.style.overflow = 'hidden'
+  document.body.classList.add('sheet-open')
+
+  let closed = false
+  function close(immediate = false): void {
+    if (closed) return
+    closed = true
+    openSheet = null
+    root.classList.remove('is-open')
+    document.body.style.overflow = prevOverflow
+    document.body.classList.remove('sheet-open')
+    document.removeEventListener('keydown', onKeydown, true)
+    document.removeEventListener('astro:before-swap', onSwap)
+    const finish = () => root.remove()
+    if (immediate) finish()
+    else window.setTimeout(finish, exitDelayMs(prefersReducedMotion()))
+    // Focus goes back to the control that opened the sheet. A keyboard
+    // user dumped at the top of the document has to find their place
+    // again on every single menu.
+    if (returnFocusTo?.isConnected) returnFocusTo.focus()
+    if (window.scrollY !== scrollY) window.scrollTo(0, scrollY)
+  }
+
+  function focusables(): HTMLElement[] {
+    return [...panel.querySelectorAll<HTMLElement>(
+      '.sheet-row:not([aria-disabled="true"]), .sheet-handle',
+    )]
+  }
+
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return }
+    if (e.key !== 'Tab') return
+    // The trap. A sheet that lets Tab reach the page behind it strands a
+    // keyboard user on content they cannot see under the scrim.
+    const items = focusables()
+    if (items.length === 0) return
+    e.preventDefault()
+    const here = items.indexOf(document.activeElement as HTMLElement)
+    items[nextFocusIndex(here, items.length, e.shiftKey ? -1 : 1)]?.focus()
+  }
+
+  scrim.addEventListener('click', () => close())
+  handle.addEventListener('click', () => close())
+  list.addEventListener('click', (e) => {
+    const el = (e.target as Element | null)?.closest<HTMLElement>('.sheet-row')
+    const id = el?.dataset.sheetRow
+    if (!el || !id) return
+    if (el.getAttribute('aria-disabled') === 'true') { e.preventDefault(); return }
+    const model = rows.find((r) => r.id === id)
+    // A link row navigates on its own; a button row calls back. Either
+    // way the sheet closes, because it is ephemeral by design.
+    if (model && !model.href) { e.preventDefault(); opts.onChoose?.(id, model) }
+    close(Boolean(model?.href))
+  })
+  document.addEventListener('keydown', onKeydown, true)
+
+  const onSwap = () => close(true)
+  document.addEventListener('astro:before-swap', onSwap)
+
+  // --- the drag ----------------------------------------------------
+  let startY = 0
+  let startX = 0
+  let startT = 0
+  let lastY = 0
+  let lastT = 0
+  let dragging = false
+  let axis: ReturnType<typeof classifyGesture> = 'none'
+
+  panel.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return // a mouse drags nothing here
+    // A drag that starts inside the scrolling list must be allowed to
+    // scroll it; only a list already at its top can pull the sheet down.
+    if (list.contains(e.target as Node) && list.scrollTop > 0) return
+    dragging = true
+    axis = 'none'
+    startY = lastY = e.clientY
+    startX = e.clientX
+    startT = lastT = e.timeStamp
+    panel.dataset.dragging = 'true'
+  })
+
+  panel.addEventListener('pointermove', (e) => {
+    if (!dragging) return
+    const dy = e.clientY - startY
+    const dx = e.clientX - startX
+    if (axis === 'none') {
+      axis = classifyGesture(dx, dy)
+      // A sideways swipe belongs to somebody else — a carousel, or the
+      // browser's back gesture. Let go of it rather than half-tracking it.
+      if (axis === 'horizontal') { dragging = false; delete panel.dataset.dragging; return }
+    }
+    if (dy <= 0) return // dragging up: the sheet is already at its top
+    lastY = e.clientY
+    lastT = e.timeStamp
+    // Write the OFFSET, not the whole transform. The desktop rule adds a
+    // -50% X translation for centring, and an inline `transform` would
+    // silently drop it — a bug that only shows on an iPad, where the
+    // panel is centred and the input is touch.
+    panel.style.setProperty('--drag-y', `${dy}px`)
+  })
+
+  function endDrag(e: PointerEvent): void {
+    if (!dragging) return
+    dragging = false
+    delete panel.dataset.dragging
+    panel.style.removeProperty('--drag-y')
+    const dy = e.clientY - startY
+    const velocity = velocityPxPerMs(lastY - startY, lastT - startT)
+    if (shouldDismiss({ dy, panelHeight: panel.getBoundingClientRect().height, velocity })) close()
+  }
+  panel.addEventListener('pointerup', endDrag)
+  panel.addEventListener('pointercancel', endDrag)
+
+  document.body.appendChild(root)
+  // TWO-FRAME rAF MOUNT. The panel mounts off-screen, and the browser
+  // needs one frame in which that is its committed state before the class
+  // that moves it has anywhere to animate FROM. One rAF is not reliably
+  // enough; two is.
+  if (prefersReducedMotion()) root.classList.add('is-open')
+  else requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('is-open')))
+
+  focusables()[0]?.focus()
+  openSheet = { close }
+  return () => close()
+}
+
+/** True while a sheet is on screen. */
+export const isSheetOpen = (): boolean => openSheet !== null

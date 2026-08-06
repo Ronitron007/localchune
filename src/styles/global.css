@@ -3,11 +3,18 @@
    NOTE: the distributed combination is AGPL-3.0 because the analysis
    worker includes Essentia. LICENSE explains why.
 
-   The entire visual language. Six greyscale tokens, no font-family (the
-   browser default is the typeface), 1px solid borders, zero radii, zero
-   shadows. v1 is light-only, on purpose — see the spec, §1 point 2 — if a
-   component ever needs a colour this file does not define, the design is
-   wrong, not this file. */
+   The entire visual language. The six greyscale tokens and the four
+   button colours are FROZEN — src/styles/global-tokens.test.ts asserts
+   every one of them byte-for-byte, because "the colour scheme stays same"
+   is an owner instruction and not a preference. Zero radii, forever, same
+   test. v1 is light-only, on purpose — if a component ever needs a colour
+   this file does not define, the design is wrong, not this file.
+
+   Two things the header used to claim and no longer does:
+   - borders are 1.5px on components and 1px only as a divider inside one;
+   - shadows exist, hard-offset and RATIONED (see --lift-* below). The
+     blanket `box-shadow: none` reset is gone, because it also vetoed the
+     focus ring. */
 
 :root {
   --bg: #fff;
@@ -19,9 +26,65 @@
 
   /* Spacing scale — breathing room only. No new colour, no radius, no
      shadow rides along with these; see the header note above. */
+  --pad-0: 4px;    /* icon-to-label gap, chip padding      */
   --pad-1: 8px;
   --pad-2: 16px;
   --pad-3: 24px;
+  --pad-4: 32px;   /* section separation at 640px and up   */
+
+  /* =========================================================
+     TYPE. Owner decision: the system sans stack, not a webfont and not
+     the browser-default serif this app shipped with. The audit's verdict
+     was that "shabby" is mostly the default serif plus sub-44px controls
+     rather than the monochrome system itself, and a serif reads as "a
+     document" however good the borders get.
+
+     Zero webfonts, zero requests, zero bytes, zero CLS — the performance
+     profile is IDENTICAL to the serif, because no file is fetched either
+     way. That is the whole reason this branch was recommended.
+
+     --font-num pins what `.num` and `.keychip` already did informally
+     (`font-family: monospace`), so a phone cannot decide the answer is
+     Courier. A numeric column in a proportional face is a bug at any
+     font decision. */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+             'Helvetica Neue', Arial, sans-serif;
+  --font-num: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* The scale steps DOWN from the 16px browser default, which is why the
+     app currently reads spacious-but-unstyled. `html` keeps its 16px
+     root size on purpose so every existing `rem` length (body's 72rem,
+     the 16rem form inputs) means what it meant before — the type shrinks,
+     the layout does not move under it. */
+  --text-micro: 11px;  /* labels, eyebrows, column heads — 700, uppercase */
+  --text-xs: 12px;     /* chips, meta, table secondary                    */
+  --text-sm: 13px;     /* body, list rows, buttons                        */
+  --text-base: 15px;   /* prose, form values                              */
+  --text-lg: 17px;     /* card titles, h2                                 */
+  --text-xl: 22px;     /* h1                                              */
+
+  /* The player bar's height, DECLARED rather than eyeballed. Everything
+     that has to clear the bar (the body's bottom reservation, the upload
+     chip's offset) derives from this one number instead of carrying its
+     own copy — audit survive-list #5 and #17 both exist because those
+     copies used to drift. Measured against the rendered bar: 47px on a
+     desktop row, 84.5px below 640px where the seek slider takes its own
+     line. Rounded up to the next multiple of 8. Re-measure and update
+     this value whenever the bar's contents or padding change. Measured
+     after the 44px floor: 65px desktop, 117px below 640px. Rounded up. */
+  --bar-h: 68px;
+
+  /* THE minimum interactive box. Not a suggestion, and a token rather than
+     a comment because the failure was systemic: before this, NOTHING
+     interactive in the app reached 44px. .btn* computed to ~27px tall,
+     .likebtn had padding: 0, `a.play` was a bare glyph at 14x18.5px, and
+     `.cratepick > summary` was 1.6em wide. Every recipe below references
+     this one name so the number is never retyped.
+
+     The rule it encodes: a control's VISUAL box may be small in a dense
+     row; its HIT box may never be under 44px. Where the two must differ,
+     a ::after overlay extends the hit box and paints nothing. */
+  --tap: 44px;
 
   /* Task 8 — the ONE deliberate colour exception to the brutalist
      monochrome above. These four values exist for .btn/.btn-secondary/
@@ -34,28 +97,185 @@
   --btn-blue-line: #0842a0;
   --btn-red: #c0392b;
   --btn-red-line: #962d22;
+
+  /* =========================================================
+     THE INK LADDER
+     One ink — #000, the --fg we already had — at declared alphas.
+     Before this, hierarchy had exactly two rungs (--line #000 and
+     --faint #ddd) and every component picked one by feel. That is why
+     nothing had a hover state worth the name: a border already at full
+     black has nowhere to go. The ladder is what gives border-opacity
+     somewhere to travel, which is the single change the owner asked for
+     by name ("what changes are animations and borders").
+
+     The six frozen greyscale tokens above keep their exact literal
+     values — that is the "colour scheme stays same" mandate and
+     global-tokens.test.ts asserts it byte-for-byte. --faint (#ddd) and
+     --mid (#555) sit almost exactly on --ink-12 and --ink-55, so a call
+     site moves from one to the other with no visible change. The
+     migration is per-surface in Phase 3, not a redefinition here: this
+     commit must leave the app looking identical. */
+  --ink-04: rgba(0, 0, 0, 0.04);   /* zebra / inset panel fill              */
+  --ink-08: rgba(0, 0, 0, 0.08);   /* row hover fill                        */
+  --ink-12: rgba(0, 0, 0, 0.12);   /* hairline INSIDE a bordered container  */
+  --ink-20: rgba(0, 0, 0, 0.20);   /* resting edge: inputs, cards, lists    */
+  --ink-35: rgba(0, 0, 0, 0.35);   /* emphasised edge; dashed affordances   */
+  --ink-55: rgba(0, 0, 0, 0.55);   /* secondary text                        */
+  --ink-100: #000;                 /* hover, active, hero, section rules    */
+
+  /* =========================================================
+     BORDERS — one weight. Hierarchy is alpha; interaction earns full ink.
+
+     1.5px is the component stroke, not 1px. The half pixel is what
+     separates a drawn object from a table gridline, and at 90 degrees
+     with no radius it is the whole difference between "brutalist" and
+     "unstyled".
+
+     1px is ONLY ever a divider inside something that already owns a
+     1.5px outer edge, and the last one is removed. A list is one
+     object, not N boxes. */
+  --line-hair: 1px solid var(--ink-12);
+  --line-soft: 1.5px solid var(--ink-20);
+  --line-mid: 1.5px solid var(--ink-35);
+  --line-full: 1.5px solid var(--ink-100);
+  --rule-sec: 2px solid var(--ink-100);
+  --line-dash: 1.5px dashed var(--ink-35);
+  /* The ONE coloured border in the app, at most once per view: a left bar
+     on a callout. It takes --btn-blue rather than a new token, so it does
+     not widen the colour exception. */
+  --accent-3: 3px solid var(--btn-blue);
+
+  /* =========================================================
+     SURFACES. Mono has no cream or warm paper to separate planes with,
+     so the greys do it. SELECTION IS INVERSION, NEVER BLUE — blue
+     already means "primary action", and a blue-tinted selected row would
+     read as a button. Decided once here so no surface re-litigates it. */
+  --surface-0: var(--bg);
+  --surface-1: var(--ink-04);
+  --surface-2: var(--ink-08);
+  --surface-inv: var(--fg);
+  /* The sheet scrim. Solid, and it is the only place this alpha is used.
+     NEVER a backdrop-filter — that is the single most expensive thing a
+     phone can be asked to composite. */
+  --scrim: rgba(0, 0, 0, 0.4);
+
+  /* =========================================================
+     MOTION — fixed and small. A component that wants a seventh value is
+     wrong.
+
+     Colour, border-colour, background and opacity animate at --dur-fast
+     and NEVER overshoot: --ease-pop on a colour is the thing that makes
+     an interface feel like a toy. --ease-pop is confined to transform
+     deltas of 3px or less — the lift and the sink, nothing else. */
+  --dur-fast: 150ms;   /* colour, border, background, opacity              */
+  --dur-base: 200ms;   /* transforms: lift, sink, nudge                    */
+  --dur-panel: 280ms;  /* drawers, sheets, the now-playing expand          */
+  --dur-slow: 350ms;   /* one-shot entrances                               */
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);   /* transforms ONLY      */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);      /* fills, sweeps, enters */
+  --ease-panel: cubic-bezier(0.32, 0.72, 0, 1);    /* panels — the iOS curve */
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);        /* bottom-bar slide     */
+
+  /* =========================================================
+     SHADOWS. `Npx Npx 0` is a rectilinear projection: on a 0-radius box
+     it lines up exactly, which is why the hard offset looks better here
+     than on a rounded one. In mono it is pure #000, and this one device
+     replaces most of what a colour system does with tints.
+
+     THE RATION, and it is the rule that prevents the collapse: if
+     everything lifts, nothing lifts. At most ONE resting shadow per view
+     (--rest-1, on the page's hero object); --lift-* appears ONLY inside a
+     :hover / :active / [aria-pressed=true] block; shadow size scales with
+     object size; fixed bars use --edge-bar and never a lift. Rows do not
+     lift at all — a list of 100 lifting rows is the collapse in its
+     purest form. */
+  --lift-1: 3px 3px 0 var(--ink-100);        /* buttons, chips, small tiles */
+  --lift-2: 4px 4px 0 var(--ink-100);        /* cards, the active nav item  */
+  --lift-3: 6px 6px 0 var(--ink-100);        /* the hero object on hover    */
+  --rest-1: 4px 4px 0 rgba(0, 0, 0, 0.10);   /* the ONE resting hero shadow */
+  --edge-bar: 0 -2px 0 var(--ink-100);       /* fixed bars: a line, not blur */
+  --sheet: 0 -4px 32px rgba(0, 0, 0, 0.12);  /* the only soft shadow, ever  */
+  /* Focus. Blue at 0.35 — see the :focus-visible recipe below. Focus and
+     primary AGREE rather than compete, which is only safe because
+     selection is inversion and can never be confused with either. */
+  --focus-ring: 0 0 0 3px rgba(11, 87, 208, 0.35);
+
+  /* =========================================================
+     Z-INDEX. There was no ladder: .cratepick-menu sat at 1 and everything
+     else relied on paint order. That works until the second overlay
+     exists, which is this redesign. Declared once; do not invent steps. */
+  --z-rowmenu: 1;    /* in-row overlays (the crate picker) — unchanged value */
+  --z-thead: 10;     /* sticky table headers                                 */
+  --z-nav: 20;       /* the compact top nav bar                              */
+  --z-chip: 30;      /* the upload chip                                      */
+  --z-player: 40;    /* the player bar, and the queue drawer inside it       */
+  --z-nowplaying: 50;/* the now-playing sheet surface                        */
+  --z-sheet: 60;     /* bottom action sheets and their scrims                */
+  --z-dialog: 70;    /* confirm dialogs                                      */
 }
 
+/* border-radius: 0 STAYS — that is the 90 degree mandate, enforced
+   globally, and global-tokens.test.ts asserts it survives.
+
+   `box-shadow: none` IS GONE, and that is a rule being deliberately
+   removed. It was a blanket veto on the hard offset shadow — the
+   signature device of this whole design — AND on the focus ring, which
+   made it an accessibility bug wearing an aesthetic rule's clothes. What
+   replaces it is the rationing doctrine in the --lift-* comment above,
+   which is a STRICTER rule than "none": "none" needs no judgement and a
+   ration does. */
 *, *::before, *::after {
   border-radius: 0;
-  box-shadow: none;
   box-sizing: border-box;
+}
+
+/* Reduced motion, ONE global block rather than per-component — a rule
+   that has to be remembered in twenty places is a rule that will be
+   forgotten in one. Any JS that waits out a transition must ALSO
+   short-circuit its timeout under matchMedia('(prefers-reduced-motion:
+   reduce)'), or a panel stays mounted for 280ms with nothing happening. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html {
   background: var(--bg);
   color: var(--fg);
+  font-family: var(--font-ui);
+  /* NOT font-size. The root stays at the browser's 16px so every rem in
+     this file keeps its current meaning; the readable size is set on
+     <body> below. */
+  /* The browser's horizontal back-swipe and a bottom sheet's drag are the
+     same gesture on a phone. Turning the overscroll off here means a drag
+     that starts inside a panel never navigates away mid-gesture. */
+  overscroll-behavior-x: none;
 }
 
 body {
   margin: 0 auto;
   max-width: 72rem;
+  font-size: var(--text-base);
+  line-height: 1.45;
   /* Page margins: tighter on a phone, roomier once there is width to
-     spare. Room at the bottom for the fixed player bar either way. */
-  padding: 0 var(--pad-2) 6rem;
+     spare. The bottom reservation is DERIVED from the bar's own height
+     plus the home-indicator inset, not the hard-coded 6rem it replaces —
+     survive-list #17 asks for an equivalent reservation, and one that is
+     computed cannot fall out of step with the bar the way a constant can. */
+  padding: 0 var(--pad-2) calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-2));
 }
 @media (min-width: 640px) {
   body { padding-left: var(--pad-3); padding-right: var(--pad-3); }
+}
+/* Below 640px the bar reflows to two rows (the seek slider takes its own
+   line), so the reservation and every offset derived from --bar-h grow
+   with it. One declaration, and the derived rules follow for free. */
+@media (max-width: 640px) {
+  :root { --bar-h: 120px; }
 }
 
 /* Vertical rhythm between a page's top-level blocks (h1, filter form,
@@ -112,10 +332,14 @@ body.loginpage > *, body.centerpage main > * { max-width: 30rem; }
 
 a { color: var(--fg); }
 
-h1, h2 { font-weight: bold; }
+h1, h2 { font-weight: bold; line-height: 1.15; }
+h1 { font-size: var(--text-xl); }
+h2 { font-size: var(--text-lg); }
+h3 { font-size: var(--text-base); }
 
-/* Numeric data is the one permitted second face. */
-.num, .keychip { font-family: monospace; }
+/* Numeric data is the one permitted second face. The stack is pinned so
+   a phone with no ui-monospace cannot decide the answer is Courier. */
+.num, .keychip, .reason { font-family: var(--font-num); }
 
 /* --- nav / footer --- */
 .appnav {
@@ -123,6 +347,9 @@ h1, h2 { font-weight: bold; }
   align-items: baseline;
   gap: var(--pad-2);
   padding: var(--pad-1) 0;
+  /* Clears the notch in landscape, where the inset is on the top edge.
+     max() keeps the normal 8px on every device that reports 0. */
+  padding-top: max(var(--pad-1), env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -146,55 +373,200 @@ input, select, button {
   accent-color: var(--fg);
   border: 1px solid var(--line);
   padding: calc(var(--pad-1) / 2) var(--pad-1);
+  /* The 44px floor, applied at the widest selector in the file so a
+     control added tomorrow inherits it without anyone remembering to. */
+  min-height: var(--tap);
 }
-input[type='checkbox'], input[type='radio'] { border: none; }
+/* A 13px checkbox with a 44px label is the correct shape; a 44px checkbox
+   is not. These two opt out of the floor and their labels take it on
+   below — see .filterbar label. */
+input[type='checkbox'], input[type='radio'] { border: none; min-height: 0; }
+
+/* 16px on a phone REGARDLESS of the type scale. Anything smaller makes
+   iOS Safari zoom the viewport when the field takes focus, and that zoom
+   does not undo itself — the member is left on a page they now have to
+   pinch back out of. This is the one place a literal beats the scale. */
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px; }
+}
 /* Buttons sitting side by side in a row (upload actions, retry rows, tag
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
 
-/* --- Task 8: the three-tier button system ---
-   Every button/submit in the app is one of these three. Geometry (square
-   corners — border-radius: 0 is already global above — 1px border, same
-   padding) is identical across all three; only fill/text/border colour
-   differ. This is the ONE deliberate colour exception to the brutalist
-   monochrome (see the --btn-* tokens in :root above) — nothing else in
-   this file gains colour.
-     .btn           primary   — solid blue, white text, darker-blue border
-     .btn-secondary secondary — white fill, black text, black border
-     .btn-danger    danger    — solid red,  white text, darker-red border
-   The player's play/pause button stays icon-minimal and does NOT take one
-   of these classes (see src/layouts/Shell.astro). A link kept as a link
-   (e.g. the filter bar's Clear) does not take one either. */
-.btn, .btn-secondary, .btn-danger {
-  display: inline-block;
-  border-width: 1px;
+/* --- the three tiers ---
+   Every button/submit in the app is one of these three. The FILLS are the
+   one deliberate colour exception (the --btn-* tokens in :root); nothing
+   else in this file gains colour.
+     .btn           primary   — solid blue
+     .btn-secondary secondary — white fill, black text
+     .btn-danger    danger    — solid red
+   Plus .btn-ghost, which is NOT a fourth colour: it is the ABSENCE of a
+   fill, so it does not widen the exception.
+
+   WHAT MAKES THE THREE READ AS ONE FAMILY is not the fills — they are
+   three different colours — it is that every one of them darkens its
+   border to full ink and lifts by the same 1px on hover. The edge is the
+   shared object language.
+
+   .btn-secondary is the tier that changes most. Its resting border was
+   --line, full black, so it looked IDENTICAL hovered and resting; that is
+   half of "shabby" on its own. It rests at --ink-35 now, which gives the
+   hover somewhere to go.
+
+   ONE FILLED BUTTON PER BAR OR ROW. Everything else is secondary or
+   ghost. That is what stops a toolbar reading as a ransom note.
+
+   Toggles (the like button, the queue methods) are deliberately NOT part
+   of this system — aria-pressed plus inversion, no tier class, no colour
+   token. So is the player's play/pause, which takes no tier class and
+   gets §3.5's transport rule instead. global-tokens.test.ts asserts both. */
+.btn, .btn-secondary, .btn-danger, .btn-ghost {
+  /* inline-flex, not inline-block: min-height only reads as a box if the
+     label is centred inside it, and a 44px button with top-aligned text
+     looks like a bug rather than a target. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pad-0);
+  min-height: var(--tap);
+  padding: 0 var(--pad-2);
+  /* 1.5px, not 1px. The half pixel is what separates a drawn object from
+     a gridline, and at 90 degrees with no radius it is the whole
+     difference between "brutalist" and "unstyled". */
+  border-width: 1.5px;
   border-style: solid;
-  padding: calc(var(--pad-1) / 2) var(--pad-2);
-  font: inherit;
-  line-height: normal;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.01em;
   text-decoration: none;
   cursor: pointer;
+  /* Transforms get --ease-pop; everything else gets a plain ease at
+     --dur-fast. A colour that overshoots is the thing that makes an
+     interface feel like a toy. */
+  transition: transform var(--dur-base) var(--ease-pop),
+              box-shadow var(--dur-base) ease,
+              background var(--dur-fast) ease,
+              border-color var(--dur-fast) ease,
+              color var(--dur-fast) ease,
+              opacity var(--dur-fast) ease;
 }
 .btn {
   background: var(--btn-blue);
-  color: #fff;
+  /* var(--bg), not a #fff literal: white is already a named token, and
+     the file's rule is that a component references tokens, never values.
+     global-tokens.test.ts fails on any hex outside :root. */
+  color: var(--bg);
   border-color: var(--btn-blue-line);
 }
 .btn-secondary {
   background: var(--bg);
   color: var(--fg);
-  border-color: var(--line);
+  border-color: var(--ink-35);
 }
 .btn-danger {
   background: var(--btn-red);
-  color: #fff;
+  color: var(--bg);
   border-color: var(--btn-red-line);
 }
-.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled,
-.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'], .btn-danger[aria-disabled='true'] {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* Ghost: icon-only buttons and menu rows. No fill and no border until it
+   is asked for. */
+.btn-ghost {
+  background: none;
+  border-color: transparent;
+  color: inherit;
+}
+
+/* :active DUPLICATES :hover before overriding it — touch has no hover,
+   and a button that only responds to a cursor is dead on the target
+   device. The sink is declared second, and must stay second: equal
+   specificity means source order decides. */
+.btn:hover, .btn-secondary:hover, .btn-danger:hover,
+.btn:active, .btn-secondary:active, .btn-danger:active {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--lift-1);
+  border-color: var(--ink-100);
+}
+.btn:hover, .btn:active { background: var(--btn-blue-line); }
+.btn-secondary:hover, .btn-secondary:active { background: var(--surface-2); }
+.btn-danger:hover, .btn-danger:active { background: var(--btn-red-line); }
+.btn-ghost:hover, .btn-ghost:active {
+  background: var(--surface-2);
+  border-color: var(--ink-20);
+}
+/* It sinks. Elevation is literal: the shadow is the gap under the button,
+   so pressing it closes the gap. */
+.btn:active, .btn-secondary:active, .btn-danger:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+/* Sizes. .btn-lg is one per page, at most. .btn-sm is legal ONLY where a
+   44px hit area is restored another way — a ::after extender, or a parent
+   row that is itself at least 44px tall and fully tappable. The visual
+   box may be 36px; the hit box may never be under 44. */
+.btn-lg { min-height: 48px; font-size: var(--text-base); }
+.btn-sm { min-height: 36px; padding: 0 var(--pad-1); font-size: var(--text-xs); }
+
+/* Loading. The button KEEPS ITS SIZE and never becomes a spinner: a size
+   change reflows the whole row the moment the request resolves, which is
+   the exact instant the member is looking at it. The label shimmers
+   instead — greys only, one pass per 1.6s, and it stops when the
+   attribute goes. */
+[aria-busy='true'].btn, [aria-busy='true'].btn-secondary,
+[aria-busy='true'].btn-danger, [aria-busy='true'].btn-ghost {
+  cursor: progress;
+}
+[aria-busy='true'].btn > *, [aria-busy='true'].btn-secondary > *,
+[aria-busy='true'].btn-danger > *, [aria-busy='true'].btn-ghost > * {
+  animation: btn-shimmer 1600ms linear 3;
+}
+@keyframes btn-shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Disabled. pointer-events: none already makes a cursor rule
+   unreachable, so `cursor: not-allowed` is deleted rather than kept as
+   decoration that never renders. */
+.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled, .btn-ghost:disabled,
+.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'],
+.btn-danger[aria-disabled='true'], .btn-ghost[aria-disabled='true'] {
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
   pointer-events: none;
+}
+
+/* --- THE TRANSPORT EXCEPTION — mandatory, not optional ---
+   Play/pause, next, previous and seek NEVER lift and NEVER sink.
+
+   2-3px of travel on a call to action reads as physicality. The same
+   2-3px on a play button reads as LATENCY: the eye takes the movement for
+   the app thinking about whether to obey. This is the one place the
+   signature move is banned outright, and getting it wrong is the failure
+   that would make the whole redesign feel worse than what it replaced.
+
+   Under 100ms, opacity only, no travel. global-tokens.test.ts fails the
+   build if any `transform: translate` rule ever names these selectors. */
+.playertoggle, [data-transport] {
+  transition: opacity 80ms linear, background var(--dur-fast) ease;
+}
+.playertoggle:active, [data-transport]:active { opacity: 0.6; }
+
+/* --- focus ---
+   One global recipe, and it is only possible because the reset's blanket
+   `box-shadow: none` is gone. A square ring is free at 90 degrees.
+
+   Blue, the action colour, so focus and primary AGREE rather than
+   compete. That is only safe because selection is inversion (--surface-inv)
+   and can therefore never be confused with either. :focus-visible, not
+   :focus — a ring on a mouse click is noise. */
+:focus-visible {
+  outline: none;
+  border-color: var(--btn-blue);
+  box-shadow: var(--focus-ring);
 }
 
 /* --- filter form --- */
@@ -212,10 +584,23 @@ button + button { margin-left: var(--pad-1); }
   gap: var(--pad-1);
   padding: var(--pad-1) var(--pad-2);
 }
-.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* The label carries the 44px box for the checkbox it wraps (see the
+   input[type='checkbox'] opt-out above) — the whole "half / double" or
+   "harmonic" phrase becomes the target, which is bigger and easier than
+   the box itself could ever be. */
+.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; min-height: var(--tap); }
 .filterbar input[type='number'] { width: 4.5rem; }
 
-/* --- the table --- */
+/* --- the table ---
+   `.tracktable` had NO CSS rule at all, which is why a 15-column table
+   scrolled the whole PAGE sideways instead of scrolling itself. Growing
+   every row control to 44px widened the table by a further ~100px, so the
+   overflow container is what keeps that fix from costing a horizontal
+   page scroll on a desktop.
+
+   THE RULE ITSELF LIVES IN THE PERF PHASE 2 BLOCK AT THE END OF THIS
+   FILE. Both phases needed it and both wrote it; one declaration is
+   enough, and the appended block is the region that worker owns. */
 table { border-collapse: collapse; width: 100%; }
 th, td {
   text-align: left;
@@ -252,9 +637,61 @@ td.uploader, td.added { color: var(--mid); }
   color: inherit;
   padding: 0;
   cursor: pointer;
+  /* Was 9.5 x 30px. Height comes from the global button floor; the width
+     comes from the hit-area extender below, because "♥ 12" is under 44px
+     wide and widening the visual box would push the likes column out. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2em;
+  position: relative;
 }
 .likebtn[aria-pressed='true'] { font-weight: bold; }
 .likebtn:disabled { cursor: wait; opacity: 0.6; }
+
+/* --- the 44px hit-area extender ---
+   Paints nothing. Centres a >=44px transparent box on a control whose
+   VISUAL box has to stay small in a dense row, so the thumb target is
+   full size while the layout is not. Used by every row-level control the
+   audit measured under 44px. `max(100%, ...)` never SHRINKS a control
+   that is already big enough. */
+.likebtn::after,
+td.download > a::after,
+.cratecontrols button::after,
+.tageditor form.tagform button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, var(--tap));
+  height: max(100%, var(--tap));
+}
+td.download > a,
+.cratecontrols button,
+.tageditor form.tagform button { position: relative; }
+
+/* `a.play` is a LINK, so the global button floor never reached it — it was
+   a bare ▶ glyph at 14 x 18.5px, the single worst target in the app and
+   the one a member hits most. It becomes a real 44px box; below 640px the
+   whole row becomes the play control (Task 3.3) and this box stays as the
+   visual affordance inside it. `td.download`'s ↓ is the same shape. */
+/* ▶ and +Q are one control pair, and two 44px boxes in a narrow cell wrap
+   onto two lines — a 105px row. Keeping them on one line keeps the row at
+   44. Deliberately NOT `display: flex` on the cell: overriding a <td>'s
+   display: table-cell drops it out of the table's column model and the
+   browser wraps it in an anonymous cell. nowrap does the whole job. */
+td.controls { white-space: nowrap; }
+
+a.play,
+td.download > a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  text-decoration: none;
+}
 .signals { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-2); }
 .signal { color: var(--mid); }
 
@@ -283,6 +720,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   flex-wrap: wrap;
   gap: var(--pad-1) var(--pad-2);
   padding: var(--pad-1) var(--pad-2);
+  /* The seek slider used to sit at the extreme bottom edge, inside the iOS
+     home-indicator gesture zone, so a thumb drag on the scrubber fought
+     the system's swipe-up. This is the fix, and it only works because
+     Shell.astro's viewport meta now carries viewport-fit=cover. */
+  padding-bottom: max(var(--pad-1), env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--line);
 }
@@ -295,7 +737,17 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   flex: 1 1 6rem;
   min-width: 0;
 }
-.playerbar .playertoggle { flex: none; }
+/* Play/pause and skip take no .btn tier (survive-list #8's transport
+   exemption) so they never inherited the tier's geometry either. The floor
+   applies to them as a control, not as a tier. */
+.playerbar .playertoggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
 .playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
 .playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
@@ -458,27 +910,32 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    has to clear it too. Its height is not a constant — the drawer grows with
    the queue up to 60vh — so site.ts measures the rendered drawer and writes
    --queue-height onto <body>, and body.queueopen adds it here. One class, one
-   variable, naming the coupling instead of hiding it. The two numbers below
-   stay exactly what UX.12 eyeballed; nothing about them changed. */
+   variable, naming the coupling instead of hiding it.
+
+   THE TWO EYEBALLED NUMBERS ARE GONE. `3.5rem` and `6.75rem` were guesses
+   at the bar's one-row and two-row heights, and the 44px floor invalidated
+   both the moment it grew the bar. They are now one expression over
+   --bar-h, which the same media query already sets per breakpoint — so the
+   mobile override disappears too, and survive-list #5's "nothing binds
+   them automatically" stops being true. */
 .uploadchip-slot {
   position: fixed;
   right: var(--pad-2);
-  bottom: 3.5rem;
+  bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-1));
   pointer-events: none;
 }
-body.queueopen .uploadchip-slot { bottom: calc(3.5rem + var(--queue-height, 0px)); }
-/* Below 640px the player bar is TWO rows (the seek slider is forced onto its
-   own line), so the chip has to clear roughly twice as much. It stays
-   right-anchored and content-sized here rather than stretching to the full
-   width — the text is a dozen characters, and a full-width bar on a phone
-   reads as a second toolbar rather than as a pill. */
-@media (max-width: 640px) {
-  .uploadchip-slot { bottom: 6.75rem; }
-  body.queueopen .uploadchip-slot { bottom: calc(6.75rem + var(--queue-height, 0px)); }
+body.queueopen .uploadchip-slot {
+  bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-1) + var(--queue-height, 0px));
 }
 .uploadchip {
   pointer-events: auto;
-  display: block;
+  /* Column flex, stretched: the text sits above the progress bar and the
+     bar must still span the chip's full width, so this deliberately does
+     NOT centre on the cross axis. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--tap);
   padding: calc(var(--pad-1) / 2) var(--pad-1);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -533,7 +990,8 @@ body.queueopen .uploadchip-slot { bottom: calc(3.5rem + var(--queue-height, 0px)
 .claimform input[type='text'] { width: 16rem; }
 
 .explain, .reason { color: var(--mid); }
-.reason { font-family: monospace; }
+/* .reason takes --font-num with .num and .keychip, above — a raw error
+   string is machine output and reads as such. */
 .empty { border: 1px solid var(--faint); padding: var(--pad-2); color: var(--mid); }
 .empty a, .empty p { color: var(--fg); }
 .counts { color: var(--mid); }
@@ -630,7 +1088,10 @@ tr[draggable='true']:active { cursor: grabbing; }
 .cratepick { position: relative; display: inline-block; }
 .cratepick > summary {
   list-style: none;
-  width: 1.6em;
+  /* Was width: 1.6em (~26px). The summary carries .btn-secondary, so the
+     tier's own inline-flex centring applies; this only has to stop the
+     fixed width from defeating the floor. */
+  min-width: var(--tap);
   text-align: center;
 }
 .cratepick > summary::-webkit-details-marker { display: none; }
@@ -787,6 +1248,155 @@ dd { margin: 0; }
   padding: 0 calc(var(--pad-1) / 2);
   border: 1px solid var(--line);
   font-size: 0.85em;
+}
+
+/* --- the bottom action sheet ---
+   Built once and reused by the nav's ⋮, every row's ⋮, the filter panel
+   and the crate picker. src/scripts/site.ts builds the DOM;
+   src/lib/sheet.ts owns the maths. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+}
+/* A SOLID scrim. No backdrop-filter, at any breakpoint and on any device
+   — it is the single most expensive thing a phone can be asked to
+   composite, and the reference design disables it on mobile themselves.
+   We never introduce it. */
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity var(--dur-panel) var(--ease-panel);
+}
+.sheet.is-open .sheet-scrim { opacity: 1; }
+
+.sheet-panel {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  background: var(--bg);
+  border-top: var(--line-full);
+  /* The ONE soft shadow in the system. A bottom sheet has to read as
+     ABOVE the page rather than attached to its edge, and a hard offset on
+     a full-width element pointing up is a black bar, not a shadow. */
+  box-shadow: var(--sheet);
+  padding-bottom: max(var(--pad-2), env(safe-area-inset-bottom));
+  /* translate3d, not `bottom`: a transform is composited and a `bottom`
+     animation is layout work on every frame, on the worst device we
+     support.
+
+     --drag-y is what a finger writes, NOT the whole transform. Writing
+     `transform` inline would drop the -50% centring the desktop rule
+     below adds — which is exactly the kind of bug that only appears on an
+     iPad, where the panel is centred AND the input is touch. */
+  --drag-y: 100%;
+  transform: translate3d(0, var(--drag-y), 0);
+  transition: transform var(--dur-panel) var(--ease-panel);
+}
+.sheet.is-open .sheet-panel { --drag-y: 0px; }
+/* While a finger drives it, the transform is the finger's — a transition
+   here would fight the drag and lag behind it. */
+.sheet-panel[data-dragging='true'] { transition: none; }
+
+/* 36x4, centred, with a 44px hit box from the ::after. The bar is the
+   affordance; the target is the whole strip above the header. */
+.sheet-handle {
+  position: relative;
+  align-self: center;
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: var(--pad-1) 0;
+  padding: 0;
+  border: 0;
+  background: var(--ink-35);
+  cursor: pointer;
+}
+.sheet-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(120px, var(--tap));
+  height: var(--tap);
+}
+
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--pad-1) var(--pad-2);
+  border-bottom: var(--line-hair);
+}
+.sheet-title {
+  font-size: var(--text-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-55);
+}
+
+/* The ROW LIST is the scroller, not the panel: a panel that scrolls takes
+   its own handle and header out of reach with it. */
+.sheet-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-2);
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--pad-1) var(--pad-2);
+  border: 0;
+  border-bottom: var(--line-hair);
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+/* A list is one object, not N boxes — the last divider goes. */
+.sheet-row.is-last { border-bottom: 0; }
+/* :active as well as :hover. Touch has no hover, and this component
+   exists FOR touch. */
+.sheet-row:hover, .sheet-row:active { background: var(--surface-2); }
+/* Rows do NOT lift. A list of lifting rows is the black-rectangle
+   collapse in its purest form; a background step is the whole recipe. */
+.sheet-row[aria-pressed='true'] { background: var(--surface-inv); color: var(--bg); }
+.sheet-row.is-danger { color: var(--btn-red); }
+.sheet-row[aria-disabled='true'] { opacity: 0.45; pointer-events: none; }
+.sheet-row-label { flex: 1 1 auto; min-width: 0; }
+.sheet-row-meta {
+  flex: none;
+  color: var(--ink-55);
+  font-family: var(--font-num);
+  font-size: var(--text-xs);
+}
+.sheet-row[aria-pressed='true'] .sheet-row-meta { color: var(--bg); }
+
+/* ≥640px the sheet is a centred panel rather than a full-width bar: a
+   full-bleed sheet on a 1440px monitor is a menu the width of a desk. */
+@media (min-width: 640px) {
+  .sheet-panel {
+    left: 50%;
+    right: auto;
+    width: min(28rem, calc(100vw - var(--pad-4)));
+    transform: translate3d(-50%, var(--drag-y), 0);
+    border: var(--line-full);
+    border-bottom: 0;
+  }
 }
 
 /* =====================================================================

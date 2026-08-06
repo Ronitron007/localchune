@@ -28,7 +28,11 @@ const { title, center = false } = Astro.props
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  {/* viewport-fit=cover is the PREREQUISITE for env(safe-area-inset-*).
+      Without it those functions evaluate to 0 on every device, so every
+      safe-area rule in global.css silently does nothing and the seek
+      slider keeps sitting inside the iOS home-indicator gesture zone. */}
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{title}</title>
   <ClientRouter />
 </head>
