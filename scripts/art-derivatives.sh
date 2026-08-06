@@ -68,7 +68,10 @@ if [ "${1:-}" = "--worker" ]; then
   if [ "$FORCE" = 0 ]; then
     a=$(curl -s -o /dev/null -w '%{http_code}' -I "$ART_BASE/derived/$id/medium.jpg?probe=$RUN")
     b=$(curl -s -o /dev/null -w '%{http_code}' -I "$ART_BASE/derived/$id/thumb-2x.jpg?probe=$RUN")
-    [ "$a" = 200 ] && [ "$b" = 200 ] && present=1
+    # `if`, not `[ ] && [ ] && x`: under `set -e` the latter's safety depends
+    # on the shell's AND-list exemption, which is real but is not something
+    # the next editor should have to know.
+    if [ "$a" = 200 ] && [ "$b" = 200 ]; then present=1; fi
   fi
   if [ "$present" = 1 ]; then echo "skip $id" >> "$WORK/.log"; exit 0; fi
 
@@ -158,11 +161,13 @@ else
     > "$WORK/.ids"
   unset PGPASSWORD
 fi
-[ "$LIMIT" -gt 0 ] && { head -n "$LIMIT" "$WORK/.ids" > "$WORK/.ids.n"; mv "$WORK/.ids.n" "$WORK/.ids"; }
+if [ "$LIMIT" -gt 0 ]; then
+  head -n "$LIMIT" "$WORK/.ids" > "$WORK/.ids.n"; mv "$WORK/.ids.n" "$WORK/.ids"
+fi
 
 total=$(wc -l < "$WORK/.ids" | tr -d ' ')
 echo "tracks with artwork: $total   jobs: $JOBS   dest: $DST_BUCKET"
-[ "$DRY" = 1 ] && echo '(dry run — generates nothing, uploads nothing)'
+if [ "$DRY" = 1 ]; then echo '(dry run — generates nothing, uploads nothing)'; fi
 
 xargs -P "$JOBS" -n 1 -I{} "$0" --worker {} < "$WORK/.ids" || true
 
