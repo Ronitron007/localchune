@@ -341,21 +341,138 @@ h3 { font-size: var(--text-base); }
    a phone with no ui-monospace cannot decide the answer is Courier. */
 .num, .keychip, .reason { font-family: var(--font-num); }
 
-/* --- nav / footer --- */
+/* --- nav / footer ---
+   TASK 3.2. The bar is now STICKY and 44px tall, with the destinations in
+   a row above 640px and behind a ⋮ below it. The audit's offender #4 was
+   this element wrapping to three or four rows of ~17px text links — about
+   120px of chrome before any content on a 667px screen, with the
+   `margin-left: auto` alignment collapsing as soon as it wrapped.
+
+   Sticky rather than fixed: fixed would need a body reservation at the
+   TOP as well as the bottom, and the top edge has nothing else on it. */
 .appnav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-nav);
   display: flex;
-  align-items: baseline;
-  gap: var(--pad-2);
-  padding: var(--pad-1) 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pad-0);
+  min-height: var(--tap);
   /* Clears the notch in landscape, where the inset is on the top edge.
      max() keeps the normal 8px on every device that reports 0. */
   padding-top: max(var(--pad-1), env(safe-area-inset-top));
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
+  padding-bottom: var(--pad-1);
+  background: var(--bg);
+  /* Section architecture, not a hairline: this is the line that separates
+     the app's chrome from its content. */
+  border-bottom: var(--rule-sec);
 }
-.appnav a[aria-current='page'] { font-weight: bold; text-decoration: none; }
-.appnav .who, .appnav .credits { color: var(--mid); margin-left: auto; }
-.appnav .who + .credits { margin-left: 0; }
+/* The wordmark IS the Home link. Lowercase and tight — the only place in
+   the app that sets a negative tracking, because a wordmark is a drawn
+   object rather than running text. */
+.wordmark {
+  order: 0;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-right: var(--pad-1);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: inherit;
+  text-decoration: none;
+}
+.navlinks {
+  order: 1;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-0);
+  min-width: 0;
+}
+.navlinks a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pad-0);
+  min-height: var(--tap);
+  padding: 0 var(--pad-1);
+  font-size: var(--text-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.navlinks a:hover, .navlinks a:active { background: var(--surface-2); }
+/* SELECTION IS INVERSION, never a tint and never blue — blue already
+   means "primary action" and a blue-filled nav item would read as a
+   button. Same idiom as .keychip, which is why that chip looks right. */
+.appnav a[aria-current='page'] {
+  background: var(--surface-inv);
+  color: var(--bg);
+  text-decoration: none;
+}
+.wordmark[aria-current='page'] { background: none; color: inherit; }
+.appnav .who, .appnav .credits {
+  color: var(--ink-55);
+  font-size: var(--text-xs);
+}
+.appnav .who { margin-left: auto; }
+/* Icon-only, 44px, ghost. `order: 2` puts both at the far right of the
+   bar whatever the DOM says — the ⋮ has to precede the links it reveals
+   in the DOM (see the [open] rule below), and that is the wrong VISUAL
+   place for it. */
+.navsearch, .navmenu-btn {
+  order: 2;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  color: inherit;
+  cursor: pointer;
+  list-style: none;
+  transition: background var(--dur-fast) ease;
+}
+.navsearch:hover, .navsearch:active,
+.navmenu-btn:hover, .navmenu-btn:active { background: var(--surface-2); }
+.navmenu { order: 2; flex: none; display: none; }
+.navmenu-btn::-webkit-details-marker { display: none; }
+
+@media (max-width: 640px) {
+  /* THE COMPACT BAR: wordmark, search, ⋮. Everything else is behind the
+     sheet site.ts builds from these same links. */
+  .navlinks { display: none; }
+  .navmenu { display: block; }
+  /* With the links gone there is no flex-grow item left to push these two
+     to the right edge, so they take the job themselves. */
+  .navsearch { margin-left: auto; }
+  /* THE NO-JS FALLBACK, and the reason the ⋮ is a <details>. With JS,
+     site.ts cancels the summary's click and the disclosure never opens —
+     the sheet does. Without JS nothing cancels it, `[open]` lands, and
+     the same links drop out as a stacked column. The links precede
+     nothing in the DOM that could reveal them with `~`, so this is `:has`
+     on the nav itself; every browser that runs this app has it, and a
+     browser that does not still has the wordmark and the search link. */
+  .appnav:has(.navmenu[open]) .navlinks {
+    display: flex;
+    order: 3;
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    padding-top: var(--pad-1);
+    border-top: var(--line-hair);
+  }
+  .appnav:has(.navmenu[open]) .navlinks a { justify-content: flex-start; }
+  .appnav:has(.navmenu[open]) .who { margin-left: 0; padding: 0 var(--pad-1); }
+  .appnav:has(.navmenu[open]) .credits { padding: 0 var(--pad-1); }
+  .appnav:has(.navmenu[open]) #signout { padding-top: var(--pad-1); }
+}
 
 .appfoot {
   display: flex;
@@ -1328,6 +1445,15 @@ dd { margin: 0; }
   flex: none;
   width: 36px;
   height: 4px;
+  /* min-* ZEROED, and it is not tidying. The 44px floor is declared on
+     `input, select, button` — a type selector, so `height: 4px` above
+     beats it while `min-height: 44px` is a DIFFERENT PROPERTY and does
+     not get overridden by it. Without these two lines the handle renders
+     as a 44px grey block instead of a 36x4 bar. The hit box is restored
+     by the ::after below, which is where it belongs: the bar is the
+     affordance, the target is the whole strip above the header. */
+  min-width: 0;
+  min-height: 0;
   margin: var(--pad-1) 0;
   padding: 0;
   border: 0;

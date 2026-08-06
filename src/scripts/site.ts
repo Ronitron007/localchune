@@ -2163,9 +2163,15 @@ export function openActionSheet(opts: SheetOptions): () => void {
   }
 
   function focusables(): HTMLElement[] {
-    return [...panel.querySelectorAll<HTMLElement>(
-      '.sheet-row:not([aria-disabled="true"]), .sheet-handle',
-    )]
+    // ROWS FIRST, HANDLE LAST — deliberately not one selector list.
+    // querySelectorAll returns DOCUMENT order, and the handle precedes
+    // the rows in the panel, so a combined query would open every sheet
+    // with focus on "Close". The first thing a keyboard or screen-reader
+    // user meets should be the first choice, not the exit.
+    return [
+      ...panel.querySelectorAll<HTMLElement>('.sheet-row:not([aria-disabled="true"])'),
+      handle,
+    ]
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -2267,3 +2273,63 @@ export function openActionSheet(opts: SheetOptions): () => void {
 
 /** True while a sheet is on screen. */
 export const isSheetOpen = (): boolean => openSheet !== null
+
+/* ============================================================
+   THE NAV'S ⋮ — TASK 3.2
+   ============================================================
+   Every destination, as a 44px row, built BY READING THE NAV rather than
+   from a list in this file. That is the whole design: AppNav omits
+   /review and /admin for a member (a disabled link is a promise with no
+   delivery date), and reading the rendered anchors means the omission
+   needs no counterpart here. Nothing in this bundle knows what an owner
+   is, and src/components/app-nav.test.ts asserts it stays that way.
+
+   THE TRIGGER IS A <summary>, AND CANCELLING IT IS THE POINT. The sheet
+   is JS-only; below 640px these links are the only navigation there is.
+   So the markup ships a <details> whose open state reveals the same links
+   as a stacked column, and this handler preventDefault()s the click —
+   with JS the disclosure never opens, without JS it is the whole menu.
+   No `hidden` attribute, so no flash of the wrong nav on first paint. */
+document.addEventListener('click', (e) => {
+  const summary = (e.target as Element).closest?.('.navmenu-btn')
+  if (!(summary instanceof HTMLElement)) return
+  e.preventDefault()
+
+  const nav = summary.closest('.appnav')
+  if (nav === null) return
+  const who = nav.querySelector('.who')?.textContent?.trim() ?? 'Menu'
+  const credits = nav.querySelector('.credits')?.textContent?.trim() ?? null
+  const signout = nav.querySelector<HTMLFormElement>('#signout')
+
+  const links = [...nav.querySelectorAll<HTMLAnchorElement>('a[data-navlink]')]
+  const rows: SheetRowInput[] = [
+    // The wordmark is Home on the bar. On a phone it is a weak
+    // affordance, so the sheet names it — a 44px row costs nothing.
+    { id: 'home', label: 'Home', href: '/' },
+    ...links.map((a): SheetRowInput => ({
+      id: a.pathname,
+      // firstChild, not textContent: the Review link carries a badge
+      // <span> and `textContent` would render the row as "Review3".
+      label: (a.firstChild?.textContent ?? a.textContent ?? '').trim(),
+      href: a.getAttribute('href') ?? undefined,
+      meta: a.dataset.navmeta,
+    })),
+  ]
+  if (credits !== null) rows.push({ id: 'credits', label: credits, disabled: true })
+  if (signout !== null) rows.push({ id: 'signout', label: 'Sign out', danger: true })
+
+  openActionSheet({
+    title: who,
+    rows,
+    returnFocusTo: summary,
+    onChoose: (id) => {
+      // ONE sign-out code path. requestSubmit() fires a real submit
+      // event, so ClientRouter reads the form's own data-astro-reload
+      // opt-out and stands aside — a fetch here would clear the cookies
+      // without the full document load that tears down every persisted
+      // island with them (survive-list #11). form.submit() would skip the
+      // event entirely and skip the opt-out with it.
+      if (id === 'signout') signout?.requestSubmit()
+    },
+  })
+}, true)

@@ -29,3 +29,6 @@ worker/bench/fixtures/*.flac
 worker/bench/results_*.json
 worker/models/*.onnx
 !worker/models/.gitkeep
+
+# agent dev rig: astro dev() + a hand-minted local JWT. Never shipped.
+*.local.mjs
