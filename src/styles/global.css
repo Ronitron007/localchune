@@ -509,6 +509,38 @@ body.queueopen .uploadchip-slot { bottom: calc(3.5rem + var(--queue-height, 0px)
 }
 .cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
 .cratecard .explain { margin-top: 0.15em; }
+
+/* --- / (home feed, M6c Task 2): Fresh/Hot/Top track cards. Same
+   border/pad card idiom as .cratecard — the feed section it sits in
+   reuses .cratelist's own list for its "New public crates" section, so
+   this only needs to cover FeedRow.astro's own card. --- */
+.feedsection h2 { font-weight: normal; color: var(--mid); }
+.feedlist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-1);
+  padding: 0;
+  margin: var(--pad-1) 0 0;
+}
+.feedrow {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-2);
+  border: 1px solid var(--faint);
+  padding: var(--pad-1) var(--pad-2);
+}
+.feedrow .play { flex: none; width: 1.6em; text-align: center; text-decoration: none; }
+.feedrow-body { min-width: 0; display: flex; flex-direction: column; gap: 0.15em; }
+.feedrow-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.feedrow-title:hover { text-decoration: underline; }
+.feedrow-meta { display: flex; align-items: center; gap: var(--pad-1); color: var(--mid); }
+.feedrow-likes { color: var(--mid); }
 .privatechip {
   border: 1px solid var(--line);
   padding: 0 0.35em;

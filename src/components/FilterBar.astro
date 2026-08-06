@@ -17,7 +17,8 @@ interface Props { query: PoolQuery; uploaders: { member_id: string; uploader_nam
 const { query, uploaders } = Astro.props
 const ALL_KEYS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap((n) => [`${n}A`, `${n}B`])
 ---
-<form class="filterbar" method="get" action="/" role="search" data-autosubmit>
+{/* M6c Task 2: submits to /pool now — "/" is the home feed. */}
+<form class="filterbar" method="get" action="/pool" role="search" data-autosubmit>
   {query.sort !== DEFAULT_SORT && <input type="hidden" name="sort" value={query.sort} />}
 
   <label class="f-search">
@@ -77,5 +78,5 @@ const ALL_KEYS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap((n) => [`${
   <button type="submit" class="btn">Filter</button>
   {/* Task 8: a link, left as a link — the plan's sweep applies button
       classes to buttons/submits only; Clear navigates, it does not act. */}
-  <a class="f-reset" href="/">Clear</a>
+  <a class="f-reset" href="/pool">Clear</a>
 </form>

@@ -160,6 +160,10 @@ export function poolListArgs(
  * The pool page's only link builder. Sort links restart paging on purpose —
  * a keyset cursor is only valid within the sort that minted it, so a sort
  * change never carries `cursor`. The next-page link carries both.
+ *
+ * M6c Task 2: the table moved off "/" (now the home feed) to "/pool" — every
+ * href this function mints follows it, so FilterBar/TrackTable/EmptyState
+ * never hand out a stale bare-"/" link.
  */
 export function poolHref(
   q: PoolQuery, opts: { sort?: PoolSort; cursor?: string } = {},
@@ -167,5 +171,88 @@ export function poolHref(
   const sp = poolQueryToSearchParams(opts.sort === undefined ? q : { ...q, sort: opts.sort })
   if (opts.cursor !== undefined) sp.set('cursor', opts.cursor)
   const s = sp.toString()
-  return s === '' ? '/' : `/?${s}`
+  return s === '' ? '/pool' : `/pool?${s}`
+}
+
+/**
+ * feed_tracks()'s row shape (migration 31): pool_get()'s entire column
+ * list, same convention as org-api.ts's CrateItem for crate_get() rows.
+ * Only the subset FeedRow.astro (via PoolTrack) actually reads is typed
+ * here — feed_tracks returns many more columns (analysis internals,
+ * batch/claim provenance) the home feed has no use for.
+ */
+export type FeedTrack = {
+  file_id: string
+  track_id: string | null
+  uploaded_by: string
+  uploader_name: string
+  original_filename: string
+  display_artist: string | null
+  display_title: string
+  container: string | null
+  byte_size: number
+  duration_ms: number | null
+  bpm: number | null
+  ibi_std_ms: number | null
+  key_camelot: string | null
+  key_open: string | null
+  key_musical: string | null
+  quality_tier: number | null
+  lossy_ancestor: string | null
+  meas_cutoff_hz: number | null
+  integrated_lufs: number | null
+  /** Non-null means the object exists in R2 — same convention pool_get uses. */
+  preview_key: string | null
+  peaks_key: string | null
+  thumb_key: string | null
+  created_at: string
+  download_count: number
+  tags: string[]
+  like_count: number
+  liked_by_me: boolean
+  play_count: number
+}
+
+/**
+ * Adapts a feed_tracks() row onto PoolTrack so FeedRow.astro can render it
+ * the same way TrackRow.astro renders a pool_list() row — same
+ * has_preview/has_peaks/has_thumb derivation from the raw *_key columns as
+ * org-api.ts's crateItemToPoolTrack, since feed_tracks and crate_get share
+ * pool_get()'s exact column shape. camelot_sort/row_cursor get the same
+ * harmless placeholders that adapter uses: the feed never sorts or paginates
+ * by them.
+ */
+export function feedTrackToPoolTrack(t: FeedTrack): PoolTrack {
+  return {
+    file_id: t.file_id,
+    track_id: t.track_id,
+    uploaded_by: t.uploaded_by,
+    uploader_name: t.uploader_name,
+    original_filename: t.original_filename,
+    display_artist: t.display_artist,
+    display_title: t.display_title,
+    container: t.container,
+    byte_size: t.byte_size,
+    duration_ms: t.duration_ms,
+    bpm: t.bpm,
+    ibi_std_ms: t.ibi_std_ms,
+    key_camelot: t.key_camelot,
+    key_open: t.key_open,
+    key_musical: t.key_musical,
+    camelot_sort: 0,
+    quality_tier: t.quality_tier,
+    lossy_ancestor: t.lossy_ancestor,
+    meas_cutoff_hz: t.meas_cutoff_hz,
+    integrated_lufs: t.integrated_lufs,
+    has_preview: t.preview_key !== null,
+    has_peaks: t.peaks_key !== null,
+    has_thumb: t.thumb_key !== null,
+    created_at: t.created_at,
+    row_cursor: t.file_id,
+    download_count: t.download_count,
+    tags: t.tags,
+    like_count: t.like_count,
+    liked_by_me: t.liked_by_me,
+    play_count: t.play_count,
+  }
 }

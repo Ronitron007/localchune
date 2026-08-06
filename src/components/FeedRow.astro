@@ -1,0 +1,68 @@
+---
+// src/components/FeedRow.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// M6c Task 2 — one compact card in the home feed's Fresh/Hot/Top sections.
+// Takes the same PoolTrack shape TrackRow.astro renders (feed_tracks rows
+// are adapted onto it by pool-api.ts's feedTrackToPoolTrack, the same
+// has_preview/has_peaks/has_thumb-from-*_key convention crateItemToPoolTrack
+// already established for crate_get() rows) — so a like count, a BPM, or a
+// key chip never reads differently here than it does in the pool table.
+//
+// The play control reproduces TrackRow's exact M6b `a.play` contract —
+// data-track-id/label plus the queue metadata attrs (artist, title,
+// duration, bpm, key) site.ts scrapes when a play inside a
+// [data-queue-list] container builds the queue from the rendered list.
+// The hidden `+Q` companion follows TrackRow's rule verbatim: unhidden by
+// site.ts, invisible without JS because the queue is client state with no
+// server fallback. No like toggle here on purpose — the feed is
+// read-only; toggling lives on the track page and the pool table.
+import KeyChip from './KeyChip.astro'
+import { artThumbUrl, formatBpm } from '../lib/track-format'
+import type { PoolTrack } from '../lib/pool-api'
+
+interface Props { track: PoolTrack }
+const { track } = Astro.props
+const artist = track.display_artist ?? 'Unknown artist'
+const label = `${artist} — ${track.display_title}`
+---
+<li class="feedrow">
+  <a
+    class="play"
+    href={`/track/${track.file_id}`}
+    data-track-id={track.file_id}
+    data-label={label}
+    data-artist={track.display_artist ?? undefined}
+    data-title={track.display_title}
+    data-duration={track.duration_ms ?? undefined}
+    data-bpm={track.bpm ?? undefined}
+    data-key={track.key_camelot ?? undefined}
+    aria-label={`Play ${track.display_title}`}
+  >▶</a>
+  <button
+    type="button"
+    class="queueadd btn-secondary"
+    hidden
+    data-file-id={track.file_id}
+    data-artist={track.display_artist ?? undefined}
+    data-title={track.display_title}
+    data-duration={track.duration_ms ?? undefined}
+    data-bpm={track.bpm ?? undefined}
+    data-key={track.key_camelot ?? undefined}
+    aria-label={`Add ${track.display_title} to the queue`}
+    title="add to queue"
+  >+Q</button>
+  {track.has_thumb
+    ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} alt="" width="28" height="28" loading="lazy" />
+    : <span class="thumb-empty" aria-hidden="true"></span>}
+  <span class="feedrow-body">
+    <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
+    <span class="feedrow-meta">
+      <KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} />
+      <span class="num">{formatBpm(track.bpm, track.ibi_std_ms)}</span>
+      <span class="feedrow-likes">♥ {track.like_count}</span>
+    </span>
+  </span>
+</li>

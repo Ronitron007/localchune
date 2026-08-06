@@ -45,7 +45,8 @@ export const POST: APIRoute = async ({ request, locals, redirect }) => {
     return redirect(`/welcome?${qs.toString()}`, 303)
   }
 
-  // The pool page is "/" in this app (src/pages/index.astro) — there is no
-  // separate /pool route.
+  // M6c Task 2: "/" is the home feed (src/pages/index.astro); the pool
+  // table moved to /pool (src/pages/pool.astro). A freshly-claimed member
+  // lands on the feed rather than the raw table.
   return redirect('/', 303)
 }

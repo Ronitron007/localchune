@@ -24,13 +24,13 @@ const { variant, term = '' } = Astro.props
   {variant === 'no-search-match' && (
     <>
       <p>No track matches “{term}”.</p>
-      <p>Search covers artist, title and filename. <a href="/">Clear filters</a></p>
+      <p>Search covers artist, title and filename. <a href="/pool">Clear filters</a></p>
     </>
   )}
   {variant === 'no-filter-match' && (
     <>
       <p>No track matches these filters.</p>
-      <p>Try widening the BPM range, or turning on half/double time. <a href="/">Clear filters</a></p>
+      <p>Try widening the BPM range, or turning on half/double time. <a href="/pool">Clear filters</a></p>
     </>
   )}
   {variant === 'crates-empty' && (

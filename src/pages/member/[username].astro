@@ -1,0 +1,145 @@
+---
+// src/pages/member/[username].astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// M6c Task 3 — a member's public profile: their public crates and the
+// tracks they've contributed. member_resolve() (migration 31) is the one
+// call that can say "no such member" (P0002 for unknown or lapsed) — the
+// crate_list()/pool_list() calls below only run once that's settled, same
+// two-step dependency shape /crate/[id].astro uses (crate_list() first to
+// establish existence, crate_get() after).
+//
+// Private crates are invisible here — no count, no hint (spec §7's
+// explicit owner decision). crate_list() already restricts its rows to
+// "caller's own crates always, plus every public crate", so filtering the
+// one flat list to `owner_id === user_id && is_public` both keeps this
+// member's private crates out AND, when the caller is viewing their OWN
+// page, drops their own private crates too (crate_list() would otherwise
+// still include those, tagged is_mine).
+import Shell from '../../layouts/Shell.astro'
+import TrackRow from '../../components/TrackRow.astro'
+import { crateHref, formatCrateMeta, type CrateCard } from '../../lib/org-api'
+import { EMPTY_QUERY, PAGE_SIZE, poolListArgs, type PoolTrack } from '../../lib/pool-api'
+
+const { username } = Astro.params
+// Guard before the RPC, same reasoning as [id].astro's isUuid check: a
+// missing segment should never reach Postgres as a bind-param mismatch.
+// In practice Astro never routes here with an empty segment, but the type
+// of Astro.params is loose enough that this is worth being explicit about.
+if (typeof username !== 'string' || username === '') {
+  return new Response('Not found', { status: 404 })
+}
+
+/** member_resolve()'s row shape (migration 31). */
+type MemberProfile = { user_id: string; username: string; joined_at: string; track_count: number }
+
+const { data: memberData, error: memberError } =
+  await Astro.locals.supabase.rpc('member_resolve', { p_username: username })
+if (memberError) {
+  // P0002 (migration 31) is "no such active member" — a real 404, same as
+  // crate/[id].astro's 42501-means-404 guard. Anything else (a dropped
+  // connection, Postgres unreachable) is an outage, not "this page does
+  // not exist" — rendering 404 for that would tell a real member their
+  // profile vanished.
+  if (memberError.code === 'P0002') return new Response('Not found', { status: 404 })
+  console.error('member_resolve failed:', memberError.message)
+  return new Response('Could not load — try again.', { status: 500 })
+}
+const member = (memberData as MemberProfile[] | null)?.[0]
+if (!member) return new Response('Not found', { status: 404 })
+
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [{ data: cratesData, error: cratesError }, { data: tracksData, error: tracksError }] =
+  await Promise.all([
+    rpc('crate_list'),
+    rpc('pool_list', poolListArgs({ ...EMPTY_QUERY, uploader: member.user_id }, null, PAGE_SIZE)),
+  ])
+if (cratesError) console.error('crate_list failed:', cratesError.message)
+if (tracksError) console.error('pool_list failed:', tracksError.message)
+
+const crates = ((cratesData ?? []) as CrateCard[])
+  .filter((c) => c.owner_id === member.user_id && c.is_public)
+const tracks = (tracksData ?? []) as PoolTrack[]
+
+/** Same ISO-slice convention as TrackRow.astro's "added" column and
+ * /crates.astro's "updated" line. */
+const joined = new Date(member.joined_at).toISOString().slice(0, 10)
+
+// Same HEADERS array crate/[id].astro uses (including the Task 8
+// add-to-crate sr header, which TrackRow always renders a cell for
+// regardless of context) — minus that page's owner-only trailing
+// "Manage" <th>, since this table is never reorderable and never gets a
+// controls slot.
+const HEADERS = [
+  { label: '', sr: 'Play' },
+  { label: '', sr: 'Artwork' },
+  { label: 'Artist' },
+  { label: 'Title' },
+  { label: 'BPM' },
+  { label: 'Key' },
+  { label: 'Length' },
+  { label: 'Quality' },
+  { label: 'Uploader' },
+  { label: 'Added' },
+  { label: 'Downloads' },
+  { label: '♥' },
+  { label: 'Plays' },
+  { label: '', sr: 'Download' },
+  { label: '', sr: 'Add to crate' },
+]
+---
+<Shell title={`localchune — ${member.username}`}>
+  <article class="memberdetail">
+    <header class="cratehead">
+      <h1>{member.username}</h1>
+      <p class="explain">
+        Joined {joined} · {member.track_count} {member.track_count === 1 ? 'track' : 'tracks'} contributed
+      </p>
+    </header>
+
+    <section class="crates-section">
+      <h2>Crates</h2>
+      {cratesError ? (
+        <p class="explain">Could not load — try again.</p>
+      ) : crates.length === 0 ? (
+        <p class="explain">No public crates.</p>
+      ) : (
+        <ul class="cratelist">
+          {crates.map((c) => (
+            <li class="cratecard">
+              <a href={crateHref(c.id)}>{c.name}</a>
+              <div class="explain">{formatCrateMeta(c)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+
+    <section class="crates-section">
+      <h2>Tracks</h2>
+      {tracksError ? (
+        <p class="explain">Could not load — try again.</p>
+      ) : tracks.length === 0 ? (
+        <p class="explain">No tracks contributed.</p>
+      ) : (
+        <>
+          <table>
+            <thead>
+              <tr>
+                {HEADERS.map((h) => (
+                  <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody data-queue-list={`${member.username} uploads`}>
+              {tracks.map((t) => <TrackRow track={t} />)}
+            </tbody>
+          </table>
+          <p class="explain"><a href={`/pool?uploader=${member.user_id}`}>see all in pool →</a></p>
+        </>
+      )}
+    </section>
+  </article>
+</Shell>

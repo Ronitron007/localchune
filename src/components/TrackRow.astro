@@ -108,7 +108,13 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   <td class="quality">
     <QualityBadge tier={track.quality_tier} lossyAncestor={track.lossy_ancestor} measCutoffHz={track.meas_cutoff_hz} />
   </td>
-  <td class="uploader">{track.uploader_name}</td>
+  {/* M6c Task 3: links to the uploader's public profile. Unconditional —
+      migration 17's fallback for a never-claimed member is
+      split_part(email, '@', 1), which is not a routable username, and
+      pool_tracks exposes no flag to tell the two apart here. That case
+      404s at /member/[username] instead of silently not linking; accepted
+      for the current ~ten-member scale (see M6c task-3 brief). */}
+  <td class="uploader"><a href={`/member/${encodeURIComponent(track.uploader_name)}`}>{track.uploader_name}</a></td>
   <td class="added num">{added}</td>
   <td class="downloads num">{track.download_count}</td>
   {/* Task 3 (M6a): live now. A mini <form> POST, brutalist idiom (like
