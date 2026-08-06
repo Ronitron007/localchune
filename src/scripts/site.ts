@@ -14,7 +14,7 @@ import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
-import { artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
+import { artFallback, artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
@@ -972,6 +972,30 @@ if (nextBtn !== null) {
   nextBtn.hidden = false
   nextBtn.addEventListener('click', skipToNext)
 }
+
+/** The art derivatives degrade instead of breaking — `artFallback` states
+ *  the rule and is tested; this is only the DOM write. Capture phase,
+ *  because `error` on an <img> does not bubble. One listener for the whole
+ *  document rather than an inline handler per row: a pool page renders 100
+ *  rows and the attribute would be pure page weight on all of them. */
+document.addEventListener('error', (e) => {
+  const img = e.target
+  if (!(img instanceof HTMLImageElement)) return
+  const trackId = img.dataset.artFile
+  switch (artFallback(img.hasAttribute('srcset'), img.classList.contains('art'))) {
+    case 'drop-srcset':
+      img.removeAttribute('srcset')
+      break
+    case 'signed-full':
+      // Guarded so a second failure cannot loop: the signed path is the end
+      // of the chain, and it is only reachable when we know the file id.
+      if (trackId !== undefined && img.dataset.artFallen !== '1') {
+        img.dataset.artFallen = '1'
+        img.src = `/api/track/${encodeURIComponent(trackId)}/art?full=1`
+      }
+      break
+  }
+}, true)
 
 /** Click a row: play it, and drop everything jumped over. §1.4 — "click the
  *  fourth track" must not mean "play the fourth track and then the two you

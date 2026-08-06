@@ -7,7 +7,7 @@ import Shell from '../../layouts/Shell.astro'
 import KeyChip from '../../components/KeyChip.astro'
 import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
-import { formatBpm } from '../../lib/track-format'
+import { artMediumUrl, formatBpm } from '../../lib/track-format'
 import { isUuid } from '../../lib/upload-api'
 import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel, explainLastError } from '../../lib/file-state'
 import type { CrateCard } from '../../lib/org-api'
@@ -126,7 +126,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           Apple Music" badge is required HERE (PRD §8.1) — this page,
           never the table. */}
       {hasArt && (
-        <img class="art" src={`/api/track/${t.file_id}/art?full=1`} alt={`Cover art for ${t.display_title}`} />
+        <img class="art" src={artMediumUrl(import.meta.env.PUBLIC_ART_BASE_URL, t.file_id)} data-art-file={t.file_id} alt={`Cover art for ${t.display_title}`} />
       )}
       {/* Final-review finding F1: this block was never state-gated. A
           failed/abandoned file's uploader can reach this page (migration

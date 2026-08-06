@@ -129,16 +129,74 @@ export function qualityTooltip(
 }
 
 /**
- * Row thumbs come straight off the public art bucket
- * (spec 2026-08-01-art-bucket-split): `derived/<file_id>/thumb.jpg` is the
- * deterministic key the analysis worker writes, PUBLIC_ART_BASE_URL is the
- * bucket's domain (prod: art.butternutcrack.com; dev: the r2.dev URL). No
- * Worker request, no DB call, no signing — and the URL is stable, so the
- * browser and edge caches actually hold it.
+ * Art comes straight off the public art bucket
+ * (spec 2026-08-01-art-bucket-split): `derived/<file_id>/<name>` is the
+ * deterministic key shape, PUBLIC_ART_BASE_URL is the bucket's domain
+ * (prod: art.butternutcrack.com; dev: the r2.dev URL). No Worker request,
+ * no DB call, no signing — and the URL is stable, so the browser and edge
+ * caches actually hold it.
+ *
+ * Three sizes exist, and every one of them is a CONVENTION rather than a
+ * stored pointer. `audio_analysis.thumb_key` is `'thumb.jpg'` on all 586
+ * rows that have art and `artwork_key` is `'artwork.jpg'` on the same 586,
+ * so a name is derivable from a file id alone and the two derivative sizes
+ * need no column of their own:
+ *
+ *   thumb.jpg     64 px square   the row thumb at 1x
+ *   thumb-2x.jpg  128 px square  the same crop at 2x, for retina rows
+ *   medium.jpg    <=512 px long edge, aspect preserved — the track hero
+ *
+ * `scripts/art-derivatives.sh` writes the latter two. A file analysed
+ * after the last sweep has only `thumb.jpg`, which is why both callers
+ * degrade rather than break: see `wireArtFallback` in scripts/site.ts.
  */
-export function artThumbUrl(base: string | undefined, fileId: string): string {
+function artUrl(base: string | undefined, fileId: string, name: string): string {
   if (!base) return `/api/track/${fileId}/art?full=1` // unset env: fall back to the signed path
-  return `${base.replace(/\/+$/, '')}/derived/${fileId}/thumb.jpg`
+  return `${base.replace(/\/+$/, '')}/derived/${fileId}/${name}`
+}
+
+export function artThumbUrl(base: string | undefined, fileId: string): string {
+  return artUrl(base, fileId, 'thumb.jpg')
+}
+
+/** The 2x candidate for a row's `srcset`. Same cover-crop, twice the pixels. */
+export function artThumb2xUrl(base: string | undefined, fileId: string): string {
+  return artUrl(base, fileId, 'thumb-2x.jpg')
+}
+
+/**
+ * The track page hero. The box is 256 CSS px, so 512 is exactly 2x — and
+ * the source is never upscaled to reach it, so a small cover stays small
+ * rather than being blown up and re-compressed.
+ */
+export function artMediumUrl(base: string | undefined, fileId: string): string {
+  return artUrl(base, fileId, 'medium.jpg')
+}
+
+/**
+ * What to do when an art `<img>` fails to load — THE NEW-UPLOAD GAP.
+ *
+ * `thumb.jpg` is written by the analysis container on every upload.
+ * `thumb-2x.jpg` and `medium.jpg` are not: they exist only for files the
+ * backfill sweep has seen, so a track uploaded since the last sweep has
+ * the 1x thumb and neither derivative. That is a temporary state — the
+ * sweep is re-runnable and the container will emit all three eventually —
+ * but "temporary" must not mean "broken image".
+ *
+ * A failed `srcset` candidate does NOT fall back to `src` on its own; the
+ * browser gives up on the element. Dropping the attribute re-runs
+ * selection with `src` as the only candidate, which is the 64 px thumb —
+ * slightly soft on a retina row, and correct.
+ *
+ * The hero has no second candidate to fall back to, so it re-points at the
+ * signed full-size original, which every artworked file has had since
+ * migration 09.
+ */
+export type ArtFallback = 'drop-srcset' | 'signed-full' | 'none'
+
+export function artFallback(hasSrcset: boolean, isHero: boolean): ArtFallback {
+  if (hasSrcset) return 'drop-srcset'
+  return isHero ? 'signed-full' : 'none'
 }
 
 /* ------------------------------------------------- the player bar's two

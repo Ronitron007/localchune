@@ -44,6 +44,7 @@ import { describe, expect, it } from 'vitest'
 import FeedRow from './FeedRow.astro'
 import TrackRow from './TrackRow.astro'
 import type { PoolTrack } from '../lib/pool-api'
+import { artThumb2xUrl, artThumbUrl } from '../lib/track-format'
 
 /** Deliberately near the worst realistic case: long artist, long title,
  *  three tags, a liked row (the ♥ branch renders the longer aria-label). */
@@ -82,10 +83,41 @@ async function render(Component: unknown, props: Record<string, unknown>): Promi
   return container.renderToString(Component as Renderable, { props })
 }
 
+/* The budgets moved 2,753 -> 2,797 and 1,301 -> 1,345 for the retina
+ * thumb: `srcset="<...>/thumb-2x.jpg 2x"` costs 44 bytes a row here and
+ * ~101 in production, where PUBLIC_ART_BASE_URL is baked in and the URL is
+ * absolute. Note that this file measures the SHORTER shape — with no .env,
+ * `artThumbUrl` returns the signed-route fallback — so it under-reports
+ * production by design and always has.
+ *
+ * Raw bytes are the wrong unit for the decision and gzip is the right one.
+ * Measured over 100 production-shaped rows: 238.3 KB -> 247.9 KB raw, but
+ * 5.11 KB -> 5.42 KB gzipped — +323 bytes for the whole page, because the
+ * file id already appears four times in every row and the base URL is
+ * identical on all 100. That buys a thumb that is no longer upscaled on
+ * every phone made since 2014. */
 describe('TrackRow — the per-row budget', () => {
-  it('stays at or under 2,753 bytes with realistic strings (was 2,957)', async () => {
+  it('stays at or under 2,797 bytes with realistic strings (was 2,957)', async () => {
     const html = await render(TrackRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_753)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_797)
+  })
+
+  /* One candidate, not two: `src` is the 1x, so naming it again in the
+     srcset would pay for a URL the browser already has. If the 2x object
+     is missing the browser abandons the element rather than falling back,
+     which is what `artFallback` exists to repair.
+     Asserted through the builders, not against a literal: with no .env
+     both URLs collapse to the signed-route fallback, and a test that
+     hard-coded `/thumb-2x.jpg` would only ever pass on a machine that
+     happens to have PUBLIC_ART_BASE_URL set. */
+  it('offers the 2x thumb as the only srcset candidate, and adds no element', async () => {
+    const html = await render(TrackRow, { track })
+    const img = /<img[^>]*class="thumb"[^>]*>/.exec(html)?.[0] ?? ''
+    const b = import.meta.env.PUBLIC_ART_BASE_URL
+    expect(img).toContain(`src="${artThumbUrl(b, track.file_id)}"`)
+    expect(img).toContain(`srcset="${artThumb2xUrl(b, track.file_id)} 2x"`)
+    expect(img).toContain('width="28"')
+    expect(img).toContain('loading="lazy"')
   })
 
   it('stays at or under 37 elements — the 15-column floor plus its cells', async () => {
@@ -130,9 +162,9 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-  it('stays at or under 1,301 bytes (was 1,505)', async () => {
+  it('stays at or under 1,345 bytes (was 1,505)', async () => {
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_301)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_345)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
