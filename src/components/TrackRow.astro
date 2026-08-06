@@ -51,7 +51,15 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       site.ts, because a button that would do nothing without JS must not be
       visible without JS — the queue is client state and there is no server
       endpoint for it to fall back to. The glyph is deliberately NOT the bare
-      `+` the add-to-crate picker already uses two cells away. */}
+      `+` the add-to-crate picker already uses two cells away.
+
+      PERF TASK 2.2 — the button carries `data-file-id` AND NOTHING ELSE.
+      It used to repeat artist/title/duration/bpm/key, which is five of the
+      eight times the audit found artist and title serialised in one row, on
+      every one of a hundred rows. site.ts's `+Q` delegation now reads the
+      row's own `a.play` for that metadata — the same link it already
+      scrapes to build the list a play means. `title="add to queue"` went
+      with them: it repeated the aria-label and is invisible on touch. */}
   <td class="controls">
     <a
       class="play"
@@ -70,13 +78,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       class="queueadd btn-secondary"
       hidden
       data-file-id={track.file_id}
-      data-artist={track.display_artist ?? undefined}
-      data-title={track.display_title}
-      data-duration={track.duration_ms ?? undefined}
-      data-bpm={track.bpm ?? undefined}
-      data-key={track.key_camelot ?? undefined}
       aria-label={`Add ${track.display_title} to the queue`}
-      title="add to queue"
     >+Q</button>
   </td>
   <td class="art">

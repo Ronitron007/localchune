@@ -17,8 +17,9 @@
 // [data-queue-list] container builds the queue from the rendered list.
 // The hidden `+Q` companion follows TrackRow's rule verbatim: unhidden by
 // site.ts, invisible without JS because the queue is client state with no
-// server fallback. No like toggle here on purpose — the feed is
-// read-only; toggling lives on the track page and the pool table.
+// server fallback, and — since perf task 2.2 — carrying `data-file-id`
+// alone. No like toggle here on purpose — the feed is read-only; toggling
+// lives on the track page and the pool table.
 import KeyChip from './KeyChip.astro'
 import { artThumbUrl, formatBpm } from '../lib/track-format'
 import type { PoolTrack } from '../lib/pool-api'
@@ -41,18 +42,15 @@ const label = `${artist} — ${track.display_title}`
     data-key={track.key_camelot ?? undefined}
     aria-label={`Play ${track.display_title}`}
   >▶</a>
+  {/* PERF TASK 2.2 — `data-file-id` only, exactly as TrackRow.astro's
+      companion: site.ts reads this row's own `a.play` for the queue
+      metadata rather than a second copy of it on the button. */}
   <button
     type="button"
     class="queueadd btn-secondary"
     hidden
     data-file-id={track.file_id}
-    data-artist={track.display_artist ?? undefined}
-    data-title={track.display_title}
-    data-duration={track.duration_ms ?? undefined}
-    data-bpm={track.bpm ?? undefined}
-    data-key={track.key_camelot ?? undefined}
     aria-label={`Add ${track.display_title} to the queue`}
-    title="add to queue"
   >+Q</button>
   {track.has_thumb
     ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} alt="" width="28" height="28" loading="lazy" />

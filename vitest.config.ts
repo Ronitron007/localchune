@@ -2,8 +2,37 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 
-import { defineConfig } from 'vitest/config'
-export default defineConfig({
+// getViteConfig, not vitest's own defineConfig: it hands the test run the
+// project's real Astro/Vite pipeline, which is what lets a test `import`
+// a `.astro` component and render it through experimental_AstroContainer.
+// Without it, vite's import analysis reads the component's template as JS
+// and the file fails to parse. Phase 2's element/byte budget tests
+// (track-row.test.ts, divergence-strip.test.ts) measure RENDERED markup —
+// a budget checked against the template source would count the template,
+// not the page.
+/// <reference types="vitest/config" />
+import { getViteConfig } from 'astro/config'
+
+// wrangler.jsonc marks the R2 bucket and the analyze queue `"remote": true`,
+// which is right for `astro dev` — a local miniflare bucket would disagree
+// with the presigned URLs the ingest path hands out. It is wrong here.
+// Loading the real Astro pipeline loads the Cloudflare vite plugin with it,
+// and that plugin opens a REMOTE PROXY SESSION against the account for any
+// remote binding — which needs a CLOUDFLARE_API_TOKEN. CI has none, so the
+// whole suite died at startup with "Failed to start the remote proxy
+// session" before a single test ran. This is the plugin's own opt-out
+// (@cloudflare/vite-plugin reads it through vite's loadEnv). Nothing in
+// this suite touches a binding: the tests read source, run pure modules,
+// and render components with the container API.
+process.env.CLOUDFLARE_VITE_FORCE_LOCAL = 'true'
+
+export default getViteConfig({
+  // The Astro pipeline brings a dev server with it, and its websocket
+  // listener binds a fixed port. Two checkouts running vitest at once (the
+  // redesign was executed by two workers in parallel worktrees) then race
+  // for it and the second run dies with EADDRINUSE before a single test
+  // executes. Nothing in this suite uses HMR — turn the socket off.
+  server: { hmr: false, ws: false },
   test: {
     environment: 'node',
     // workers/** is here because the maintenance Worker's pure logic lives
