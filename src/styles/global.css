@@ -154,6 +154,10 @@
   --surface-1: var(--ink-04);
   --surface-2: var(--ink-08);
   --surface-inv: var(--fg);
+  /* The sheet scrim. Solid, and it is the only place this alpha is used.
+     NEVER a backdrop-filter — that is the single most expensive thing a
+     phone can be asked to composite. */
+  --scrim: rgba(0, 0, 0, 0.4);
 
   /* =========================================================
      MOTION — fixed and small. A component that wants a seventh value is
@@ -1202,4 +1206,153 @@ dd { margin: 0; }
   padding: 0 calc(var(--pad-1) / 2);
   border: 1px solid var(--line);
   font-size: 0.85em;
+}
+
+/* --- the bottom action sheet ---
+   Built once and reused by the nav's ⋮, every row's ⋮, the filter panel
+   and the crate picker. src/scripts/site.ts builds the DOM;
+   src/lib/sheet.ts owns the maths. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+}
+/* A SOLID scrim. No backdrop-filter, at any breakpoint and on any device
+   — it is the single most expensive thing a phone can be asked to
+   composite, and the reference design disables it on mobile themselves.
+   We never introduce it. */
+.sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity var(--dur-panel) var(--ease-panel);
+}
+.sheet.is-open .sheet-scrim { opacity: 1; }
+
+.sheet-panel {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  background: var(--bg);
+  border-top: var(--line-full);
+  /* The ONE soft shadow in the system. A bottom sheet has to read as
+     ABOVE the page rather than attached to its edge, and a hard offset on
+     a full-width element pointing up is a black bar, not a shadow. */
+  box-shadow: var(--sheet);
+  padding-bottom: max(var(--pad-2), env(safe-area-inset-bottom));
+  /* translate3d, not `bottom`: a transform is composited and a `bottom`
+     animation is layout work on every frame, on the worst device we
+     support.
+
+     --drag-y is what a finger writes, NOT the whole transform. Writing
+     `transform` inline would drop the -50% centring the desktop rule
+     below adds — which is exactly the kind of bug that only appears on an
+     iPad, where the panel is centred AND the input is touch. */
+  --drag-y: 100%;
+  transform: translate3d(0, var(--drag-y), 0);
+  transition: transform var(--dur-panel) var(--ease-panel);
+}
+.sheet.is-open .sheet-panel { --drag-y: 0px; }
+/* While a finger drives it, the transform is the finger's — a transition
+   here would fight the drag and lag behind it. */
+.sheet-panel[data-dragging='true'] { transition: none; }
+
+/* 36x4, centred, with a 44px hit box from the ::after. The bar is the
+   affordance; the target is the whole strip above the header. */
+.sheet-handle {
+  position: relative;
+  align-self: center;
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: var(--pad-1) 0;
+  padding: 0;
+  border: 0;
+  background: var(--ink-35);
+  cursor: pointer;
+}
+.sheet-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(120px, var(--tap));
+  height: var(--tap);
+}
+
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--pad-1) var(--pad-2);
+  border-bottom: var(--line-hair);
+}
+.sheet-title {
+  font-size: var(--text-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-55);
+}
+
+/* The ROW LIST is the scroller, not the panel: a panel that scrolls takes
+   its own handle and header out of reach with it. */
+.sheet-list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-2);
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--pad-1) var(--pad-2);
+  border: 0;
+  border-bottom: var(--line-hair);
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+/* A list is one object, not N boxes — the last divider goes. */
+.sheet-row.is-last { border-bottom: 0; }
+/* :active as well as :hover. Touch has no hover, and this component
+   exists FOR touch. */
+.sheet-row:hover, .sheet-row:active { background: var(--surface-2); }
+/* Rows do NOT lift. A list of lifting rows is the black-rectangle
+   collapse in its purest form; a background step is the whole recipe. */
+.sheet-row[aria-pressed='true'] { background: var(--surface-inv); color: var(--bg); }
+.sheet-row.is-danger { color: var(--btn-red); }
+.sheet-row[aria-disabled='true'] { opacity: 0.45; pointer-events: none; }
+.sheet-row-label { flex: 1 1 auto; min-width: 0; }
+.sheet-row-meta {
+  flex: none;
+  color: var(--ink-55);
+  font-family: var(--font-num);
+  font-size: var(--text-xs);
+}
+.sheet-row[aria-pressed='true'] .sheet-row-meta { color: var(--bg); }
+
+/* ≥640px the sheet is a centred panel rather than a full-width bar: a
+   full-bleed sheet on a 1440px monitor is a menu the width of a desk. */
+@media (min-width: 640px) {
+  .sheet-panel {
+    left: 50%;
+    right: auto;
+    width: min(28rem, calc(100vw - var(--pad-4)));
+    transform: translate3d(-50%, var(--drag-y), 0);
+    border: var(--line-full);
+    border-bottom: 0;
+  }
 }
