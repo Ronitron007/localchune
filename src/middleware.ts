@@ -5,6 +5,7 @@
 import { defineMiddleware } from 'astro:middleware'
 import { serverClient, withAuthCookieHeaders, type AuthCookieHeaders } from './lib/supabase.server'
 import { isActive, isApiPath } from './lib/session'
+import { startChromeData } from './lib/page-data'
 import { jsonError } from './lib/upload-api'
 
 const PUBLIC_PATHS = new Set([
@@ -114,5 +115,25 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   if ((path.startsWith('/admin') || path.startsWith('/api/admin')) && ctx.locals.member?.role !== 'owner') {
     return withAuthCookieHeaders(new Response('Not found', { status: 404 }), authHeaders)
   }
+
+  // PERF TASK 2.1 — start the chrome's two round trips HERE, unawaited, so
+  // they overlap the page's own data instead of queueing behind it. Astro
+  // renders frontmatter before components, so an `await` inside AppNav or
+  // StorageChip could not begin until every `await` on the page had
+  // finished: that is how /pool came to run five Supabase calls end to end
+  // at 60–165 ms each. Nothing is awaited here — awaiting would rebuild the
+  // very chain this removes.
+  //
+  // Only for page navigations: an /api/* route renders no Shell, so the two
+  // calls would be pure waste. Only with a member: both functions are
+  // authenticated-only, and a signed-out request was redirected above.
+  //
+  // Floating by design and safe to float: `.rpc()` resolves to
+  // `{data, error}` instead of rejecting, and startChromeData catches a
+  // genuine throw itself, so there is no unhandled rejection to leak.
+  if (ctx.locals.member && !isApiPath(path)) {
+    ctx.locals.chrome = startChromeData(sb, ctx.locals.member)
+  }
+
   return withAuthCookieHeaders(await next(), authHeaders)
 })

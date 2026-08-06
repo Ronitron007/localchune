@@ -24,15 +24,25 @@ const rawCursor = Astro.url.searchParams.get('cursor')
 const cursor = rawCursor !== null && rawCursor.length > 36 ? rawCursor : null
 
 // Astro.locals.supabase — the request's cookie-bound client. Never a second one.
-const { data, error } = await Astro.locals.supabase.rpc(
-  'pool_list', poolListArgs(query, cursor, PAGE_SIZE))
+//
+// PERF TASK 2.1 — ONE stage, not two. pool_list and pool_uploaders share no
+// input: the second was awaited after the first for no reason but the order
+// they were written in, and each Supabase round trip measures 60–165 ms.
+// Promise.all rather than allSettled because `.rpc()` resolves to
+// {data, error} instead of rejecting on a PostgREST or HTTP failure — which
+// is also why each result keeps its OWN error branch below. That per-result
+// branch is what preserves survive-list #16: a failed pool_uploaders must
+// read as "the database is unreachable", never as "you have nothing".
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [{ data, error }, { data: uploaderRows, error: uploaderError }] = await Promise.all([
+  rpc('pool_list', poolListArgs(query, cursor, PAGE_SIZE)),
+  rpc('pool_uploaders'),
+])
 if (error) console.error('pool_list failed:', error.message)
 const tracks = (data ?? []) as PoolTrack[]
 const nextCursor =
   tracks.length === PAGE_SIZE ? tracks[tracks.length - 1].row_cursor : null
 
-const { data: uploaderRows, error: uploaderError } =
-  await Astro.locals.supabase.rpc('pool_uploaders')
 if (uploaderError) console.error('pool_uploaders failed:', uploaderError.message)
 const uploaders = uploaderRows ?? []
 
