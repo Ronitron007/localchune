@@ -590,7 +590,29 @@ function scrapeRows(container: HTMLElement): QueueRowData[] {
   }))
 }
 
-/** One control's own metadata — a `+Q` button, or a play link with no list. */
+/**
+ * The `a.play` that carries a given track's queue metadata.
+ *
+ * PERF TASK 2.2 — this is the whole reason `button.queueadd` may now say
+ * `data-file-id` and nothing else. The audit measured artist and title
+ * serialised up to eight times per row; five of those were the `+Q`
+ * button's private copy of what the play link beside it already states, on
+ * every one of a hundred rows.
+ *
+ * Document-wide rather than row-scoped, and deliberately: the attributes
+ * describe the TRACK, not the row, so a track that appears in two feed
+ * sections at once gives the same six values from either link. Both
+ * surfaces that render the pair (TrackRow's `td.controls`, FeedRow's
+ * `li.feedrow`) put them side by side, so this is a nearby lookup in
+ * practice, not a page scan.
+ */
+function playLinkFor(fileId: string): HTMLElement | null {
+  const a = document.querySelector(`a.play[data-track-id="${fileId.replace(/["\\]/g, '\\$&')}"]`)
+  return a instanceof HTMLElement ? a : null
+}
+
+/** One control's own metadata — a play link, or the play link a `+Q` button
+ *  was pointed at by `playLinkFor`. */
 function scrapeOne(el: HTMLElement, fileId: string): QueueRowData {
   return {
     file_id: fileId,
@@ -1134,7 +1156,13 @@ document.addEventListener('click', (e) => {
       } else {
         const container = listContainerOf(btn)
         sourceLabel = container?.dataset.queueList ?? null
-        entries = [toQueueEntry(scrapeOne(btn, fileId as string), 'add', sourceLabel)]
+        const link = playLinkFor(fileId as string)
+        // NO SILENT NAMELESS ENTRY. A missing link means the row's markup
+        // changed under us, and queueing `{title: ''}` is exactly the bug
+        // the crate route already paid for once — six entries with blank
+        // names. Throwing lands in the catch below, which says so.
+        if (link === null) throw new Error('no play link for this row')
+        entries = [toQueueEntry(scrapeOne(link, fileId as string), 'add', sourceLabel)]
       }
 
       const result = apply({ type: 'ADD_TO_QUEUE', entries })
