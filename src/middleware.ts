@@ -8,7 +8,13 @@ import { isActive, isApiPath } from './lib/session'
 import { jsonError } from './lib/upload-api'
 
 const PUBLIC_PATHS = new Set([
-  '/login', '/auth/callback', '/auth/signout',
+  // '/auth/start' is the server-side OAuth kickoff (perf task 2.3). It
+  // belongs HERE and not in CLAIM_FLOW_PATHS below: the only caller is a
+  // signed-OUT visitor pressing the button on /login, so the gate it has
+  // to clear is this one — the claim gate never sees a request that has no
+  // member. Membership of this set satisfies the claim gate too, because
+  // that check excludes PUBLIC_PATHS explicitly.
+  '/login', '/auth/start', '/auth/callback', '/auth/signout',
   // AGPL §13: the source offer must be reachable without an account.
   '/api/build-info',
 ])

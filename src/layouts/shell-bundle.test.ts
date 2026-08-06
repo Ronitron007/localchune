@@ -128,3 +128,44 @@ describe('site.ts is the one client graph the engine lives in', () => {
     expect(offenders).toEqual([])
   })
 })
+
+// -------------------------------------------------------------- perf 2.3
+//
+// /login is the one page a signed-out visitor sees, the one page nobody has
+// a warm cache for, and — until perf task 2.3 — the heaviest page in the
+// build: 222 KB of parse / 57.8 KB gzip, the whole of supabase-js, to wire
+// one button. The regression is a single `import` away and would produce no
+// build error, no failing test and no visible change on a laptop. It gets
+// the same treatment the drawer gets above.
+describe('/login ships zero JavaScript — perf task 2.3', () => {
+  const login = readFileSync(join(SRC, 'pages/login.astro'), 'utf8')
+
+  it('has no <script> at all', () => {
+    expect(login).not.toMatch(/<script[\s>]/)
+  })
+
+  it('imports nothing from lib/supabase — the 222 KB was that one import', () => {
+    expect(frontmatter(login)).not.toMatch(/from '[^']*lib\/supabase/)
+  })
+
+  it('signs in through a link, so the page works with JS disabled', () => {
+    expect(login).toMatch(/href="\/auth\/start"/)
+  })
+
+  it('still renders without a Shell — there is no session here (survive-list #11)', () => {
+    expect(frontmatter(login)).not.toMatch(/from '[^']*layouts\/Shell/)
+  })
+})
+
+describe('/auth/start is reachable signed out — perf task 2.3', () => {
+  const middleware = readFileSync(join(SRC, 'middleware.ts'), 'utf8')
+
+  // The plan proposed CLAIM_FLOW_PATHS, which would not have worked: the
+  // only caller of /auth/start has no member at all, so the gate it meets
+  // is the signed-out redirect, not the username-claim gate. PUBLIC_PATHS
+  // clears both — the claim check excludes PUBLIC_PATHS explicitly.
+  it('is in PUBLIC_PATHS, or the sign-in button redirects to /login forever', () => {
+    const set = /const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\)/.exec(middleware)?.[1] ?? ''
+    expect(set).toContain("'/auth/start'")
+  })
+})
