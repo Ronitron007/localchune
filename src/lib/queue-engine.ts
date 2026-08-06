@@ -43,8 +43,16 @@ import {
 } from './queue-strategies'
 
 /**
- * The ten events of §1.4. The four that advance or address a row carry the
- * rendered `queue` — see this file's header for why.
+ * The events of §1.4, plus `RESTORE_CURRENT`. The four that advance or address
+ * a row carry the rendered `queue` — see this file's header for why.
+ *
+ * RESTORE_CURRENT IS NOT IN §1.4 AND IS NOT A PLAY. It exists because UX.9
+ * resume loads a remembered track into the <audio> element without anybody
+ * pressing anything, and before this event there was no sentence in the
+ * grammar for "the transport is holding this". The consequence shipped: the
+ * drawer said "Nothing playing." over audible audio, `ended` reduced to
+ * nothing so autoplay never advanced, and the lock screen's next button was
+ * inert — three symptoms of the one missing fact.
  */
 export type QueueEvent =
   | {
@@ -75,6 +83,7 @@ export type QueueEvent =
   | { type: 'TRACK_FAILED'; file_id: string; queue: readonly QueueEntry[] }
   | { type: 'SET_METHOD'; method: AutoMethod }
   | { type: 'CLEAR_QUEUE' }
+  | { type: 'RESTORE_CURRENT'; entry: QueueEntry }
 
 /** Why a track left `current`. `played` vs `skipped` is the ONLY difference
  *  between TRACK_ENDED and SKIP — the two produce identical states, and
@@ -377,6 +386,54 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
     case 'CLEAR_QUEUE': {
       const next = copy(state)
       next.intent = []
+      return { state: next }
+    }
+
+    /**
+     * UX.9's missing sentence: the transport is holding THIS.
+     *
+     * Everything it does NOT do is the specification. It does not push history
+     * (nothing was consumed — a resume is not a play), it does not report an
+     * `advance` (nothing LEFT current; something arrived at it), it does not
+     * reorder or drop a pin, and it does not touch `method`. site.ts starts no
+     * playback on it either: §5 resumes PAUSED, and a page load is not the
+     * member asking to hear audio.
+     *
+     * THE TRANSPORT IS THE TRUTH, and the two guards below say exactly that.
+     *
+     * SAME TRACK → KEEP WHAT IS THERE. Queue memory carries full metadata
+     * (bpm, key, artist); a resumed entry is built from player memory and has
+     * only an id and a label. When both name the same file the richer one
+     * wins, which is why the ordinary resume loses nothing.
+     *
+     * DIFFERENT TRACK → THE RESTORE WINS. The two memories are written on
+     * different clocks — player memory on every timeupdate, queue memory only
+     * on engine events — so they can name different tracks: two tabs racing
+     * the same keys, or a `startCurrent` that bailed on a dead URL after the
+     * engine had already moved. site.ts dispatches this only AFTER it has
+     * actually pointed <audio> at the restored file and re-checked that no
+     * click beat it there, so at that instant the transport really is holding
+     * this track and a `current` naming another one is simply stale. Keeping
+     * the stale one is how the drawer ends up describing a track that is not
+     * playing — the exact bug this event exists to end.
+     *
+     * The entry LEAVES layer 1 if it was pinned there, exactly as
+     * queue-model.ts's header describes a clicked entry doing: `current`
+     * belongs to neither layer, so there is nothing to promote and no
+     * duplicate to render.
+     */
+    case 'RESTORE_CURRENT': {
+      const next = copy(state)
+      if (next.current !== null && next.current.file_id === event.entry.file_id) {
+        return { state: next }
+      }
+      next.current = asCurrent(event.entry)
+      next.intent = next.intent.filter((e) => e.file_id !== event.entry.file_id)
+      // Truncation on the write, as everywhere else: `current` takes one of the
+      // 25, so a layer 1 already at the cap gives up its last entry rather than
+      // becoming a 26th nobody renders and nobody persists.
+      const { slots } = slotsFor(next)
+      next.intent = truncateIntent(next.intent, slots).kept
       return { state: next }
     }
   }

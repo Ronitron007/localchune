@@ -24,7 +24,7 @@ import {
 } from '../lib/queue-store'
 import {
   appendReport, entryTitle, nextSourceLookahead, readListContext, renderQueueSections,
-  toQueueEntry, truncationFor, truncationLine, type QueueRowData,
+  resumedEntry, toQueueEntry, truncationFor, truncationLine, type QueueRowData,
 } from '../lib/queue-view'
 
 /**
@@ -281,13 +281,21 @@ function setRenderedQueue(next: readonly QueueEntry[]): void {
 /**
  * THE ONE CALL TO `reduce` IN THE CLIENT. Every surface routes through here:
  * reduce, store, persist, re-assemble synchronously, then regenerate.
+ *
+ * `hydrate` is false for exactly one caller, the UX.9 resume (see
+ * `restorePlayer`). §5 defers layer 2 to the first of (drawer opened |
+ * playback started), and a restore is neither — regenerating here would put a
+ * pool_list call on every returning member's first paint for a drawer they may
+ * never open. The flag is a parameter rather than a second function because
+ * "there is exactly one call to `reduce`" is the invariant queue-wiring.test.ts
+ * exists to keep, and a second path would end that.
  */
-function apply(event: QueueEvent): ReduceResult {
+function apply(event: QueueEvent, hydrate = true): ReduceResult {
   const result = reduce(getState(), event)
   setState(result.state)
   saveQueueMemory()
   setRenderedQueue(assembleQueue(result.state, autoTail))
-  void hydrateTail()
+  if (hydrate) void hydrateTail()
   return result
 }
 
@@ -864,6 +872,17 @@ if (audio && toggle) {
   audio.addEventListener('play', updateToggle)
   audio.addEventListener('pause', updateToggle)
   audio.addEventListener('ended', updateToggle)
+  /**
+   * §5's "playback started" trigger, on the EVENT rather than on one of the
+   * paths that causes it. `startCurrent` spends the flag for a track the engine
+   * started; this covers the case §5 actually describes and the other trigger
+   * missed — a RESUMED track, where the member presses ▶ on something already
+   * loaded and `startCurrent` never runs. Without it a returning member with an
+   * autoplay method selected gets no layer 2 at all, and the track they pressed
+   * play on is still the last one that plays. Idempotent: the flag is spent
+   * once, so a pause/resume mid-track costs nothing.
+   */
+  audio.addEventListener('play', hydrateIfDeferred)
   // Mid-play source death (URL expired during a long listen, network cut
   // on sleep/wake): recover in place at the last transport position. The
   // seek range is the survivor — audio.currentTime can already be reset to
@@ -894,8 +913,12 @@ if (audio && toggle) {
    */
   audio.addEventListener('ended', () => {
     if (getState().current === null) {
-      // Nothing ever went through the engine (a restore that only loaded a
-      // src, say) — keep M6a's behaviour exactly.
+      // Genuinely nothing playing as far as the engine is concerned. A RESUME
+      // no longer reaches this branch — restorePlayer dispatches
+      // RESTORE_CURRENT, which is what makes autoplay work on a restored
+      // session at all — so what is left is an <audio> element some other code
+      // pointed at a file. Keep M6a's behaviour exactly: there is no queue to
+      // advance through.
       clearPlayerMemory()
       return
     }
@@ -1660,12 +1683,35 @@ async function restorePlayer() {
   }, { once: true })
   audio.src = body.url
   audio.load()
-  // The lock screen should show what was resumed — but only when the queue
-  // agrees this is `current`. Player memory is rewritten on every timeupdate
-  // while queue memory is written on engine events, so the two can age out
-  // independently; a mismatch means the queue no longer knows this track and
-  // metadata for it would be a claim the engine cannot back up.
-  if (getState().current?.file_id === entry.file_id) updateMediaSession()
+
+  /**
+   * TELL THE ENGINE WHAT THE TRANSPORT IS HOLDING. Without this line the queue
+   * believes nothing is playing while a track audibly plays, and three things
+   * break at once — all reported from a phone, all the same fact:
+   *
+   *   · the drawer renders "Nothing playing." over audible audio;
+   *   · `ended` reduces to nothing, so autoplay never advances;
+   *   · every SKIP path (lock screen, ⏭) is guarded on `current` and is inert.
+   *
+   * Player memory and queue memory can disagree honestly — player memory is
+   * rewritten on every timeupdate, queue memory only on engine events, so a
+   * `+ queue` with nothing playing, or a queue payload that aged out from
+   * under a still-fresh player entry, both leave `current` null with a real
+   * track in the transport. The reducer keeps the richer entry when both name
+   * the same file and takes this one when they do not; either way the engine
+   * ends up naming what <audio> is holding.
+   *
+   * AFTER the `currentFileId` re-check above, never before: a click that
+   * landed during the fetch has already backed this restore off entirely, and
+   * it must back the engine off too. `hydrate: false` because a restore is
+   * neither of §5's two triggers.
+   */
+  apply({ type: 'RESTORE_CURRENT', entry: resumedEntry(entry.file_id, entry.title) }, false)
+  // Unconditional, and it is the event above that earns it: the engine now
+  // names this track, so the lock screen is describing what is really loaded.
+  // This line used to be guarded on the two agreeing, which — before the
+  // engine was ever told — was false exactly when the metadata was needed.
+  updateMediaSession()
 }
 void restorePlayer()
 

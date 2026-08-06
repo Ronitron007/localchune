@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 import { QUEUE_MAX, emptyState, type QueueEntry, type QueueState } from './queue-model'
 import {
   CRATE_TRACK_KEYS, LOOKAHEAD_S, appendReport, entryTitle, nextSourceLookahead,
-  readListContext, renderQueueSections, toCrateTrack, toQueueEntry, truncationFor,
-  truncationLine, type QueueRowData,
+  readListContext, renderQueueSections, resumedEntry, toCrateTrack, toQueueEntry,
+  truncationFor, truncationLine, type QueueRowData,
 } from './queue-view'
 
 const row = (over: Partial<QueueRowData> & { file_id: string }): QueueRowData => ({
@@ -339,6 +339,38 @@ describe('renderQueueSections — the layer seam is visible', () => {
         entry('b', { source_label: 'warehouse' }), entry('c', { source_label: 'pool' })], s, {},
     )
     expect(out[1].rows.map((r) => r.entry.source_label)).toEqual(['warehouse', 'pool'])
+  })
+})
+
+describe('resumedEntry — player memory onto the model', () => {
+  it('carries the file id and the stored label', () => {
+    const e = resumedEntry('f1', 'Paul Kalkbrenner — Press On')
+    expect(e.file_id).toBe('f1')
+    expect(e.display_title).toBe('Paul Kalkbrenner — Press On')
+  })
+
+  it('renders in the drawer EXACTLY as the player bar wrote it', () => {
+    // player-memory stores the joined label, so re-splitting it would mean
+    // guessing at an em dash that can appear inside either half. A null artist
+    // makes entryTitle a no-op over the stored string instead.
+    const label = 'Paul Kalkbrenner — Press On'
+    expect(entryTitle(resumedEntry('f1', label))).toBe(label)
+  })
+
+  it('is stamped `current` — it is what the transport holds', () => {
+    expect(resumedEntry('f1', 'x').origin).toBe('current')
+  })
+
+  it('admits the metadata it does not have rather than inventing it', () => {
+    // A resumed seed scores every candidate the same, so only the FIRST auto
+    // pick is arbitrary; greedyWalk re-seeds from each pick after that. The
+    // alternative was a metadata request on a returning member's first paint.
+    const e = resumedEntry('f1', 'x')
+    expect(e.bpm).toBeNull()
+    expect(e.key_camelot).toBeNull()
+    expect(e.duration_ms).toBeNull()
+    expect(e.display_artist).toBeNull()
+    expect(e.source_label).toBeNull()
   })
 })
 

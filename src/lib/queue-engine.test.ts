@@ -413,6 +413,144 @@ describe('SKIP and TRACK_ENDED', () => {
   })
 })
 
+/**
+ * THE OWNER'S BUG, AT THE LAYER IT CAN BE TESTED.
+ *
+ * Reported from a phone, three symptoms at once: audio audibly playing, the
+ * drawer saying "Nothing playing.", and the track never advancing at its end.
+ * All three are one fact — `current` was null while the <audio> element held a
+ * track — because the resume path loads a remembered src into the transport
+ * and the engine is never told.
+ *
+ * `RESTORE_CURRENT` is the missing sentence: the transport is holding THIS,
+ * and it is not a play, a skip or a selection. It starts nothing (UX.9 resumes
+ * PAUSED), consumes nothing into history, and moves no pin.
+ */
+describe('RESTORE_CURRENT — the resumed track becomes the engine\'s current', () => {
+  const resumed = entry('r', { origin: 'current', source_label: null })
+  /** What `resumedEntry` actually builds: an id and a label, nothing else. */
+  const resumedThin = entry('r', {
+    origin: 'current', source_label: null, bpm: null, key_camelot: null, duration_ms: null,
+  })
+
+  it('installs the restored track as current', () => {
+    const { state: next } = reduce(emptyState(), { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.current?.file_id).toBe('r')
+  })
+
+  it('stamps it `current`, like every other entry that reaches layer 1', () => {
+    const asList = entry('r', { origin: 'list' })
+    const { state: next } = reduce(emptyState(), { type: 'RESTORE_CURRENT', entry: asList })
+    expect(next.current?.origin).toBe('current')
+  })
+
+  it('consumes nothing into history — a resume is not a play', () => {
+    const { state: next } = reduce(emptyState(), { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.history).toEqual([])
+    expect(next.intent).toEqual([])
+  })
+
+  it('reports no advance — nothing LEFT current, something arrived at it', () => {
+    expect(reduce(emptyState(), { type: 'RESTORE_CURRENT', entry: resumed }).advance)
+      .toBeUndefined()
+  })
+
+  it('leaves the pins alone, in their order', () => {
+    const s = state({ intent: many(3) })
+    const { state: next } = reduce(s, { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('NO-OPS when the queue already names the SAME track — richer metadata wins', () => {
+    // The ordinary resume: queue memory restored `current` with bpm and key a
+    // moment earlier, and the player-memory entry has neither. Losing them
+    // would degrade the very next auto tail for nothing.
+    const rich = entry('r', { origin: 'current', bpm: 128, key_camelot: '8A' })
+    const s = state({ current: rich, intent: many(2) })
+    const { state: next } = reduce(s, {
+      type: 'RESTORE_CURRENT', entry: resumedThin,
+    })
+    expect(next.current).toEqual(rich)
+    expect(next.intent).toHaveLength(2)
+  })
+
+  it('REPLACES a current naming a DIFFERENT track — the transport is the truth', () => {
+    // Two tabs racing the same localStorage keys, or a startCurrent that bailed
+    // on a dead URL after the engine had moved: queue memory says one thing,
+    // the <audio> element holds another. site.ts dispatches this only after it
+    // has actually pointed <audio> at the restored file, so the stale name is
+    // what has to go — otherwise the drawer describes a track nobody is hearing.
+    const s = state({ current: entry('stale'), intent: many(2) })
+    const { state: next } = reduce(s, { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.current?.file_id).toBe('r')
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1'])
+  })
+
+  it('takes the entry OUT of the intent layer when it was pinned there', () => {
+    // Otherwise the drawer renders it twice — NOW PLAYING and YOUR QUEUE — and
+    // a SKIP advances straight back into the track that just resumed.
+    const s = state({ intent: [entry('a'), entry('r'), entry('b')] })
+    const { state: next } = reduce(s, { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.current?.file_id).toBe('r')
+    expect(next.intent.map((e) => e.file_id)).toEqual(['a', 'b'])
+  })
+
+  it('holds the 25 cap — current takes a slot, so a full layer 1 gives one up', () => {
+    // Truncation on the WRITE, exactly as replaceWith does it. The alternative
+    // is a 26-entry state whose 26th is rendered nowhere and persisted nowhere:
+    // §1.2's hidden backlog, reintroduced through the back door.
+    const s = state({ intent: many(QUEUE_MAX) })
+    const { state: next } = reduce(s, { type: 'RESTORE_CURRENT', entry: resumed })
+    expect(next.intent).toHaveLength(QUEUE_MAX - 1)
+    expect([next.current, ...next.intent]).toHaveLength(QUEUE_MAX)
+  })
+
+  it('does not mutate the state it restores into', () => {
+    const s = frozen(state({ intent: many(2) }))
+    expect(() => reduce(s, { type: 'RESTORE_CURRENT', entry: resumed })).not.toThrow()
+    expect(s.current).toBeNull()
+  })
+})
+
+/**
+ * THE REPRODUCTION, end to end at the pure layer: the exact state the owner's
+ * phone was in, then the event that was doing nothing.
+ */
+describe('a restored session advances at the end of the track', () => {
+  // Queue memory as it actually was: one pin from the pool, nothing playing —
+  // the ordinary shape after `+ queue` with no play, and after a queue payload
+  // that aged out from under a still-fresh player memory.
+  const restored = state({ intent: [entry('pinned', { source_label: 'pool' })], method: 'bpm' })
+  const resumed = entry('kalkbrenner', { origin: 'current' })
+
+  it('WITHOUT the restore event, TRACK_ENDED is a no-op — the reported bug', () => {
+    const queue = rendered(restored)
+    const { state: next } = reduce(restored, { type: 'TRACK_ENDED', queue })
+    expect(next.current).toBeNull() // nothing advanced; the music simply stopped
+  })
+
+  it('WITH it, the track that was audibly playing advances to the pin', () => {
+    const installed = reduce(restored, { type: 'RESTORE_CURRENT', entry: resumed }).state
+    const queue = rendered(installed)
+    expect(queue.map((e) => e.file_id)).toEqual(['kalkbrenner', 'pinned'])
+
+    const { state: next, advance } = reduce(installed, { type: 'TRACK_ENDED', queue })
+    expect(next.current?.file_id).toBe('pinned')
+    expect(advance).toEqual({ file_id: 'kalkbrenner', reason: 'played' })
+  })
+
+  it('and SKIP — the lock screen and the new ⏭ button — does the same', () => {
+    const installed = reduce(restored, { type: 'RESTORE_CURRENT', entry: resumed }).state
+    const { state: next } = reduce(installed, { type: 'SKIP', queue: rendered(installed) })
+    expect(next.current?.file_id).toBe('pinned')
+  })
+
+  it('and the drawer has a NOW PLAYING row to render at all', () => {
+    const installed = reduce(restored, { type: 'RESTORE_CURRENT', entry: resumed }).state
+    expect(installed.current).not.toBeNull()
+  })
+})
+
 describe('REMOVE_QUEUE_ENTRY', () => {
   const s = state({ current: entry('c'), intent: many(3) })
   const auto = [entry('a0', { origin: 'auto' }), entry('a1', { origin: 'auto' })]

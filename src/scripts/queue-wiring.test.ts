@@ -187,10 +187,57 @@ describe('UX.9 resume restores layer 1 and hydrates nothing', () => {
     expect(restore).not.toContain('currentFileId =')
   })
 
-  it('defers instead, and both §5 triggers spend the same flag', () => {
+  it('defers instead, and every §5 trigger spends the same flag', () => {
     expect(restore).toContain('queueNeedsHydration = needsHydration')
-    // drawer opened, and playback started.
-    expect(count(/hydrateIfDeferred\(\)/g)).toBe(3) // definition + two triggers
+    // Definition + drawer opened + startCurrent. The `play` EVENT is the third
+    // trigger and is registered by reference (`'play', hydrateIfDeferred`), so
+    // it is asserted separately below rather than counted here.
+    expect(count(/hydrateIfDeferred\(\)/g)).toBe(3)
+  })
+
+  it('spends it on the `play` EVENT too, not just on the paths that cause one', () => {
+    // A RESUMED track is started by pressing ▶ on something already loaded, so
+    // `startCurrent` never runs and the other trigger never fires. Without this
+    // listener a returning member with an autoplay method gets no layer 2 at
+    // all, and the track they pressed play on is the last one that plays.
+    expect(code).toMatch(/addEventListener\('play',\s*hydrateIfDeferred\)/)
+  })
+})
+
+describe('the resumed track becomes the engine\'s current — the reported bug', () => {
+  // Three symptoms, one fact: `current` was null while <audio> held a track.
+  // The drawer said "Nothing playing." over audible audio, `ended` reduced to
+  // nothing so autoplay never advanced, and every skip path was guarded on
+  // `current` and inert. The restore path is the only place in the client that
+  // puts a track into the transport without telling the engine.
+  const restorePlayer = (() => {
+    const at = code.indexOf('async function restorePlayer')
+    return code.slice(at, code.indexOf('\nvoid restorePlayer', at))
+  })()
+
+  it('dispatches RESTORE_CURRENT from the restore path', () => {
+    expect(restorePlayer).toMatch(/type:\s*'RESTORE_CURRENT'/)
+  })
+
+  it('does it AFTER the claim re-check — a click still beats a restore', () => {
+    const recheck = restorePlayer.lastIndexOf('if (currentFileId !== null) return')
+    const dispatch = restorePlayer.indexOf("type: 'RESTORE_CURRENT'")
+    expect(recheck).toBeGreaterThan(-1)
+    expect(dispatch).toBeGreaterThan(recheck)
+  })
+
+  it('hydrates nothing — a restore is neither of §5\'s two triggers', () => {
+    // The zero-requests-at-load invariant covers this path exactly as it covers
+    // restoreQueue: `apply`'s second argument is what keeps the regeneration off
+    // a returning member's first paint.
+    expect(restorePlayer).toMatch(/apply\(\{\s*type:\s*'RESTORE_CURRENT'[\s\S]*?\},\s*false\)/)
+    expect(restorePlayer).not.toContain('hydrateTail')
+  })
+
+  it('still routes through the one reducer call', () => {
+    // Asserted globally above; restated here because the temptation on a
+    // restore path is to set the store directly and skip the engine.
+    expect(restorePlayer).not.toContain('setState(')
   })
 })
 
