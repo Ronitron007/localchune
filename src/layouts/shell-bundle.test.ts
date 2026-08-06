@@ -62,18 +62,37 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     expect(shell).toContain('id="queue-toggle"')
   })
 
-  it('renders the transport row: play/pause, then ⏭, then seek and clock', () => {
+  it('renders the transport row: name, ♥, then play/pause, ⏭, seek and clock', () => {
     // The queue shipped with no on-page skip control at all — the only way to
     // reach the next track was the lock screen, which does not exist on a
     // desktop. Order is asserted because the mobile `order` rules in
     // global.css are written against this DOM order.
+    //
+    // `player-link` and `player-like` join the list here rather than being
+    // excluded from the regex, and that is the point of asserting a whole
+    // array: the ♥ sits with the NAME (both are `order: 1` on a phone, and
+    // equal order values fall back to DOM order), not with the transport
+    // cluster. Moving it below #player-toggle would fail this line.
     const ids = [...shell.matchAll(/id="(player-[a-z]+)"/g)].map((m) => m[1])
-    expect(ids).toEqual(['player-label', 'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio'])
+    expect(ids).toEqual([
+      'player-label', 'player-link', 'player-like',
+      'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio',
+    ])
   })
 
   it('ships the skip button hidden, like every other JS-only control', () => {
     const btn = shell.slice(shell.indexOf('id="player-next"'))
     expect(btn.slice(0, btn.indexOf('>'))).toContain('hidden')
+  })
+
+  it('ships the title link hidden and with NO href', () => {
+    // An empty href resolves to the current page, which is a dead link on
+    // every page but one. site.ts sets the href and unhides it together, on
+    // every change of current — see setNowPlaying.
+    const a = shell.slice(shell.indexOf('id="player-link"'))
+    const tag = a.slice(0, a.indexOf('>'))
+    expect(tag).toContain('hidden')
+    expect(tag).not.toContain('href')
   })
 
   it('keeps the skip button inside the persisted player node', () => {
@@ -100,6 +119,13 @@ describe('the drawer adds no POST form — §4, stated positively', () => {
   // carry it. The queue is client state; there is no server resource for a
   // queue operation to POST to, and a task that finds itself wanting a form
   // here has invented server state the queue does not have.
+  //
+  // THE ♥ IS NOT A COUNTEREXAMPLE, it is the contrast that makes the rule
+  // readable. A like has a server resource — /api/track/[id]/like, backed by
+  // migration 26's toggle_like — so it IS a form, and it carries
+  // data-astro-reload like every other POST form in the repo. A queue
+  // operation still has nothing to POST to. The assertion is scoped to the
+  // drawer rather than to the file, which is what it always meant.
   it('has no <form> anywhere in the drawer markup', () => {
     const from = shell.indexOf('id="queue-drawer"')
     const to = shell.indexOf('</div>', shell.indexOf('id="queue-sections"'))
@@ -110,6 +136,44 @@ describe('the drawer adds no POST form — §4, stated positively', () => {
     const controls = [...shell.matchAll(/id="queue-(toggle|clear)"[\s\S]{0,80}/g)]
     expect(controls.length).toBe(2)
     for (const [chunk] of controls) expect(chunk).not.toContain('<a ')
+  })
+})
+
+describe('the like button reuses the row contract rather than inventing one', () => {
+  // ZERO NEW LIKE LOGIC IS THE WHOLE DESIGN. site.ts has exactly one
+  // document-level `form.likeform` submit delegation, written for
+  // TrackRow.astro's pool cell and track/[id].astro's .signals block. It
+  // serves the bar too — but only because this markup matches it EXACTLY.
+  // Every selector that handler queries is asserted here; drop any one of
+  // them and the bar's heart silently stops toggling, with no other test in
+  // the repo noticing, because site.ts cannot be imported under node.
+  const form = shell.slice(shell.indexOf('id="player-like"'), shell.indexOf('id="queue-toggle"'))
+
+  it('is a real POST form carrying data-astro-reload', () => {
+    expect(form).toContain('method="post"')
+    expect(form).toContain('data-astro-reload')
+  })
+
+  it('ships with NO action, so the inert form cannot POST to the current page', () => {
+    // site.ts writes the action with the file id when a track starts. An
+    // absent action submits to the current URL — which is why the button is
+    // ALSO disabled below, rather than relying on `hidden` alone.
+    expect(form).not.toContain('action=')
+  })
+
+  it('ships hidden AND disabled — the one control here that can write', () => {
+    expect(form).toContain('hidden')
+    expect(form).toContain('disabled')
+  })
+
+  it.each(['likeform', 'likebtn', 'likeglyph', 'likecount', 'data-file-id', 'aria-pressed'])(
+    'carries `%s`, which the delegation in site.ts queries by name',
+    (hook) => { expect(form).toContain(hook) },
+  )
+
+  it('starts hollow at zero, the state of a bar with nothing playing', () => {
+    expect(form).toContain('♡')
+    expect(form).not.toContain('♥')
   })
 })
 
@@ -126,5 +190,46 @@ describe('site.ts is the one client graph the engine lives in', () => {
       .filter((f) => QUEUE_MODULES.some((m) => frontmatter(readFileSync(f, 'utf8')).includes(m)))
       .map((f) => f.slice(SRC.length))
     expect(offenders).toEqual([])
+  })
+})
+
+// -------------------------------------------------------------- perf 2.3
+//
+// /login is the one page a signed-out visitor sees, the one page nobody has
+// a warm cache for, and — until perf task 2.3 — the heaviest page in the
+// build: 222 KB of parse / 57.8 KB gzip, the whole of supabase-js, to wire
+// one button. The regression is a single `import` away and would produce no
+// build error, no failing test and no visible change on a laptop. It gets
+// the same treatment the drawer gets above.
+describe('/login ships zero JavaScript — perf task 2.3', () => {
+  const login = readFileSync(join(SRC, 'pages/login.astro'), 'utf8')
+
+  it('has no <script> at all', () => {
+    expect(login).not.toMatch(/<script[\s>]/)
+  })
+
+  it('imports nothing from lib/supabase — the 222 KB was that one import', () => {
+    expect(frontmatter(login)).not.toMatch(/from '[^']*lib\/supabase/)
+  })
+
+  it('signs in through a link, so the page works with JS disabled', () => {
+    expect(login).toMatch(/href="\/auth\/start"/)
+  })
+
+  it('still renders without a Shell — there is no session here (survive-list #11)', () => {
+    expect(frontmatter(login)).not.toMatch(/from '[^']*layouts\/Shell/)
+  })
+})
+
+describe('/auth/start is reachable signed out — perf task 2.3', () => {
+  const middleware = readFileSync(join(SRC, 'middleware.ts'), 'utf8')
+
+  // The plan proposed CLAIM_FLOW_PATHS, which would not have worked: the
+  // only caller of /auth/start has no member at all, so the gate it meets
+  // is the signed-out redirect, not the username-claim gate. PUBLIC_PATHS
+  // clears both — the claim check excludes PUBLIC_PATHS explicitly.
+  it('is in PUBLIC_PATHS, or the sign-in button redirects to /login forever', () => {
+    const set = /const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\)/.exec(middleware)?.[1] ?? ''
+    expect(set).toContain("'/auth/start'")
   })
 })

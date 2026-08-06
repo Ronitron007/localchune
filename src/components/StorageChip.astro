@@ -3,13 +3,25 @@
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+//
+// PERF TASK 2.1 — this component no longer makes a request.
+//
+// It used to call my_storage() itself, and because Astro renders components
+// after the page's frontmatter, that round trip could not start until every
+// await on the page had finished. One footer line was the last 60–165 ms of
+// every signed-in page view in the app. The middleware starts the call now;
+// this awaits the promise, which by this point has normally already
+// resolved. page-data.test.ts asserts that this file names no client at
+// all, which is why the old expression is described here rather than quoted.
 import { formatBytes } from '../lib/format'
+import { chromeData } from '../lib/page-data'
 
-// Astro.locals.supabase — the cookie-bound client middleware already built
-// for this request. Never a second serverClient(cookies, request).
-const { data, error } = await Astro.locals.supabase.rpc('my_storage')
-if (error) console.error('my_storage failed:', error.message)
-const s = data?.[0] ?? null
+const { storage } = await chromeData(Astro.locals)
+// The error branch is kept verbatim from the version that made the call
+// here: it is the only signal an outage leaves, and survive-list #16 is the
+// rule that an outage must never be indistinguishable from an empty result.
+if (storage.error) console.error('my_storage failed:', storage.error.message)
+const s = storage.data?.[0] ?? null
 ---
 {s && (
   <span class="storage" title="Occupying = your files still in the bucket. Contributed = everything you brought to the pool, including uploads that deduped onto someone else's copy.">

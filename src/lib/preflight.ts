@@ -124,6 +124,24 @@ export function disposePreflightWorker(): void {
   worker = null
 }
 
+/**
+ * PERF TASK 2.5 — start the worker's download before the first file exists.
+ *
+ * Constructing the Worker is what fetches its bundle, and until this the
+ * first construction happened inside `readDurationMs` — i.e. after the
+ * member had already chosen files and was watching a row wait. The bundle
+ * is ~29 KB gzip plus a per-container parser chunk, which on a phone is a
+ * visible pause at exactly the wrong moment.
+ *
+ * Called from the dropzone on hover and on focus. Idempotent: `getWorker()`
+ * memoises, and a second call is free. Never throws — a browser with no
+ * module-worker support sets `workerUnavailable` here instead of at the
+ * first file, and the main-thread path takes over exactly as before.
+ */
+export function warmPreflightWorker(): void {
+  getWorker()
+}
+
 function parseInWorker(w: Worker, blob: Blob, timeoutMs: number): Promise<HeaderFacts> {
   const id = nextId++
   return new Promise<HeaderFacts>((resolve, reject) => {

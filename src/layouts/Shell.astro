@@ -76,7 +76,51 @@ const { title, center = false } = Astro.props
       </div>
       <div id="queue-sections" class="queuesections"></div>
     </div>
-    <span id="player-label" class="nowplaying" aria-live="polite"></span>
+    {/* THE STATUS REGION, AND NOW THE TITLE LINK.
+        #player-label keeps every job it had: it is the one aria-live region
+        the play, like, crate and queue handlers all report through, and
+        site.ts still writes plain text into it for a transient message
+        ("Session ended…", "Queue finished.", "added to <crate>").
+
+        The track NAME is different — it is the region's ordinary content,
+        and it is now the anchor below rather than a text node, so a member
+        can reach the track page from whatever page they are on without
+        losing playback (that is the whole point of the persisted bar; a
+        ClientRouter soft-nav moves this node instead of recreating it).
+
+        aria-live stays on the SPAN, not on the anchor. A live region is
+        watched for descendant mutations by default (aria-relevant is
+        "additions text"), so swapping the anchor's text announces exactly
+        as replacing the span's text always did — no second visually-hidden
+        region needed, and the visible label remains the link.
+
+        The anchor ships `hidden` and with NO href: an empty href resolves
+        to the current page, which is a dead link on every page but one.
+        site.ts sets both together, and hides it again whenever the region
+        shows a status message or the queue runs dry — §"no dead link". */}
+    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a></span>
+    {/* THE ♥, for whatever is playing.
+        A REAL POST FORM in the exact shape TrackRow.astro's pool cell and
+        track/[id].astro's .signals block already use — form.likeform >
+        button.likebtn[data-file-id] > .likeglyph + .likecount — so site.ts's
+        ONE document-level submit delegation serves this button with no new
+        like logic at all. site.ts rewrites `action` and `data-file-id` as
+        the current track changes.
+
+        data-astro-reload for the reason every POST form in this repo carries
+        it (see CLAUDE.md): if the delegation ever declines the submit, the
+        browser must send a genuine x-www-form-urlencoded POST, which is the
+        only encoding /api/track/[id]/like's plain-form branch understands.
+
+        Hidden AND disabled in the markup, unlike the two buttons below which
+        are only hidden. Hidden alone would be enough to make it unreachable,
+        but this is the one control here that can POST, and it ships with no
+        action — so the disabled attribute is the belt to that braces. site.ts
+        clears both only once it has a real track id to point at. */}
+    <form id="player-like" method="post" class="likeform playerlike" hidden data-astro-reload>
+      <button type="submit" class="likebtn" data-file-id="" aria-pressed="false" aria-label="Like" disabled
+      ><span class="likeglyph" aria-hidden="true">♡</span> <span class="likecount">0</span></button>
+    </form>
     {/* Hidden until site.ts unhides it: with no JS there is no queue for it
         to open, and a control that does nothing must not be visible. */}
     <button

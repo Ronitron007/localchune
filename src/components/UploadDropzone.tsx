@@ -17,6 +17,11 @@ import {
 } from '../lib/upload-store'
 import { aggregateUploads } from '../lib/upload-progress'
 import { formatBytes } from '../lib/format'
+// Perf task 2.5. Import of one function, not of the parser graph:
+// preflight.ts constructs the Worker from a URL, so nothing music-metadata
+// touches enters this island's bundle. Survive-list #4 (the UX.12 split)
+// is unaffected — upload-engine already imports this module.
+import { warmPreflightWorker } from '../lib/preflight'
 import StatusRegion from './StatusRegion'
 
 const ACCEPT = '.mp3,.flac,.wav,.wave,.aiff,.aif,.aifc,.m4a,.mp4,.ogg,.oga,.opus,audio/*'
@@ -171,9 +176,16 @@ export default function UploadDropzone(props: { userId: string }) {
 
   return (
     <section class="upload">
+      {/* PERF TASK 2.5 — the pre-flight Worker's bundle starts downloading
+          on hover or focus, not on the first file. Three events because
+          three ways in: a mouse (pointerenter), a keyboard (focusin, which
+          fires for the Choose buttons inside), and a drag that never
+          produced a pointerenter (dragover). All idempotent. */}
       <div
         class={over() ? 'dropzone over' : 'dropzone'}
-        onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+        onPointerEnter={warmPreflightWorker}
+        onFocusIn={warmPreflightWorker}
+        onDragOver={(e) => { e.preventDefault(); warmPreflightWorker(); setOver(true) }}
         onDragLeave={() => setOver(false)}
         onDrop={onDrop}
       >

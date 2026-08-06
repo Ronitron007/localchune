@@ -593,12 +593,14 @@ button + button { margin-left: var(--pad-1); }
 
 /* --- the table ---
    `.tracktable` had NO CSS rule at all, which is why a 15-column table
-   scrolled the whole PAGE sideways instead of scrolling itself. The
-   section owns the overflow now: the table may be as wide as it needs to
-   be and the page never is. Growing every row control to 44px widened the
-   table by ~100px, so this is the rule that keeps that fix from costing a
-   horizontal page scroll on a desktop. */
-.tracktable { overflow-x: auto; }
+   scrolled the whole PAGE sideways instead of scrolling itself. Growing
+   every row control to 44px widened the table by a further ~100px, so the
+   overflow container is what keeps that fix from costing a horizontal
+   page scroll on a desktop.
+
+   THE RULE ITSELF LIVES IN THE PERF PHASE 2 BLOCK AT THE END OF THIS
+   FILE. Both phases needed it and both wrote it; one declaration is
+   enough, and the appended block is the region that worker owns. */
 table { border-collapse: collapse; width: 100%; }
 th, td {
   text-align: left;
@@ -619,6 +621,15 @@ td.uploader, td.added { color: var(--mid); }
    .btn-danger only, and this is a toggle, not an action button. Bold is
    the only "pressed" cue besides aria-pressed itself. --- */
 .likeform { display: inline-block; }
+/* A `display` declaration on the same element BEATS the UA sheet's
+   `[hidden] { display: none }`, because an author rule always does. That
+   made the player bar's ♥ — which ships `hidden` and is unhidden by site.ts
+   only once a track is known — fully visible on an idle bar, showing ♡ 0
+   over nothing playing. Caught by driving the real CSS in a browser, not by
+   any test: the markup says `hidden` and reads correctly. The two
+   server-rendered like forms never set the attribute, so this rule costs
+   them nothing. */
+.likeform[hidden] { display: none; }
 .likebtn {
   border: none;
   background: none;
@@ -740,6 +751,31 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
 .playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
+/* The track name is a link now — to /track/<id>, set by site.ts on every
+   change. It inherits .nowplaying's ellipsis (the span is the block that
+   clips; the anchor is inline inside it) and --mid, so the bar reads exactly
+   as it did before: this is a link that looks like the label it replaced,
+   not a blue interruption in a monochrome bar. Underline on hover/focus is
+   the affordance. */
+.playerbar .nowplayinglink { color: inherit; text-decoration: none; }
+.playerbar .nowplayinglink:hover,
+.playerbar .nowplayinglink:focus-visible { text-decoration: underline; }
+
+/* The ♥, beside the title. .likebtn's own rule (see the like-toggle block
+   above) already strips the button chrome and keeps the glyph monochrome —
+   this only gives it a real tap target, which the pool table's dense rows
+   deliberately do not have room for. 44px is the WCAG 2.5.8 target size, and
+   the bar is the one place a thumb reaches for it on a phone. */
+.playerbar .playerlike { flex: none; }
+.playerbar .likebtn {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+}
+
 /* On a phone the scrubber has no room to be a middle sliver between name
    and time — give it its own full-width row below the controls instead.
    DOM order stays name/toggle/next/seek/time (site.ts doesn't care); `order`
@@ -753,6 +789,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    `.playertoggle` rule: equal specificity, and source order is what decides. */
 @media (max-width: 640px) {
   .playerbar .nowplaying { order: 1; }
+  /* SAME ORDER GROUP AS THE TITLE, on purpose. Equal `order` values lay out
+     in DOM order, and .playerlike follows #player-label in the markup — so
+     the ♥ stays welded to the name it is about, on both rows and at every
+     width, instead of drifting into the transport cluster. */
+  .playerbar .playerlike { order: 1; }
   .playerbar .playertoggle { order: 2; }
   .playerbar .playernext { order: 3; }
   .playerbar .playertime { order: 4; }
@@ -1189,8 +1230,9 @@ dd { margin: 0; }
   overflow-x: auto;
   max-width: 100%;
 }
-.strip .bar { flex: 1 0 2px; min-width: 2px; background: var(--fg); }
-.strip .bar.peak { outline: 1px solid var(--mid); background: var(--mid); }
+/* The `.bar` span rules that used to live here are gone with the spans —
+   perf task 2.4 replaced 360 elements per strip with one <svg>. Its rules
+   are in the PERF PHASE 2 block at the end of this file. */
 
 /* An undone merge stays in the feed — struck through, never removed. The
    event is the record; deleting it would lose the fact that someone
@@ -1356,3 +1398,100 @@ dd { margin: 0; }
     border-bottom: 0;
   }
 }
+
+/* =====================================================================
+   PERF PHASE 2 — appended, never interleaved.
+
+   Phase 2 ran in a second worktree alongside the visual phases. Everything
+   it needs from this file lives here, at the end, so the two workers never
+   edit the same lines. A rule here that a later phase supersedes should be
+   deleted with that phase's commit, not silently shadowed.
+   ===================================================================== */
+
+/* --- Task 2.2: the pool table stops taking the page with it ---
+   The audit's worst single UI finding: 15 cells × 32px of cell padding is
+   ~480px of padding against a 375px viewport, and `.tracktable` had NO rule
+   at all — so the PAGE scrolled sideways, taking the nav, the heading and
+   the player with it. One line moves the scroll into the table's own box.
+   It is harmless below 640px, where the same DOM is not a table any more. */
+.tracktable { overflow-x: auto; }
+
+@media (max-width: 640px) {
+  /* ONE DOM, TWO GRAMMARS — owner decision Q3. The 15-column table above
+     640px; 64px card rows below it, from the same markup, in CSS only.
+     A second template would be a second set of selectors to keep in step
+     with site.ts, and survive-list #7 is the list of names that kill a
+     feature silently when they drift. Nothing here changes markup.
+
+     WHAT THE CARD SHOWS: artwork, title, artist, and every ACTION —
+     play, +Q, ♥, download, add-to-crate. What it hides is metadata only
+     (bpm, key, length, quality, uploader, added, downloads, plays). No
+     control is lost at this breakpoint; Task 3.3's row sheet is where the
+     hidden values come back. `display: none` keeps them in the DOM (one
+     template) and out of layout, which is the cost that made a hundred
+     rows stutter. */
+  .tracktable > table,
+  .tracktable thead,
+  .tracktable tbody,
+  .tracktable tr,
+  .tracktable td { display: block; }
+  .tracktable thead { display: none; }
+
+  .tracktable tbody > tr {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: calc(var(--pad-1) / 2) var(--pad-2);
+    padding: var(--pad-1) 0;
+    border-bottom: 1px solid var(--faint);
+  }
+  .tracktable tbody > tr > td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .tracktable td.art      { grid-column: 1; grid-row: 1 / 3; }
+  .tracktable td.title    { grid-column: 2 / -1; grid-row: 1; }
+  .tracktable td.artist   { grid-column: 2 / -1; grid-row: 2; color: var(--mid); }
+  .tracktable td.controls { grid-column: 2; grid-row: 3; }
+  .tracktable td.likes    { grid-column: 3; grid-row: 3; }
+  .tracktable td.download { grid-column: 4; grid-row: 3; }
+  .tracktable td.addcrate { grid-column: 5; grid-row: 3; }
+
+  .tracktable td.bpm,
+  .tracktable td.key,
+  .tracktable td.duration,
+  .tracktable td.quality,
+  .tracktable td.uploader,
+  .tracktable td.added,
+  .tracktable td.downloads,
+  .tracktable td.plays { display: none; }
+
+  /* Survive-list #15 holds: still the thumb, still lazy, still the bordered
+     empty box for a missing one. The BOX grows 28px → 44px against a 64px
+     stored source, so a 2× phone upscales ~1.4×. Accepted deliberately —
+     a second derivative costs a container rebuild and a re-analysis pass
+     (owner questions Q5/Q6), and this is the cheaper half of that trade. */
+  .tracktable td.art img.thumb,
+  .tracktable td.art .thumb-empty { width: 44px; height: 44px; }
+}
+
+/* --- Task 2.4: the divergence strip is one path, not 360 spans ---
+   The box itself is unchanged and was already right: 48px tall, bordered,
+   its own horizontal scroller so the strip pans instead of the page. Only
+   its contents changed. `--strip-seconds` is set inline by
+   DivergenceStrip.astro — the ONE inline style on a strip now, where there
+   used to be one per second — and keeps the old 3px-per-second density, so
+   a long overlap still scrolls in its box rather than being squeezed
+   illegibly into 343px. */
+.strip { display: block; }
+.strip svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+  min-width: calc(var(--strip-seconds, 0) * 3px);
+}
+.strip .stripfill { fill: var(--fg); }
+.strip .strippeak { fill: var(--mid); }

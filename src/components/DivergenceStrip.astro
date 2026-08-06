@@ -4,12 +4,23 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// One bar per second of overlap. Zero JavaScript, zero canvas: this is a
-// few hundred spans with an inline height, which is exactly what a
-// brutalist monochrome page can express natively.
+// One bar per second of overlap. Zero JavaScript, zero canvas — and, since
+// perf task 2.4, zero elements per second as well.
 //
-// PRD §6 on why it exists at all: "so you can see WHERE they diverge (a
-// matching body with a divergent first 30 s = different intro edit, not a
+// WHAT CHANGED AND WHAT DID NOT. It used to render one `<span class="bar">`
+// per second, each with an inline `style` and a `title`, ~81 bytes apiece:
+// up to 18,000 spans and ~1.42 MB of markup on the heaviest page in the app,
+// which is the owner's own page. It is now one `<svg>` holding one `<path>`
+// (two, when there is a peak to mark). `barHeightPct` still decides every
+// height, so the picture is identical — see stripPath() in review-api.ts for
+// the coordinate system.
+//
+// The `title` tooltips are gone on purpose. They were unreachable on touch,
+// which is the device this redesign is about, and they were 40% of the
+// strip's bytes.
+//
+// PRD §6 on why the strip exists at all: "so you can see WHERE they diverge
+// (a matching body with a divergent first 30 s = different intro edit, not a
 // different track)". That distinction is invisible in the score and obvious
 // here — and it is the one thing that turns a two-second decision into an
 // informed one.
@@ -17,11 +28,12 @@
 // A layer-0 merge (content_sha256 / fp_sha256) has no per-second array at
 // all. It renders as a sentence, not as an empty bordered box: an empty box
 // reads as a rendering failure.
-import { barHeightPct } from '../lib/review-api'
+import { peakBarPath, stripPath } from '../lib/review-api'
 
 interface Props { ber: number[] | null; peakAt?: number }
 const { ber, peakAt = -1 } = Astro.props
 const bars = ber ?? []
+const peak = peakBarPath(bars, peakAt)
 ---
 {bars.length === 0 ? (
   <p class="explain">No per-second detail — this pair matched on a whole-file digest, so there is nothing to diverge.</p>
@@ -30,13 +42,22 @@ const bars = ber ?? []
     class="strip"
     role="img"
     aria-label={`Bit-error rate per second across ${bars.length} seconds of overlap`}
+    style={`--strip-seconds:${bars.length}`}
   >
-    {bars.map((v, s) => (
-      <span
-        class:list={['bar', { peak: s === peakAt }]}
-        style={`height:${barHeightPct(v)}%`}
-        title={`${s}s — ${((v ?? 0) * 100).toFixed(1)}% of bits differ`}
-      />
-    ))}
+    {/* preserveAspectRatio="none" is what lets one path fill a box whose
+        width the CSS decides (3px per second, min, so the strip still pans
+        in its own scroller exactly as it did with spans).
+        shape-rendering="crispEdges" keeps the 90° corners square at any
+        scale — the same mandate the global reset states for borders. */}
+    <svg
+      viewBox={`0 0 ${bars.length} 100`}
+      preserveAspectRatio="none"
+      shape-rendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path class="stripfill" d={stripPath(bars)} />
+      {peak !== '' && <path class="strippeak" d={peak} />}
+    </svg>
   </div>
 )}

@@ -2,6 +2,23 @@
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+//
+// ZERO CLIENT JAVASCRIPT, AND IT HAS TO STAY THAT WAY (perf task 2.3).
+//
+// This page used to carry a client script that imported browserClient, which
+// put the whole of supabase-js — 222 KB parse, 57.8 KB gzip — on the app's
+// front door to wire one button. The button was dead until it parsed: 2–4 s
+// on mid-range mobile, on the one page where nobody has a warm cache.
+//
+// The button is now a link to /auth/start, which 302s to Google. Signing in
+// works with JavaScript disabled. The regression is ONE import away and
+// would be invisible in review, so src/layouts/shell-bundle.test.ts asserts
+// that this file carries no client script and no supabase import. Those
+// assertions are deliberately blunt text matches, which is why the words
+// they look for do not appear anywhere in this comment.
+//
+// This page also has NO Shell, deliberately — there is no session here, and
+// AppNav reads Astro.locals.member (survive-list #11).
 import SourceLink from '../components/SourceLink.astro'
 import '../styles/global.css'
 const error = Astro.url.searchParams.get('error_description')
@@ -17,15 +34,10 @@ const error = Astro.url.searchParams.get('error_description')
 <body class="loginpage">
   <h1>localchune</h1>
   {error && <p role="alert"><strong>{error}</strong></p>}
-  <button id="in" class="btn">Sign in with Google</button>
-  <script>
-    import { browserClient } from '../lib/supabase'
-    document.getElementById('in')!.addEventListener('click', () => {
-      browserClient().auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: `${location.origin}/auth/callback` },
-      })
-    })
-  </script>
+  {/* A link, not a form: /auth/start is a GET with no body, so a native
+      navigation is the whole mechanism and there is nothing for
+      ClientRouter to re-encode. `.btn` keeps the control's existing
+      three-tier appearance — see global.css's button block. */}
+  <a id="in" class="btn" href="/auth/start" rel="nofollow">Sign in with Google</a>
   <footer><SourceLink /></footer>
 </body></html>

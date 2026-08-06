@@ -36,11 +36,20 @@ const status = parseReviewQuery(Astro.url.searchParams)
 // on was reached legally. Same idiom as merges.astro:22.
 const isOwner = Astro.locals.member?.role === 'owner'
 
-const { data, error } = await Astro.locals.supabase.rpc('review_queue', {
-  p_limit: REVIEW_PAGE_SIZE,
-  p_status: status,
-  p_decision_id: null,
-})
+// PERF TASK 2.1 — one stage. The threshold read shares no input with the
+// queue read and used to follow it for no reason but source order. The
+// 42501-means-404 gate still runs first in the code below; a wasted
+// dedup_config read for a non-owner is one round trip on a page they are
+// about to be 404'd from, and it is not worth a sequential stage on every
+// legitimate view to avoid it.
+const [{ data, error }, { data: cfg, error: cfgError }] = await Promise.all([
+  Astro.locals.supabase.rpc('review_queue', {
+    p_limit: REVIEW_PAGE_SIZE,
+    p_status: status,
+    p_decision_id: null,
+  }),
+  Astro.locals.supabase.from('dedup_config').select('t_same,t_probable,t_related,source').limit(1),
+])
 if (error && error.code === '42501') return new Response('Not found', { status: 404 })
 if (error) console.error('review_queue failed:', error.message)
 
@@ -49,8 +58,6 @@ if (error) console.error('review_queue failed:', error.message)
 const loadFailed = !!error
 const pairs = (data ?? []) as ReviewPair[]
 
-const { data: cfg, error: cfgError } = await Astro.locals.supabase
-  .from('dedup_config').select('t_same,t_probable,t_related,source').limit(1)
 if (cfgError) console.error('dedup_config read failed:', cfgError.message)
 const thresholds = cfg?.[0] ?? null
 ---
