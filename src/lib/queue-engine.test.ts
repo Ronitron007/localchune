@@ -452,6 +452,53 @@ describe('REMOVE_QUEUE_ENTRY', () => {
   })
 })
 
+// `queue[0]` is `current` ONLY WHEN SOMETHING IS PLAYING. A member who uses
+// `+ queue` before pressing play — an ordinary thing to do — has a queue whose
+// first row is a PIN, and every addressing event must reach it. Guarding on a
+// bare `index <= 0` made the drawer render ✕ / ↑ / ↓ on that row and then
+// ignore every click; this is the regression suite for that.
+describe('index 0 is addressable when nothing is playing', () => {
+  const idle = state({ current: null, intent: many(3) })
+  const queue = rendered(idle)
+
+  it('renders the first pin at index 0, with no `current` above it', () => {
+    expect(queue.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('SELECT_QUEUE_ENTRY {0} plays the first pin', () => {
+    const { state: next } = reduce(idle, { type: 'SELECT_QUEUE_ENTRY', index: 0, queue })
+    expect(next.current?.file_id).toBe('e0')
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e2'])
+    expect(next.history).toEqual([])
+  })
+
+  it('REMOVE_QUEUE_ENTRY {0} drops the first pin', () => {
+    const { state: next } = reduce(idle, { type: 'REMOVE_QUEUE_ENTRY', index: 0, queue })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e2'])
+  })
+
+  it('MOVE_QUEUE_ENTRY {0, down} moves the first pin', () => {
+    const { state: next } = reduce(idle, { type: 'MOVE_QUEUE_ENTRY', index: 0, dir: 'down', queue })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e0', 'e2'])
+  })
+
+  it('still refuses index 0 the moment something IS playing', () => {
+    const busy = state({ current: entry('c'), intent: many(3) })
+    const q = rendered(busy)
+    expect(reduce(busy, { type: 'REMOVE_QUEUE_ENTRY', index: 0, queue: q }).state.intent)
+      .toHaveLength(3)
+    expect(reduce(busy, { type: 'SELECT_QUEUE_ENTRY', index: 0, queue: q }).state.current?.file_id)
+      .toBe('c')
+    expect(reduce(busy, { type: 'MOVE_QUEUE_ENTRY', index: 0, dir: 'down', queue: q })
+      .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('still refuses a negative index either way', () => {
+    expect(reduce(idle, { type: 'REMOVE_QUEUE_ENTRY', index: -1, queue }).state.intent)
+      .toHaveLength(3)
+  })
+})
+
 describe('MOVE_QUEUE_ENTRY — the drawer\'s ↑ / ↓', () => {
   const s = state({ current: entry('c'), intent: many(3) })
   const auto = [entry('a0', { origin: 'auto' }), entry('a1', { origin: 'auto' })]

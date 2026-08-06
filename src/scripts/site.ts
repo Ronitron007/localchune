@@ -24,7 +24,7 @@ import {
 } from '../lib/queue-store'
 import {
   appendReport, entryTitle, nextSourceLookahead, readListContext, renderQueueSections,
-  toCrateTrack, toQueueEntry, truncationLine, type QueueRowData,
+  toQueueEntry, truncationFor, truncationLine, type QueueRowData,
 } from '../lib/queue-view'
 
 /**
@@ -595,9 +595,16 @@ function loadCrateTracks(crateId: string): Promise<QueueRowData[]> {
       // Content-type first: middleware redirects a dead session to /login and
       // fetch() follows it, so a lost session arrives as 200 text/html.
       if (!res.ok || !type.includes('application/json')) throw new SessionExpiredError()
-      return res.json() as Promise<{ tracks?: Record<string, unknown>[] }>
+      return res.json() as Promise<{ tracks?: QueueRowData[] }>
     })
-    .then((body) => (body.tracks ?? []).map(toCrateTrack))
+    // NO SECOND PROJECTION. The route already ran `toCrateTrack`, so the wire
+    // shape IS QueueRowData — `{file_id, artist, title, ...}`. Running it
+    // again here read `display_title` off an object that carries `title` and
+    // queued six entries with blank names. Only the shape guard belongs on
+    // this side; queue-wiring.test.ts keeps the projection out of this file.
+    .then((body) => (body.tracks ?? []).filter(
+      (t): t is QueueRowData => typeof t?.file_id === 'string' && t.file_id !== '',
+    ))
   crateTracksCache.set(crateId, p)
   // A rejected promise must not be cached, or one dropped connection makes
   // the button dead for the life of the document.
@@ -1007,13 +1014,18 @@ document.addEventListener('click', (e) => {
   void startCurrent(Number(a.dataset.start ?? 0))
 }, true)
 
-/** The drawer's `warehouse · 24 of 60` line, remembered from whichever write
- *  last truncated. Null when the whole list fit — there is nothing to say. */
+/**
+ * The drawer's `warehouse · 24 of 60` line, remembered from whichever write
+ * last hit the cap. Null when nothing was lost.
+ *
+ * `slotsFor(...).need === 0` is the gate, and it is not the same test as
+ * `added < offered`: playing the third row of an eight-row table adds five of
+ * eight and truncates NOTHING, because the two rows above the clicked one were
+ * never candidates. That distinction is `truncationFor`'s whole job — it was a
+ * live "pool · 5 of 8" in the drawer until driving it caught it.
+ */
 function noteTruncation(result: ReduceResult, sourceLabel: string | null): void {
-  const { added, offered } = result
-  lastTruncation = added !== undefined && offered !== undefined && added < offered
-    ? { label: sourceLabel, added, offered }
-    : null
+  lastTruncation = truncationFor(result, sourceLabel, slotsFor(getState()).need === 0)
 }
 
 /**

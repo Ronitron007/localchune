@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 import { QUEUE_MAX, emptyState, type QueueEntry, type QueueState } from './queue-model'
 import {
   CRATE_TRACK_KEYS, LOOKAHEAD_S, appendReport, entryTitle, nextSourceLookahead,
-  readListContext, renderQueueSections, toCrateTrack, toQueueEntry, truncationLine,
-  type QueueRowData,
+  readListContext, renderQueueSections, toCrateTrack, toQueueEntry, truncationFor,
+  truncationLine, type QueueRowData,
 } from './queue-view'
 
 const row = (over: Partial<QueueRowData> & { file_id: string }): QueueRowData => ({
@@ -113,6 +113,41 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
     expect(out).toEqual({
       file_id: 'f1', artist: 'A', title: 'T', duration_ms: 1000, bpm: 128, key_camelot: '8A',
     })
+  })
+
+  // THE WIRE SHAPE IS ALREADY A QueueRowData. The route projects once,
+  // server-side, and the browser feeds the result straight to toQueueEntry.
+  it('feeds toQueueEntry directly, with no second projection in between', () => {
+    const wire = toCrateTrack({
+      file_id: 'f1', display_artist: 'A', display_title: 'T',
+      duration_ms: 1000, bpm: 128, key_camelot: '8A',
+    })
+    const entry = toQueueEntry(wire, 'crate', 'warehouse')
+    expect(entry.display_title).toBe('T')
+    expect(entry.display_artist).toBe('A')
+    expect(entry.bpm).toBe(128)
+    expect(entry.source_label).toBe('warehouse')
+  })
+
+  // APPLYING IT TWICE LOSES EVERYTHING, and this test exists because the
+  // client did exactly that: the route projected `display_title` -> `title`,
+  // then site.ts ran the projection AGAIN over the wire rows, read
+  // `display_title` off an object that no longer had one, and queued six
+  // entries with blank names. Nothing threw. queue-wiring.test.ts keeps this
+  // function out of site.ts entirely; this documents why.
+  it('is deliberately NOT idempotent — a double projection is silent data loss', () => {
+    const once = toCrateTrack({ file_id: 'f1', display_artist: 'A', display_title: 'T', bpm: 128 })
+    const twice = toCrateTrack(once as unknown as Record<string, unknown>)
+    expect(once.title).toBe('T')
+    expect(once.artist).toBe('A')
+    // Only the RENAMED fields die — display_title -> title, display_artist ->
+    // artist. That is exactly what made the bug quiet: bpm, duration_ms and
+    // key_camelot keep their names and survive, so the rows looked populated
+    // in every way except the two the drawer actually renders.
+    expect(twice.title).toBe('')
+    expect(twice.artist).toBeNull()
+    expect(twice.bpm).toBe(128)
+    expect(twice.file_id).toBe('f1')
   })
 
   it('survives a row with nulls where the analysis never landed', () => {
@@ -339,6 +374,37 @@ describe('truncationLine — the plan\'s string, not a corrected one', () => {
 
   it('drops the source clause when there is no label', () => {
     expect(truncationLine({ label: null, added: 4, offered: 17 })).toBe('4 of 17')
+  })
+})
+
+describe('truncationFor — only the CAP earns a truncation line', () => {
+  // The bug this exists to prevent, found by driving the real drawer:
+  // clicking the third row of an eight-row table adds five of eight offered
+  // and truncates NOTHING — the two rows above the clicked one were never
+  // candidates. `added < offered` alone reported "pool · 5 of 8".
+  it('is null for a mid-list play with room to spare', () => {
+    expect(truncationFor({ added: 5, offered: 8 }, 'pool', false)).toBeNull()
+  })
+
+  it('reports a play that really did hit the cap', () => {
+    expect(truncationFor({ added: 24, offered: 60 }, 'warehouse', true))
+      .toEqual({ label: 'warehouse', added: 24, offered: 60 })
+  })
+
+  it('reports a partial append at the cap', () => {
+    expect(truncationFor({ added: 4, offered: 17 }, 'warehouse', true))
+      .toEqual({ label: 'warehouse', added: 4, offered: 17 })
+  })
+
+  // A queue that is exactly full but took everything offered has nothing to
+  // report: the cap is reached, but it truncated nothing.
+  it('is null when everything offered was taken, cap or no cap', () => {
+    expect(truncationFor({ added: 24, offered: 24 }, 'warehouse', true)).toBeNull()
+  })
+
+  it('is null for an event that reports no counts at all', () => {
+    expect(truncationFor({}, 'pool', true)).toBeNull()
+    expect(truncationFor({ added: 3 }, 'pool', true)).toBeNull()
   })
 })
 

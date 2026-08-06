@@ -166,6 +166,28 @@ export function truncationLine(t: { label: string | null; added: number; offered
   return t.label === null || t.label === '' ? count : `${t.label} · ${count}`
 }
 
+/**
+ * Whether a write is worth a truncation line at all — and it is NOT simply
+ * `added < offered`.
+ *
+ * Playing the third row of an eight-row table adds five entries out of eight
+ * offered, and nothing was truncated: the two rows ABOVE the clicked one were
+ * never candidates. Reporting `pool · 5 of 8` there tells a member that three
+ * tracks were dropped when none were, which is worse than saying nothing.
+ *
+ * `capReached` is the caller's answer to "does layer 1 now fill every slot" —
+ * `slotsFor(state).need === 0`. That is the only condition under which the 25
+ * cap is what stopped the write, and therefore the only one worth a line.
+ */
+export function truncationFor(
+  outcome: { added?: number; offered?: number }, label: string | null, capReached: boolean,
+): { label: string | null; added: number; offered: number } | null {
+  const { added, offered } = outcome
+  if (!capReached) return null
+  if (added === undefined || offered === undefined || added >= offered) return null
+  return { label, added, offered }
+}
+
 export interface AppendOutcome {
   /** How many entries entered the intent layer — `reduce`'s `added`. */
   added: number

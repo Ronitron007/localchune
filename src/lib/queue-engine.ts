@@ -219,6 +219,18 @@ function advanceTo(
 
 // -------------------------------------------------------------- §1.5
 
+/**
+ * The lowest index in the rendered array that an addressing event may touch.
+ *
+ * `queue[0]` is `current` ONLY WHEN SOMETHING IS PLAYING. With `current` null
+ * — a member who used `+ queue` before pressing play, which is an ordinary
+ * thing to do — `queue[0]` is the first PIN, and it must be selectable,
+ * removable and movable like any other. Guarding on a bare `index <= 0` made
+ * the drawer render ✕ / ↑ / ↓ on that row and then ignore every click, which
+ * is exactly how the bug was found.
+ */
+const firstAddressable = (state: QueueState): number => (state.current === null ? 0 : 1)
+
 const isReplacing = (e: QueueEvent): e is Extract<QueueEvent, { type: 'PLAY_TRACK' | 'PLAY_CRATE' }> =>
   e.type === 'PLAY_TRACK' || e.type === 'PLAY_CRATE'
 
@@ -286,7 +298,9 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
     }
 
     case 'SELECT_QUEUE_ENTRY': {
-      if (event.index <= 0 || event.index >= event.queue.length) return { state: copy(state) }
+      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
+        return { state: copy(state) }
+      }
       return advanceTo(state, event.queue, event.index, 'selected')
     }
 
@@ -300,7 +314,9 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
 
     case 'REMOVE_QUEUE_ENTRY': {
       const next = copy(state)
-      if (event.index <= 0 || event.index >= event.queue.length) return { state: next }
+      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
+        return { state: next }
+      }
       const target = event.queue[event.index]
       if (next.intent.some((e) => e.file_id === target.file_id)) {
         next.intent = next.intent.filter((e) => e.file_id !== target.file_id)
@@ -327,7 +343,9 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
      */
     case 'MOVE_QUEUE_ENTRY': {
       const next = copy(state)
-      if (event.index <= 0 || event.index >= event.queue.length) return { state: next }
+      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
+        return { state: next }
+      }
       const target = event.queue[event.index]
       const at = next.intent.findIndex((e) => e.file_id === target.file_id)
       if (at < 0) return { state: next }

@@ -120,6 +120,29 @@ describe('the replace prompt', () => {
   })
 })
 
+describe('the crate route projects once, and only on the server', () => {
+  // The bug this prevents, found by driving the real drawer: the route runs
+  // `toCrateTrack` server-side, so the wire shape is already a QueueRowData —
+  // `{file_id, artist, title, ...}`. site.ts ran the projection a SECOND time
+  // over those rows, read `display_title` off an object carrying `title`, and
+  // queued six crate entries with blank names. No exception, no failing test:
+  // just a drawer full of empty rows.
+  it('never imports the projection into the client', () => {
+    expect(code).not.toMatch(/import\s*\{[^}]*\btoCrateTrack\b[^}]*\}/)
+    expect(code).not.toMatch(/\btoCrateTrack\s*\(/)
+  })
+
+  it('fetches the crate exactly once per crate, cached across clicks', () => {
+    const fn = code.slice(code.indexOf('function loadCrateTracks'))
+    const body = fn.slice(0, fn.indexOf('\n}') + 2)
+    expect(body).toContain('crateTracksCache.get(crateId)')
+    expect(body).toContain('crateTracksCache.set(crateId')
+    // A rejected promise must not stay cached, or one dropped connection
+    // makes the button dead for the life of the document.
+    expect(body).toContain('crateTracksCache.delete(crateId)')
+  })
+})
+
 describe('Media Session is decoration, never a dependency', () => {
   it('never touches navigator.mediaSession without a feature check', () => {
     // Absent in some older WebKit contexts. Every read goes through the two
