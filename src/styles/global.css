@@ -353,9 +353,91 @@ h3 { font-size: var(--text-base); }
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
-.appnav a[aria-current='page'] { font-weight: bold; text-decoration: none; }
-.appnav .who, .appnav .credits { color: var(--mid); margin-left: auto; }
+.appnav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-nav);
+  background: var(--bg);
+  align-items: center;
+  gap: var(--pad-1) var(--pad-2);
+  /* A section rule, not a hairline: the nav is the page's top boundary
+     and 2px of full ink is what makes it read as architecture rather
+     than as another row. */
+  border-bottom: var(--rule-sec);
+}
+.appnav-wordmark {
+  font-weight: 700;
+  font-size: var(--text-lg);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  flex: none;
+}
+.appnav-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-1) var(--pad-2);
+  min-width: 0;
+}
+.appnav-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--text-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--ink-55);
+  transition: color var(--dur-fast) ease;
+}
+.appnav-links a:hover, .appnav-links a:active { color: var(--ink-100); }
+/* The current page INVERTS rather than going bold. Inversion is the
+   system's selected-state idiom (see --surface-inv), and bold text in a
+   700-weight uppercase run is not a difference anyone can see. */
+.appnav-links a[aria-current='page'] {
+  background: var(--surface-inv);
+  color: var(--bg);
+  padding: 0 var(--pad-1);
+}
+.appnav-search, .appnav-menu {
+  flex: none;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+}
+/* The ⋮ is the mobile control; the search link earns its place at both
+   breakpoints. Two class selectors, not one: `.btn-ghost` sets
+   `display: inline-flex` in the shared tier rule and is declared LATER in
+   this file, so a single-class hide here loses on source order and the ⋮
+   shows up on a desktop. */
+.appnav .appnav-menu { display: none; }
+.appnav .who, .appnav .credits {
+  color: var(--ink-55);
+  font-size: var(--text-xs);
+  margin-left: auto;
+}
 .appnav .who + .credits { margin-left: 0; }
+
+/* --- the compact bar, below 640px ---
+   `is-compact` is added by site.ts in the SAME pass that unhides the ⋮.
+   Without JS neither happens, so the full link list stays visible and
+   wraps exactly as it does today — a phone with no JS keeps its
+   navigation. That is why the list is hidden by a JS-applied class and
+   not by the media query alone. */
+@media (max-width: 640px) {
+  .appnav.is-compact .appnav-links,
+  .appnav.is-compact .who,
+  .appnav.is-compact .credits,
+  .appnav.is-compact > form { display: none; }
+  /* Three classes beats the two-class hide above without !important. */
+  .appnav.is-compact .appnav-menu { display: inline-flex; }
+  .appnav.is-compact {
+    flex-wrap: nowrap;
+    min-height: var(--tap);
+  }
+  .appnav.is-compact .appnav-wordmark { margin-right: auto; }
+}
 
 .appfoot {
   display: flex;

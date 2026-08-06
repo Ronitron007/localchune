@@ -2228,3 +2228,68 @@ export function openActionSheet(opts: SheetOptions): () => void {
 
 /** True while a sheet is on screen. */
 export const isSheetOpen = (): boolean => openSheet !== null
+
+/* --- the nav's ⋮ ------------------------------------------------------
+   The nav was 6–8 inline links plus who, credits and a sign-out form, all
+   flex-wrap. On a phone that wrapped to three rows and ~136px of chrome
+   before a single track was visible, with a `margin-left: auto` alignment
+   that collapsed the moment it wrapped. This returns that space.
+
+   THE DESTINATIONS ARE NOT LISTED HERE. They are read out of the rendered
+   `.appnav-links`, which means the owner-only omission in AppNav.astro is
+   respected automatically — a non-owner's DOM has no Review link, so the
+   sheet has no Review row, and nobody has to remember to keep two lists in
+   step. It also means the review badge count comes along for free.
+
+   The nav is NOT inside transition:persist, so a soft navigation replaces
+   it. Everything below re-runs on astro:after-swap. */
+function revealNavMenu(): void {
+  const nav = document.querySelector<HTMLElement>('.appnav')
+  const menu = document.getElementById('nav-menu')
+  if (!nav || !menu) return
+  // Both together, always: the class hides the link list and the unhide
+  // gives back the only way to reach it. Doing one without the other
+  // strands a member with no navigation at all.
+  menu.hidden = false
+  nav.classList.add('is-compact')
+}
+revealNavMenu()
+document.addEventListener('astro:after-swap', revealNavMenu)
+
+document.addEventListener('click', (e) => {
+  const menu = (e.target as Element | null)?.closest<HTMLElement>('#nav-menu')
+  if (!menu) return
+  const nav = menu.closest('.appnav')
+  const links = [...(nav?.querySelectorAll<HTMLAnchorElement>('.appnav-links a') ?? [])]
+  const who = nav?.querySelector('.who')?.textContent?.trim() ?? ''
+  const credits = nav?.querySelector('.credits')?.textContent?.trim() ?? ''
+
+  openActionSheet({
+    title: who || 'Menu',
+    returnFocusTo: menu,
+    rows: [
+      ...links.map((a) => ({
+        id: a.getAttribute('href') ?? a.textContent ?? '',
+        // The badge is inside the link's text; splitting it off keeps the
+        // label clean and puts the count where a trailing meta belongs.
+        label: (a.querySelector('.navbadge')
+          ? a.textContent?.replace(a.querySelector('.navbadge')!.textContent ?? '', '')
+          : a.textContent)?.trim() ?? '',
+        meta: a.querySelector('.navbadge')?.textContent ?? undefined,
+        href: a.getAttribute('href') ?? undefined,
+        pressed: a.getAttribute('aria-current') === 'page' ? true : undefined,
+      })),
+      credits ? { id: 'credits', label: credits, disabled: true } : null,
+      { id: 'signout', label: 'Sign out', icon: 'close' as const, danger: true },
+    ],
+    onChoose: (id) => {
+      if (id !== 'signout') return
+      // requestSubmit() on the REAL form: same action, same
+      // data-astro-reload, same native POST and full document load. The
+      // response clears the auth cookies and only a full load tears down
+      // every persisted island with them (survive-list #11). This is a
+      // third trigger on one path, never a second sign-out.
+      document.querySelector<HTMLFormElement>('#signout-form')?.requestSubmit()
+    },
+  })
+})

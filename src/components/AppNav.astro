@@ -3,6 +3,7 @@
 // localchune — MIT licensed. See LICENSE.
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
+import Icon from './Icon.astro'
 import { creditsRemaining } from '../lib/session'
 import { chromeData } from '../lib/page-data'
 const m = Astro.locals.member!
@@ -30,6 +31,17 @@ if (reviewPending.error) console.error('review_pending_count failed:', reviewPen
 const pending = typeof reviewPending.data === 'number' ? reviewPending.data : 0
 ---
 <nav class="appnav">
+  {/* THE WORDMARK, and on a phone it is the only always-visible way home.
+      The spec rejected a bottom tab bar partly on this: the bottom edge
+      already carries the player, the drawer anchored to it and the upload
+      chip, so the one-thumb destination has to come from the top. */}
+  <a class="appnav-wordmark" href="/">localchune</a>
+
+  {/* Every destination, written ONCE. Below 640px site.ts hides this list
+      and unhides the ⋮ beside it, then builds the sheet by READING these
+      links — so the owner-only omission below is respected automatically
+      and no destination is ever listed twice. */}
+  <div class="appnav-links">
   {/* M6c Task 2: "/" is now the home feed; the browse table moved to
       "/pool". */}
   <a href="/" aria-current={here === '/' ? 'page' : undefined}>Home</a>
@@ -44,7 +56,8 @@ const pending = typeof reviewPending.data === 'number' ? reviewPending.data : 0
   <a href="/merges" aria-current={here === '/merges' ? 'page' : undefined}>Merges</a>
   {/* Admin and Review are owner-only — OMITTED rather than shown disabled — a
       disabled link is a promise with no delivery date, and it tells a
-      non-owner that an admin page exists. */}
+      non-owner that an admin page exists. The ⋮ sheet inherits this for
+      free by reading the rendered links instead of listing them again. */}
   {m.role === 'owner' && (
     <a href="/review" aria-current={here === '/review' ? 'page' : undefined}>
       Review{pending > 0 && <span class="navbadge num">{pending}</span>}
@@ -53,6 +66,29 @@ const pending = typeof reviewPending.data === 'number' ? reviewPending.data : 0
   {m.role === 'owner' && (
     <a href="/admin" aria-current={here.startsWith('/admin') ? 'page' : undefined}>Admin</a>
   )}
+  </div>
+
+  {/* Search is a LINK to the pool, where the search field already lives,
+      rather than a second search UI. One search box in the app, one tap
+      from anywhere. */}
+  <a class="appnav-search btn-ghost" href="/pool" aria-label="Search the pool">
+    <Icon name="search" size={20} />
+  </a>
+
+  {/* The ⋮. Hidden in the markup and unhidden by site.ts, which adds
+      `is-compact` to this nav in the same pass — the two must happen
+      together. With no JS there is no sheet, so a visible ⋮ would be a
+      control that does nothing (survive-list #10) AND the link list it
+      replaces would already be hidden. Without JS the list simply stays
+      visible and wraps, exactly as it does today. */}
+  <button
+    type="button"
+    id="nav-menu"
+    class="appnav-menu btn-ghost"
+    hidden
+    aria-label="Menu"
+    aria-haspopup="dialog"
+  ><Icon name="kebab" size={20} /></button>
   {/* Task 7: greets by username once claimed, falling back to email
       exactly as before for a member the middleware hasn't yet routed
       through /welcome. */}
@@ -64,6 +100,11 @@ const pending = typeof reviewPending.data === 'number' ? reviewPending.data : 0
       an invariant with two exceptions is one nobody can check. A sign-out
       also has to be a real document load: the response clears the auth
       cookies, and a full navigation is the only way every persisted island
-      is torn down with them. */}
-  <form method="post" action="/auth/signout" data-astro-reload><button type="submit" class="btn-secondary">Sign out</button></form>
+      is torn down with them.
+
+      The id is what the ⋮ sheet's "Sign out" row calls requestSubmit() on.
+      That is the SAME form and the same native POST — the sheet adds a
+      third trigger, not a second sign-out path, so survive-list #11 holds
+      wherever the control is rendered. */}
+  <form id="signout-form" method="post" action="/auth/signout" data-astro-reload><button type="submit" class="btn-secondary">Sign out</button></form>
 </nav>
