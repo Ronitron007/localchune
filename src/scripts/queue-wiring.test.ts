@@ -120,6 +120,57 @@ describe('the replace prompt', () => {
   })
 })
 
+describe('Media Session is decoration, never a dependency', () => {
+  it('never touches navigator.mediaSession without a feature check', () => {
+    // Absent in some older WebKit contexts. Every read goes through the two
+    // guarded accessors; a bare `navigator.mediaSession.` anywhere else would
+    // throw on those browsers and take the transport with it.
+    const reads = [...code.matchAll(/navigator[^\n]*\.mediaSession/g)]
+    expect(reads.length).toBe(2)
+    for (const [text] of reads) expect(text).toContain('as MediaNavigator')
+  })
+
+  it('unsets previoustrack explicitly rather than leaving it unmentioned', () => {
+    // There is no PREV event in v1. A null handler is what greys the button
+    // out; omitting the call would leave whatever a previous page registered.
+    expect(code).toMatch(/set\('previoustrack',\s*null\)/)
+  })
+
+  it('wraps every setActionHandler call, which throws on an unknown action', () => {
+    const direct = [...code.matchAll(/\.setActionHandler\(/g)]
+    expect(direct.length).toBe(1) // the one inside the guarded `set` helper
+  })
+})
+
+describe('UX.9 resume restores layer 1 and hydrates nothing', () => {
+  const restore = (() => {
+    const at = code.indexOf('function restoreQueue')
+    return code.slice(at, code.indexOf('\n}', at) + 2)
+  })()
+
+  it('assembles the restored queue with an EMPTY tail', () => {
+    // §5: the auto tail is not persisted and not recomputed at page load. A
+    // 14-day-old harmonic tail is stale, and recomputing it on first paint
+    // would put a pool_list call in front of every returning member.
+    expect(restore).toContain('assembleQueue(restored, [])')
+  })
+
+  it('issues no regeneration of its own', () => {
+    expect(restore).not.toContain('hydrateTail')
+    expect(restore).not.toContain('regenerate(')
+  })
+
+  it('never claims the transport — a click must still beat a restore', () => {
+    expect(restore).not.toContain('currentFileId =')
+  })
+
+  it('defers instead, and both §5 triggers spend the same flag', () => {
+    expect(restore).toContain('queueNeedsHydration = needsHydration')
+    // drawer opened, and playback started.
+    expect(count(/hydrateIfDeferred\(\)/g)).toBe(3) // definition + two triggers
+  })
+})
+
 describe('the default method costs nothing', () => {
   // §1.6: a member who never opens the drawer must issue zero queue-related
   // requests. The engine short-circuits before the port for `off`, so the

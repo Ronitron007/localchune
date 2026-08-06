@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   getState, isStale, parseState, QUEUE_MEMORY_KEY, QUEUE_MEMORY_TTL_MS,
-  QUEUE_SCHEMA_VERSION, serializeState, setState, stateFromEntry, subscribe,
+  QUEUE_SCHEMA_VERSION, restoredState, serializeState, setState, stateFromEntry, subscribe,
   type QueueMemoryEntry,
 } from './queue-store'
 import {
@@ -313,6 +313,92 @@ describe('isStale — separate from unparseable, exactly as player-memory does i
     const parsed = parseState(old)
     expect(parsed).not.toBeNull()
     expect(isStale(parsed as QueueMemoryEntry, NOW)).toBe(true)
+  })
+})
+
+describe('restoredState — UX.9 resume, and what it deliberately does not do', () => {
+  const saved = (over: Partial<QueueState> = {}): string =>
+    serializeState(state({ current: entry('c'), intent: many(3), ...over }), NOW)
+
+  it('restores exactly the four persisted fields', () => {
+    const { state: s } = restoredState(saved({ method: 'harmonic', history: ['h1'] }), NOW)
+    expect(s.current?.file_id).toBe('c')
+    expect(s.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+    expect(s.method).toBe('harmonic')
+    expect(s.history).toEqual(['h1'])
+  })
+
+  // §5 enumerates four restored fields. `failed` is not one of them, and the
+  // reason is better than symmetry: a track that failed to decode a fortnight
+  // ago deserves another go. `suppressed` is session-scoped by definition.
+  it('starts `failed` and `suppressed` empty, every time', () => {
+    const { state: s } = restoredState(saved(), NOW)
+    expect(s.failed).toEqual([])
+    expect(s.suppressed).toEqual([])
+  })
+
+  // THE AUTO TAIL IS NOT PERSISTED AND NOT RECOMPUTED AT LOAD. A 14-day-old
+  // harmonic tail is stale — the pool grew — and recomputing it on load would
+  // put a pool_list call on every returning member's first paint for a drawer
+  // they may never open.
+  it('needs hydration only when a method is actually selected', () => {
+    expect(restoredState(saved({ method: 'harmonic' }), NOW).needsHydration).toBe(true)
+    expect(restoredState(saved({ method: 'bpm' }), NOW).needsHydration).toBe(true)
+    expect(restoredState(saved({ method: 'shuffle' }), NOW).needsHydration).toBe(true)
+  })
+
+  // THE DEFAULT PATH COSTS NOTHING. With `off`, there is no tail to hydrate,
+  // so a returning member who never touches the drawer issues zero
+  // queue-related requests — not one deferred, ZERO.
+  it('is false for the default method — nothing to hydrate at all', () => {
+    expect(restoredState(saved({ method: 'off' }), NOW).needsHydration).toBe(false)
+  })
+
+  it('returns a fresh empty state for a stale payload, and asks for no hydration', () => {
+    const old = serializeState(state({ current: entry('c'), method: 'harmonic' }), NOW)
+    const result = restoredState(old, NOW + QUEUE_MEMORY_TTL_MS + 1)
+    expect(result.state).toEqual(emptyState())
+    expect(result.needsHydration).toBe(false)
+    expect(result.stale).toBe(true)
+  })
+
+  it.each([
+    ['null', null],
+    ['empty', ''],
+    ['corrupt JSON', '{oh no'],
+    ['an array', '[]'],
+    ['a future schema', JSON.stringify({ v: 99, current: null, intent: [], history: [], method: 'off', updated_at: new Date(NOW).toISOString() })],
+  ])('returns an empty state for %s, and never throws', (_name, raw) => {
+    const result = restoredState(raw, NOW)
+    expect(result.state).toEqual(emptyState())
+    expect(result.needsHydration).toBe(false)
+  })
+
+  it('distinguishes "nothing saved" from "saved but expired"', () => {
+    expect(restoredState(null, NOW).stale).toBe(false)
+    const old = serializeState(state({ current: entry('c') }), NOW)
+    expect(restoredState(old, NOW + QUEUE_MEMORY_TTL_MS + 1).stale).toBe(true)
+  })
+
+  // localStorage is the one place a backlog could sneak past §1.2, and
+  // restoredState is the door it would come through.
+  it('re-applies the cap on the way in', () => {
+    const huge = JSON.stringify({
+      v: QUEUE_SCHEMA_VERSION,
+      current: entry('c'),
+      intent: many(10000),
+      method: 'off',
+      history: [],
+      updated_at: new Date(NOW).toISOString(),
+    })
+    expect(restoredState(huge, NOW).state.intent.length).toBe(QUEUE_MAX - 1)
+  })
+
+  it('composes the pieces rather than reimplementing them', () => {
+    const raw = saved({ method: 'harmonic' })
+    const parsed = parseState(raw)
+    expect(parsed).not.toBeNull()
+    expect(restoredState(raw, NOW).state).toEqual(stateFromEntry(parsed as QueueMemoryEntry))
   })
 })
 

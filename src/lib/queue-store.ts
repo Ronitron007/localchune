@@ -213,6 +213,43 @@ export function stateFromEntry(entry: QueueMemoryEntry): QueueState {
   }
 }
 
+export interface RestoredQueue {
+  state: QueueState
+  /**
+   * Whether layer 2 still has to be computed. FALSE FOR THE DEFAULT METHOD,
+   * and that is the point of the flag rather than an optimisation of it: with
+   * `off` there is no tail, so a returning member who never touches the drawer
+   * issues zero queue-related requests — not one deferred request, zero.
+   *
+   * When true, site.ts still defers: §5 hydrates on the first of (drawer
+   * opened | playback started), never on first paint. A 14-day-old harmonic
+   * tail is stale anyway — the pool grew — and recomputing it at load would
+   * put a pool_list call on every returning member's first render for a
+   * drawer they may never open.
+   */
+  needsHydration: boolean
+  /** A payload existed but had aged out. Distinct from "nothing saved", so
+   *  the caller can clear the key rather than leave a dead entry behind. */
+  stale: boolean
+}
+
+/**
+ * UX.9 resume, composed from the three pieces above rather than reimplementing
+ * them: `parseState` (total, cap-enforcing), `isStale` (TTL), `stateFromEntry`
+ * (the four restored fields).
+ *
+ * Anything unreadable, absent or expired yields `emptyState()` — never a
+ * throw, and never a partially-restored queue. A queue is a thirty-minute
+ * artefact; losing one costs nothing next to guessing at a shape.
+ */
+export function restoredState(raw: string | null, now: number = Date.now()): RestoredQueue {
+  const entry = parseState(raw)
+  if (entry === null) return { state: emptyState(), needsHydration: false, stale: false }
+  if (isStale(entry, now)) return { state: emptyState(), needsHydration: false, stale: true }
+  const state = stateFromEntry(entry)
+  return { state, needsHydration: state.method !== 'off', stale: false }
+}
+
 // ------------------------------------------------------- the singleton
 
 /**

@@ -9,6 +9,7 @@ import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
+import { artThumbUrl } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
@@ -18,7 +19,9 @@ import {
 import {
   AUTO_METHODS, METHOD_LABELS, assembleQueue, isAutoMethod, slotsFor, type QueueEntry,
 } from '../lib/queue-model'
-import { QUEUE_MEMORY_KEY, getState, serializeState, setState } from '../lib/queue-store'
+import {
+  QUEUE_MEMORY_KEY, getState, restoredState, serializeState, setState,
+} from '../lib/queue-store'
 import {
   appendReport, entryTitle, nextSourceLookahead, readListContext, renderQueueSections,
   toCrateTrack, toQueueEntry, truncationLine, type QueueRowData,
@@ -425,6 +428,9 @@ async function startCurrent(startAt: number): Promise<void> {
   // audio.currentTime is 0 here — assigning .src resets it — so this records
   // the new track at position zero rather than the old track's offset.
   savePlayerMemory()
+  updateMediaSession()
+  // §5's other hydration trigger: playback started.
+  hydrateIfDeferred()
 
   await audio.play().catch((err: unknown) => {
     // AbortError = a NEWER load superseded this play(). Playback of the newer
@@ -433,6 +439,72 @@ async function startCurrent(startAt: number): Promise<void> {
     if (label) label.textContent = 'That track would not play. Try downloading it.'
   })
 }
+
+/* ---------------------------------------------- Media Session (Task 8)
+ *
+ * The lock screen, the notification shade, the macOS Now Playing widget and a
+ * headset's middle button all read the same API. FEATURE-DETECTED AND NEVER
+ * THROWING: `navigator.mediaSession` is absent in some older WebKit contexts,
+ * and `setActionHandler` throws on an action name a browser does not know, so
+ * every call is guarded and every failure is silent. There is no fallback to
+ * build — the page still works, it just does not decorate the lock screen.
+ */
+type MediaNavigator = Navigator & { mediaSession?: MediaSession }
+
+function updateMediaSession(): void {
+  const ms = (navigator as MediaNavigator).mediaSession
+  if (ms === undefined) return
+  const entry = getState().current
+  try {
+    if (entry === null) {
+      ms.metadata = null
+      ms.playbackState = 'none'
+      return
+    }
+    ms.metadata = new MediaMetadata({
+      title: entry.display_title,
+      artist: entry.display_artist ?? '',
+      // The PUBLIC art bucket — no signing, already cacheable, and unlike the
+      // audio URL it does not expire. A QueueEntry carries no `has_thumb`, so
+      // this is emitted unconditionally: a 404 costs one request and the OS
+      // simply shows no art, which is exactly what it would show anyway.
+      artwork: [{
+        src: artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, entry.file_id),
+        sizes: '256x256',
+        type: 'image/jpeg',
+      }],
+    })
+    ms.playbackState = audio !== null && !audio.paused ? 'playing' : 'paused'
+  } catch {
+    // An unsupported MediaMetadata shape must never take the transport down.
+  }
+}
+
+function initMediaSession(): void {
+  const ms = (navigator as MediaNavigator).mediaSession
+  if (ms === undefined || audio === null) return
+  const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+    try {
+      ms.setActionHandler(action, handler)
+    } catch {
+      // Older WebKit throws on an action name it does not implement.
+    }
+  }
+  set('play', () => { void audio.play().catch(() => {}) })
+  set('pause', () => { audio.pause() })
+  set('nexttrack', () => {
+    if (getState().current === null) return
+    handleAdvance({ type: 'SKIP', queue: renderedQueue })
+  })
+  // EXPLICITLY UNSET in v1. There is no PREV event in the engine — `history`
+  // is the field that makes one possible later, and it is already recorded on
+  // every advance. Leaving the handler null is what makes the OS grey the
+  // button out instead of showing a control that does nothing.
+  set('previoustrack', null)
+  audio.addEventListener('play', updateMediaSession)
+  audio.addEventListener('pause', updateMediaSession)
+}
+initMediaSession()
 
 /**
  * The advance path — `SKIP`, `TRACK_ENDED`, `TRACK_FAILED`,
@@ -457,6 +529,7 @@ function handleAdvance(event: QueueEvent): void {
     currentTitle = ''
     clearLookahead()
     clearPlayerMemory()
+    updateMediaSession()
     if (label) label.textContent = 'Queue finished.'
     updateToggle()
     return
@@ -554,10 +627,27 @@ const drawerToggle = document.getElementById('queue-toggle') as HTMLButtonElemen
 const drawerMethods = document.getElementById('queue-methods')
 const drawerSections = document.getElementById('queue-sections')
 
-/** Lazy hydration (§5): the auto tail is not persisted and not recomputed at
- *  page load. It waits for the first of (drawer opened | playback started) —
- *  and with the default `off` it never costs a request at all. */
-let drawerOpened = false
+/**
+ * Lazy hydration (§5). The auto tail is not persisted and not recomputed at
+ * page load: a 14-day-old harmonic tail is stale (the pool grew), and
+ * recomputing it on first paint would put a pool_list call in front of every
+ * returning member for a drawer they may never open.
+ *
+ * So a RESTORED queue with a method selected sets this, and the first of
+ * (drawer opened | playback started) spends it. With the default `off`,
+ * `restoredState` reports `needsHydration: false` and it is never set at all —
+ * not one deferred request, zero.
+ *
+ * A fresh (non-restored) session needs no flag: every user action goes through
+ * `apply`, which regenerates on its own.
+ */
+let queueNeedsHydration = false
+
+function hydrateIfDeferred(): void {
+  if (!queueNeedsHydration) return
+  queueNeedsHydration = false
+  void hydrateTail()
+}
 
 function button(cls: string, text: string, aria?: string): HTMLButtonElement {
   const b = document.createElement('button')
@@ -683,12 +773,9 @@ function setDrawerOpen(open: boolean): void {
   drawerToggle.setAttribute('aria-expanded', String(open))
   document.body.classList.toggle('queueopen', open)
   syncDrawerHeight()
-  if (open && !drawerOpened) {
-    drawerOpened = true
-    // First open — §5's lazy hydration. With `method: 'off'` regenerate
-    // short-circuits before the port, so this still costs no request.
-    void hydrateTail()
-  }
+  // One of §5's two triggers for the deferred tail. The other is in
+  // startCurrent — whichever happens first spends the flag.
+  if (open) hydrateIfDeferred()
 }
 
 if (drawerToggle !== null) {
@@ -1475,6 +1562,45 @@ document.addEventListener('submit', (e) => {
  * setting `.src` alone is not enough. The explicit `audio.load()` below is
  * what still gets elapsed/total on screen without starting playback.
  */
+/**
+ * UX.9 resume, queue half. Runs SYNCHRONOUSLY at init, before restorePlayer's
+ * fetch — which is what keeps the "a click always beats a restore" rule
+ * intact: this touches only the store and the drawer, never `currentFileId`,
+ * so a click that lands a moment later still claims the transport unopposed
+ * and its own PLAY_TRACK replaces whatever was restored here.
+ *
+ * LAYER 1 ONLY. The array is assembled with an EMPTY tail, deliberately: §5
+ * defers the auto tail to the first of (drawer opened | playback started), and
+ * with the default method there is no tail to defer. Nothing in this function
+ * can issue a request.
+ */
+function restoreQueue(): void {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(QUEUE_MEMORY_KEY)
+  } catch {
+    return // storage disabled — nothing to restore, not fatal.
+  }
+  const { state: restored, needsHydration, stale } = restoredState(raw)
+  if (stale) {
+    try {
+      localStorage.removeItem(QUEUE_MEMORY_KEY)
+    } catch {
+      // Nothing to clean up if storage was never writable.
+    }
+    return
+  }
+  if (restored.current === null && restored.intent.length === 0) return
+  queueNeedsHydration = needsHydration
+  setState(restored)
+  setRenderedQueue(assembleQueue(restored, []))
+}
+restoreQueue()
+// Always render once at init, restore or not: an empty drawer still owes the
+// member its method buttons and its three section headings, and rendering
+// only on the first event would leave the first open blank.
+renderDrawer()
+
 async function restorePlayer() {
   if (audio === null) return
   let raw: string | null = null
@@ -1522,6 +1648,12 @@ async function restorePlayer() {
   }, { once: true })
   audio.src = body.url
   audio.load()
+  // The lock screen should show what was resumed — but only when the queue
+  // agrees this is `current`. Player memory is rewritten on every timeupdate
+  // while queue memory is written on engine events, so the two can age out
+  // independently; a mismatch means the queue no longer knows this track and
+  // metadata for it would be a claim the engine cannot back up.
+  if (getState().current?.file_id === entry.file_id) updateMediaSession()
 }
 void restorePlayer()
 
