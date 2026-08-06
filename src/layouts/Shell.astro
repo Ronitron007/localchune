@@ -84,6 +84,12 @@ const { title, center = false } = Astro.props
       aria-controls="queue-drawer"
     >☰ QUEUE</button>
     <button id="player-toggle" type="button" class="playertoggle" aria-label="Play">▶</button>
+    {/* The queue had no on-page skip control at all: the only way to reach the
+        next track was the lock screen, which is unreachable on a desktop and
+        was itself inert on a resumed session. Hidden until site.ts unhides it,
+        for the same reason #queue-toggle is — without JS there is no queue to
+        advance through, and a control that does nothing must not be visible. */}
+    <button id="player-next" type="button" class="playertoggle playernext" hidden aria-label="Next track">⏭︎</button>
     <input id="player-seek" type="range" class="playerseek" min="0" max="0" step="1" value="0" aria-label="Seek" />
     <span id="player-time" class="playertime num">0:00 / --:--</span>
     <audio id="player-audio" preload="none"></audio>

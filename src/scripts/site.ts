@@ -47,6 +47,7 @@ import {
 const audio = document.getElementById('player-audio') as HTMLAudioElement | null
 const label = document.getElementById('player-label')
 const toggle = document.getElementById('player-toggle') as HTMLButtonElement | null
+const nextBtn = document.getElementById('player-next') as HTMLButtonElement | null
 const time = document.getElementById('player-time')
 const seek = document.getElementById('player-seek') as HTMLInputElement | null
 
@@ -500,10 +501,9 @@ function initMediaSession(): void {
   }
   set('play', () => { void audio.play().catch(() => {}) })
   set('pause', () => { audio.pause() })
-  set('nexttrack', () => {
-    if (getState().current === null) return
-    handleAdvance({ type: 'SKIP', queue: renderedQueue })
-  })
+  // THE SAME FUNCTION the ⏭ button calls. A lock screen and a button that
+  // "skip" differently is two behaviours to keep in step; this is one.
+  set('nexttrack', skipToNext)
   // EXPLICITLY UNSET in v1. There is no PREV event in the engine — `history`
   // is the field that makes one possible later, and it is already recorded on
   // every advance. Leaving the handler null is what makes the OS grey the
@@ -547,6 +547,23 @@ function handleAdvance(event: QueueEvent): void {
   if (before !== null && before.file_id === after.file_id) return
   claimCurrent()
   void startCurrent(0)
+}
+
+/**
+ * SKIP, from wherever it is asked for. THE ONE DISPATCH SITE, shared by the ⏭
+ * button in the player bar and by the lock screen's next control — two
+ * surfaces, one behaviour, and queue-wiring.test.ts keeps it that way.
+ *
+ * The `current === null` guard is not defensive noise: `reduce` no-ops a SKIP
+ * with nothing playing anyway, but returning early here also keeps
+ * `handleAdvance` from reporting "Queue finished." at a member who never
+ * started anything. What it must NOT be is the reason a resumed track cannot
+ * be skipped — that was the bug, and it is fixed upstream by RESTORE_CURRENT
+ * rather than by loosening this line.
+ */
+function skipToNext(): void {
+  if (getState().current === null) return
+  handleAdvance({ type: 'SKIP', queue: renderedQueue })
 }
 
 // ------------------------------------------------------------- DOM reads
@@ -798,6 +815,13 @@ if (drawerToggle !== null) {
   drawerToggle.addEventListener('click', () => {
     setDrawerOpen(!isDrawerOpen())
   })
+}
+
+/** Unhidden here rather than in the markup, same rule as the drawer toggle
+ *  above: with no JS there is no queue and nothing to skip to. */
+if (nextBtn !== null) {
+  nextBtn.hidden = false
+  nextBtn.addEventListener('click', skipToNext)
 }
 
 /** Click a row: play it, and drop everything jumped over. §1.4 — "click the

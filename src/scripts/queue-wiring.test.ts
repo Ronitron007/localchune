@@ -241,6 +241,35 @@ describe('the resumed track becomes the engine\'s current — the reported bug',
   })
 })
 
+describe('SKIP has exactly one dispatch site', () => {
+  // The ⏭ button and the lock screen's next control are two surfaces for one
+  // behaviour. Two dispatch sites is how they drift — and the lock-screen one
+  // was already carrying a `current === null` guard that made it inert on a
+  // resumed session, which is precisely the kind of divergence that hides in a
+  // duplicated handler.
+  it('dispatches SKIP from one place only', () => {
+    expect(count(/type:\s*'SKIP'/g)).toBe(1)
+  })
+
+  it('and that place is skipToNext', () => {
+    const fn = code.slice(code.indexOf('function skipToNext'))
+    const body = fn.slice(0, fn.indexOf('\n}') + 2)
+    expect(body).toContain("handleAdvance({ type: 'SKIP', queue: renderedQueue })")
+  })
+
+  it('is what the media session calls, by reference rather than by copy', () => {
+    expect(code).toMatch(/set\('nexttrack',\s*skipToNext\)/)
+  })
+
+  it('is what the on-page ⏭ button calls', () => {
+    expect(code).toMatch(/nextBtn\.addEventListener\('click',\s*skipToNext\)/)
+  })
+
+  it('unhides that button, which ships `hidden` for the no-JS case', () => {
+    expect(code).toMatch(/nextBtn\.hidden\s*=\s*false/)
+  })
+})
+
 describe('the default method costs nothing', () => {
   // §1.6: a member who never opens the drawer must issue zero queue-related
   // requests. The engine short-circuits before the port for `off`, so the
