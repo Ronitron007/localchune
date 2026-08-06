@@ -270,6 +270,84 @@ describe('SKIP has exactly one dispatch site', () => {
   })
 })
 
+describe('the player bar\'s ♥ and title link', () => {
+  // Both controls are written by site.ts and neither can be unit-tested: the
+  // module touches `document` at load. The three DECISIONS were extracted to
+  // track-format.ts and are tested there; what is left is wiring, and the
+  // wiring has two failure modes worth a source scan.
+
+  it('adds no like logic of its own — one delegation, one toggleLike call', () => {
+    // The bar reuses the row's contract exactly (form.likeform >
+    // button.likebtn[data-file-id] > .likeglyph + .likecount). A second
+    // toggleLike call site would mean the bar grew a private code path, and
+    // the two would drift on rollback, on error reporting, or on both.
+    expect(count(/toggleLike\(/g)).toBe(1)
+    expect(count(/form\.likeform/g)).toBe(1)
+  })
+
+  it('writes the bar\'s ♥ from exactly two places, and names them', () => {
+    // A track START (the server's answer, arriving on the /source response)
+    // and the queue running dry. Everything else — the optimistic flip, the
+    // rollback, the server confirmation — belongs to the shared delegation,
+    // which reaches this button through the same selector it uses for the
+    // rows. A third caller is how the bar starts disagreeing with itself.
+    expect(count(/setPlayerLike\(/g)).toBe(4) // definition + start + exhausted + restore
+    const start = code.slice(code.indexOf('async function startCurrent'))
+    expect(start.slice(0, start.indexOf('\n}') + 2)).toContain('setPlayerLike(')
+  })
+
+  it('routes every status message through setStatus, never a raw textContent', () => {
+    // #player-label holds the title link now. `label.textContent = …`
+    // DETACHES that anchor, so a stray write outside the two helpers would
+    // silently delete the link and never put it back. The helpers are the
+    // only place that may touch it.
+    const helpers = code.slice(code.indexOf('function setStatus'), code.indexOf('function setPlayerLike'))
+    const strays = [...code.matchAll(/label\.textContent\s*=/g)]
+      .filter((m) => (m.index ?? 0) < code.indexOf('function setStatus')
+        || (m.index ?? 0) > code.indexOf('function setPlayerLike'))
+    expect(helpers).toContain('label.textContent')
+    expect(strays).toEqual([])
+  })
+
+  it('never renders a dead link — an href and the unhide happen together', () => {
+    const fn = code.slice(code.indexOf('function setNowPlaying'))
+    const body = fn.slice(0, fn.indexOf('\n}') + 2)
+    // The null-id branch returns BEFORE either, leaving plain text.
+    expect(body.indexOf('link.href')).toBeLessThan(body.indexOf('link.hidden = false'))
+    expect(body).toContain('fileId === null')
+  })
+})
+
+describe('the resumed track\'s like state costs no request', () => {
+  const restorePlayer = (() => {
+    const at = code.indexOf('async function restorePlayer')
+    return code.slice(at, code.indexOf('\nvoid restorePlayer', at))
+  })()
+
+  it('reads the ♥ off the /source response the restore already made', () => {
+    // §1.6's zero-requests-at-load invariant, applied to a new field rather
+    // than relaxed for it. This path has always fetched /source at load —
+    // `audio.preload` is "none", so the clock and scrubber need a real src
+    // and an explicit load() to show anything. The like columns ride along
+    // on that response; a fetch of their own here would be the regression.
+    expect(restorePlayer).toContain('setPlayerLike(')
+    // ONE fetch on this path, the same one it always made.
+    expect([...restorePlayer.matchAll(/fetch\(/g)].length).toBe(1)
+    expect(restorePlayer).toContain('/source')
+  })
+
+  it('invents no endpoint of its own to ask "is this liked"', () => {
+    // The whole design in one line: pool_get already returns like_count and
+    // liked_by_me on the row /source presigns from, so the answer rides on a
+    // response the client was making anyway. A GET for like state — here or
+    // anywhere in the client — is the thing this feature exists not to do.
+    // POSTing to /like is the toggle, and is expected.
+    const gets = [...code.matchAll(/fetch\(`\/api\/track\/\$\{[^}]+\}\/(\w+)`/g)].map((m) => m[1])
+    expect(gets).not.toContain('likes')
+    expect(gets).not.toContain('like')
+  })
+})
+
 describe('the default method costs nothing', () => {
   // §1.6: a member who never opens the drawer must issue zero queue-related
   // requests. The engine short-circuits before the port for `off`, so the

@@ -9,7 +9,7 @@ import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
-import { artThumbUrl } from '../lib/track-format'
+import { artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
@@ -46,10 +46,95 @@ import {
  */
 const audio = document.getElementById('player-audio') as HTMLAudioElement | null
 const label = document.getElementById('player-label')
+const link = document.getElementById('player-link') as HTMLAnchorElement | null
+const likeForm = document.getElementById('player-like') as HTMLFormElement | null
 const toggle = document.getElementById('player-toggle') as HTMLButtonElement | null
 const nextBtn = document.getElementById('player-next') as HTMLButtonElement | null
 const time = document.getElementById('player-time')
 const seek = document.getElementById('player-seek') as HTMLInputElement | null
+
+/* ------------------------------------------- what the player bar says
+ *
+ * #player-label has always done two jobs, and adding a link forced them
+ * apart. It is the ONE aria-live region every handler in this file reports
+ * through — a transient message about a like, a crate, a dead session — and
+ * it is also where the name of the current track lives. Only the second is
+ * a link, and the two must not be able to produce a third state.
+ *
+ * So there are exactly two writers, and everything below calls one of them:
+ *
+ *   setStatus(text)          plain text, no link. What every `label
+ *                            .textContent = …` in this file used to be, with
+ *                            identical behaviour — a message has always
+ *                            replaced the track name until the next track
+ *                            starts.
+ *   setNowPlaying(text, id)  the name, as an anchor to /track/<id>. A null
+ *                            id means "no track" and falls back to plain
+ *                            text, so an idle bar never renders a dead link.
+ *
+ * setStatus DETACHES the anchor (textContent removes every child) and
+ * setNowPlaying re-appends it. That is why `link` is captured once above and
+ * never re-queried: the node survives detachment, and re-querying after a
+ * status message would find nothing.
+ */
+function setStatus(text: string): void {
+  if (label === null) return
+  label.textContent = text
+}
+
+function setNowPlaying(text: string, fileId: string | null): void {
+  if (label === null) return
+  label.textContent = ''
+  if (link === null || fileId === null) {
+    label.textContent = text
+    return
+  }
+  link.textContent = text
+  link.href = trackHref(fileId)
+  link.hidden = false
+  label.appendChild(link)
+}
+
+/**
+ * THE ♥ IN THE BAR, pointed at whatever is playing.
+ *
+ * Not one line of like LOGIC lives here. The button this writes into carries
+ * `class="likebtn"` inside `form.likeform`, which is the exact contract the
+ * document-level submit delegation further down already implements for
+ * TrackRow.astro's pool cell and track/[id].astro's .signals block — so the
+ * bar's heart toggles, rolls back on failure and reports through the same
+ * status region as the other two, for free. This function only ever answers
+ * "which track, and what did the server last say about it".
+ *
+ * A null `fileId` re-arms the markup's own inert state: hidden AND disabled,
+ * with no action. That pair is what makes the form unsubmittable between
+ * tracks — the delegation bails without preventDefault when `data-file-id`
+ * is empty, and a bail means the browser would POST natively to whatever
+ * `action` says.
+ */
+function setPlayerLike(fileId: string | null, liked: boolean, count: number, title: string): void {
+  if (likeForm === null) return
+  const btn = likeForm.querySelector('button.likebtn')
+  const glyph = likeForm.querySelector('.likeglyph')
+  const countEl = likeForm.querySelector('.likecount')
+  if (!(btn instanceof HTMLButtonElement) || glyph === null || countEl === null) return
+
+  if (fileId === null) {
+    likeForm.removeAttribute('action')
+    btn.dataset.fileId = ''
+    btn.disabled = true
+    likeForm.hidden = true
+    return
+  }
+  likeForm.action = `/api/track/${fileId}/like`
+  btn.dataset.fileId = fileId
+  btn.setAttribute('aria-pressed', String(liked))
+  btn.setAttribute('aria-label', likeActionLabel(liked, title))
+  glyph.textContent = likeGlyph(liked)
+  countEl.textContent = String(count)
+  btn.disabled = false
+  likeForm.hidden = false
+}
 
 // True for the span between the range's first `input` of a drag and the
 // `change` that fires when the user lets go — timeupdate's periodic
@@ -161,7 +246,7 @@ async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<Refre
       headers: { accept: 'application/json' },
     })
     if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
-      if (label) label.textContent = 'Session ended — reload to sign in.'
+      setStatus('Session ended — reload to sign in.')
       // A dead session is not a dead TRACK. Striking it would poison `failed`
       // for a file that plays perfectly once the member signs back in.
       return 'busy'
@@ -260,7 +345,7 @@ const candidatePort: CandidatePort = async (seed, need) => {
   } catch (err) {
     if (err instanceof SessionExpiredError) {
       candidateError = 'Session ended — reload to sign in.'
-      if (label) label.textContent = candidateError
+      setStatus(candidateError)
     } else {
       candidateError = 'Could not reach the pool — no auto tail.'
     }
@@ -331,47 +416,69 @@ function claimCurrent(): QueueEntry | null {
 }
 
 /**
- * One signed URL. `report` is false for the lookahead prefetch — a failed
- * prefetch is invisible by design; the real fetch on advance reports for it.
- * The try/catch is new relative to M6a's inline version: a dropped connection
+ * ONE FETCH, TWO ANSWERS. `/api/track/:id/source` presigns from a `pool_get`
+ * row that already carries the like columns, so it now returns them too —
+ * which is the whole reason the bar's ♥ costs no request of its own. See
+ * that route's header: no new RPC, no migration, four free fields.
+ *
+ * `report` is false for the lookahead prefetch — a failed prefetch is
+ * invisible by design; the real fetch on advance reports for it. The
+ * try/catch is new relative to M6a's inline version: a dropped connection
  * used to reject inside a floating promise with nothing to catch it.
  */
-async function fetchSourceUrl(fileId: string, report: boolean): Promise<string | null> {
+type TrackSource = {
+  url: string
+  liked: boolean
+  like_count: number
+  title: string
+  artist: string | null
+}
+
+async function fetchTrackSource(fileId: string, report: boolean): Promise<TrackSource | null> {
   try {
     const res = await fetch(`/api/track/${fileId}/source`, {
       headers: { accept: 'application/json' },
     })
     // Non-JSON means middleware redirected to /login — say so, do not parse.
     if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
-      if (report && label) label.textContent = 'Session ended — reload to sign in.'
+      if (report) setStatus('Session ended — reload to sign in.')
       return null
     }
-    const body = (await res.json()) as { url?: string; message?: string; error?: string }
+    const body = (await res.json()) as Partial<TrackSource> & { message?: string; error?: string }
     if (!res.ok || !body.url) {
-      if (report && label) label.textContent = body.message ?? body.error ?? 'could not load that track'
+      if (report) setStatus(body.message ?? body.error ?? 'could not load that track')
       return null
     }
-    return body.url
+    return {
+      url: body.url,
+      liked: body.liked === true,
+      like_count: typeof body.like_count === 'number' ? body.like_count : 0,
+      title: typeof body.title === 'string' ? body.title : '',
+      artist: typeof body.artist === 'string' ? body.artist : null,
+    }
   } catch {
-    if (report && label) label.textContent = 'could not load that track'
+    if (report) setStatus('could not load that track')
     return null
   }
 }
 
-/** One lookahead URL, at most, for exactly one file id. */
+/** One lookahead source, at most, for exactly one file id. It carries the
+ *  like state with it now — the prefetch is at most twenty seconds old, and
+ *  a second request just to re-ask "is this liked" would undo the point of
+ *  prefetching at all. */
 let lookaheadId: string | null = null
-let lookaheadUrl: string | null = null
+let lookaheadSource: TrackSource | null = null
 
 function clearLookahead(): void {
   lookaheadId = null
-  lookaheadUrl = null
+  lookaheadSource = null
 }
 
-function takeLookahead(fileId: string): string | null {
-  if (lookaheadId !== fileId || lookaheadUrl === null) return null
-  const url = lookaheadUrl
+function takeLookahead(fileId: string): TrackSource | null {
+  if (lookaheadId !== fileId || lookaheadSource === null) return null
+  const src = lookaheadSource
   clearLookahead()
-  return url
+  return src
 }
 
 /**
@@ -388,10 +495,10 @@ function maybePrefetchNext(): void {
   if (next === undefined || lookaheadId === next.file_id) return
   if (!nextSourceLookahead(audio.currentTime, audio.duration)) return
   lookaheadId = next.file_id
-  lookaheadUrl = null
+  lookaheadSource = null
   void (async () => {
-    const url = await fetchSourceUrl(next.file_id, false)
-    if (lookaheadId === next.file_id) lookaheadUrl = url
+    const src = await fetchTrackSource(next.file_id, false)
+    if (lookaheadId === next.file_id) lookaheadSource = src
   })()
 }
 
@@ -406,23 +513,33 @@ function maybePrefetchNext(): void {
 async function startCurrent(startAt: number): Promise<void> {
   if (audio === null || currentFileId === null) return
   const fileId = currentFileId
-  const url = takeLookahead(fileId) ?? (await fetchSourceUrl(fileId, true))
-  if (url === null) return
+  const src = takeLookahead(fileId) ?? (await fetchTrackSource(fileId, true))
+  if (src === null) return
   // A newer claim landed while the URL was in flight — that click outranks
   // this load, exactly as it outranks a restore.
   if (currentFileId !== fileId) return
 
-  audio.src = url
+  audio.src = src.url
   playMeter.reset()
   // §1.2: a play truncated by the cap "says so once". The track name is the
   // ordinary content of this region; the count rides along after it rather
   // than replacing it, so nobody has to choose between knowing what is
   // playing and knowing that 36 tracks did not fit.
-  if (label) {
-    label.textContent = lastTruncation === null
-      ? currentTitle
-      : `${currentTitle} · ${truncationLine(lastTruncation)}`
+  //
+  // The NAME is the link, and the truncation note is not — appending it to
+  // the anchor's text would make "pool · 24 of 60" part of what a screen
+  // reader announces as the link, and part of what a member clicks. So a
+  // truncated play falls back to plain text for the one track it decorates,
+  // and the link returns on the next one.
+  if (lastTruncation === null) {
+    setNowPlaying(currentTitle, fileId)
+  } else {
+    setStatus(`${currentTitle} · ${truncationLine(lastTruncation)}`)
   }
+  // The one place a track START writes the ♥ — the server's answer, arriving
+  // on the same response as the URL. The other writer is the like delegation
+  // itself, which owns the state from the moment a member touches it.
+  setPlayerLike(fileId, src.liked, src.like_count, currentTitle)
   // M4 Task 7 — /review's A/B audition opens at the point of maximum
   // divergence. Only that page renders data-start; `once` matters, or a later
   // seek would be yanked back here on the next metadata event.
@@ -445,7 +562,7 @@ async function startCurrent(startAt: number): Promise<void> {
     // AbortError = a NEWER load superseded this play(). Playback of the newer
     // track is fine; surfacing it was the "sometimes it fails" noise (PR #29).
     if (err instanceof DOMException && err.name === 'AbortError') return
-    if (label) label.textContent = 'That track would not play. Try downloading it.'
+    setStatus('That track would not play. Try downloading it.')
   })
 }
 
@@ -538,7 +655,12 @@ function handleAdvance(event: QueueEvent): void {
     clearLookahead()
     clearPlayerMemory()
     updateMediaSession()
-    if (label) label.textContent = 'Queue finished.'
+    setStatus('Queue finished.')
+    // Nothing is playing, so there is nothing to like and nothing to link
+    // to. Both controls go back to the inert state the markup ships with —
+    // a ♥ pointed at the track that just finished would be a lie, and the
+    // link would be a dead one.
+    setPlayerLike(null, false, 0, '')
     updateToggle()
     return
   }
@@ -883,10 +1005,10 @@ if (audio && toggle) {
         // wrong answer to "that would not play". §5 puts TRACK_FAILED on the
         // mid-play `error` route alone.
         const recovered = (await refreshSource(audio.currentTime, true)) === 'ok'
-        if (!recovered && label && currentFileId === null) {
-          label.textContent = 'Nothing to play yet.'
-        } else if (!recovered && label) {
-          label.textContent = 'That track would not play. Try downloading it.'
+        if (!recovered && currentFileId === null) {
+          setStatus('Nothing to play yet.')
+        } else if (!recovered) {
+          setStatus('That track would not play. Try downloading it.')
         }
       })
     } else {
@@ -1144,20 +1266,16 @@ document.addEventListener('click', (e) => {
       // lie they cannot act on. `need === 0` afterwards means layer 1 now
       // fills every slot — the cap really is what stopped it.
       noteTruncation(result, sourceLabel)
-      if (label) {
-        label.textContent = appendReport({
-          added: result.added ?? 0,
-          offered: result.offered ?? entries.length,
-          label: sourceLabel,
-          full: slotsFor(getState()).need === 0,
-        })
-      }
+      setStatus(appendReport({
+        added: result.added ?? 0,
+        offered: result.offered ?? entries.length,
+        label: sourceLabel,
+        full: slotsFor(getState()).need === 0,
+      }))
     } catch (err) {
-      if (label) {
-        label.textContent = err instanceof SessionExpiredError
-          ? 'Session ended — reload to sign in.'
-          : 'Could not add to the queue.'
-      }
+      setStatus(err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : 'Could not add to the queue.')
     } finally {
       btn.disabled = false
     }
@@ -1224,27 +1342,52 @@ document.addEventListener('submit', (e) => {
 
   const wasLiked = button.getAttribute('aria-pressed') === 'true'
   const prevCount = Number(countEl.textContent ?? '0')
-  const setState = (liked: boolean, count: number) => {
-    button.setAttribute('aria-pressed', String(liked))
-    glyph.textContent = liked ? '♥' : '♡'
-    countEl.textContent = String(count)
+  /**
+   * EVERY BUTTON FOR THIS FILE, not just the one that was submitted.
+   *
+   * Until the player bar grew a ♥ there was only ever one like button per
+   * track on screen, so "the button in this form" and "this track's button"
+   * were the same set. They are not any more: liking the playing track from
+   * the pool row left the bar showing ♡ over the very track it had just
+   * liked, and liking it from the bar left the row stale — one fact, two
+   * contradictory glyphs, on one screen.
+   *
+   * The selector is the fix, and it keeps the handler singular: one
+   * delegation, one optimistic flip, one rollback, one server confirmation.
+   * The two server-rendered buttons are painted from the same pool_get row
+   * and the bar's is painted from the same like columns on /source, so they
+   * agree before the click and this is what keeps them agreeing after it.
+   */
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(
+    `button.likebtn[data-file-id="${CSS.escape(fileId)}"]`)]
+  const paint = (liked: boolean, count: number) => {
+    for (const b of buttons) {
+      const g = b.querySelector('.likeglyph')
+      const c = b.querySelector('.likecount')
+      b.setAttribute('aria-pressed', String(liked))
+      // The bar's button names the track in its aria-label and the two
+      // server-rendered ones do too, so the verb has to flip everywhere the
+      // glyph does — the glyph is aria-hidden and cannot carry it.
+      const name = (b.getAttribute('aria-label') ?? '').replace(/^(Un)?[Ll]ike\s*/, '')
+      b.setAttribute('aria-label', likeActionLabel(liked, name))
+      if (g) g.textContent = likeGlyph(liked)
+      if (c) c.textContent = String(count)
+    }
   }
 
-  setState(!wasLiked, prevCount + (wasLiked ? -1 : 1))
-  button.disabled = true
+  paint(!wasLiked, prevCount + (wasLiked ? -1 : 1))
+  for (const b of buttons) b.disabled = true
   void (async () => {
     try {
       const result = await toggleLike(fileId)
-      setState(result.liked, result.like_count)
+      paint(result.liked, result.like_count)
     } catch (err) {
-      setState(wasLiked, prevCount)
-      if (label) {
-        label.textContent = err instanceof SessionExpiredError
-          ? 'Session ended — reload to sign in.'
-          : err instanceof Error ? err.message : 'Could not update like.'
-      }
+      paint(wasLiked, prevCount)
+      setStatus(err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : err instanceof Error ? err.message : 'Could not update like.')
     } finally {
-      button.disabled = false
+      for (const b of buttons) b.disabled = false
     }
   })()
 }, true)
@@ -1522,16 +1665,14 @@ document.addEventListener('click', (e) => {
   void (async () => {
     try {
       await addToCrate(crateId, fileId)
-      if (label) label.textContent = `added to ${crateName}`
+      setStatus(`added to ${crateName}`)
       if (details instanceof HTMLDetailsElement) details.open = false
     } catch (err) {
-      if (label) {
-        label.textContent = err instanceof DuplicateCrateItemError
-          ? `already in ${crateName}`
-          : err instanceof SessionExpiredError
-            ? 'Session ended — reload to sign in.'
-            : err instanceof Error ? err.message : 'Could not add to crate.'
-      }
+      setStatus(err instanceof DuplicateCrateItemError
+        ? `already in ${crateName}`
+        : err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : err instanceof Error ? err.message : 'Could not add to crate.')
     } finally {
       button.disabled = false
     }
@@ -1580,29 +1721,25 @@ document.addEventListener('submit', (e) => {
     try {
       crateId = await createCrate(name)
     } catch (err) {
-      if (label) {
-        label.textContent = err instanceof SessionExpiredError
-          ? 'Session ended — reload to sign in.'
-          : err instanceof Error ? err.message : 'Could not create crate.'
-      }
+      setStatus(err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : err instanceof Error ? err.message : 'Could not create crate.')
       if (submit instanceof HTMLButtonElement) submit.disabled = false
       return
     }
 
     try {
       await addToCrate(crateId, fileId)
-      if (label) label.textContent = `added to ${name}`
+      setStatus(`added to ${name}`)
       input.value = ''
       if (details instanceof HTMLDetailsElement) details.open = false
       invalidateCratePickerCache()
       void loadCrateList().then(populateCratePickers)
     } catch (err) {
       invalidateCratePickerCache()
-      if (label) {
-        label.textContent = err instanceof SessionExpiredError
-          ? 'Session ended — reload to sign in.'
-          : `"${name}" was created, but adding the track failed — pick it from the list to retry`
-      }
+      setStatus(err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : `"${name}" was created, but adding the track failed — pick it from the list to retry`)
     } finally {
       if (submit instanceof HTMLButtonElement) submit.disabled = false
     }
@@ -1690,7 +1827,8 @@ async function restorePlayer() {
     clearPlayerMemory()
     return
   }
-  const body = (await res.json()) as { url?: string }
+  const body = (await res.json()) as
+    { url?: string; liked?: boolean; like_count?: number; title?: string }
   if (!res.ok || !body.url) {
     // Deleted / no longer visible / not yet available — nothing to resume.
     clearPlayerMemory()
@@ -1698,8 +1836,36 @@ async function restorePlayer() {
   }
 
   currentFileId = entry.file_id
-  currentTitle = entry.title
-  if (label) label.textContent = entry.title
+  /**
+   * THE SERVER'S NAME FOR IT, falling back to the remembered one.
+   *
+   * `entry.title` came out of localStorage and can be up to fourteen days
+   * old (player-memory.ts's staleness window) — long enough for a retag or
+   * a re-analysis to have changed what the pool calls this file. The route
+   * answers from the same `pool_get` row it presigned from, so the fresh
+   * title costs nothing and is simply more correct. The fallback matters
+   * for a file whose display_title is genuinely empty.
+   */
+  currentTitle = typeof body.title === 'string' && body.title !== '' ? body.title : entry.title
+  setNowPlaying(currentTitle, entry.file_id)
+  /**
+   * THE RESUMED TRACK'S ♥, AT ZERO EXTRA REQUESTS — the whole reason the
+   * like state rides on this response rather than a fetch of its own.
+   *
+   * This path already fetched /source at page load, before this change and
+   * unrelated to it: `audio.preload` is "none", so the elapsed/total clock
+   * and the scrubber need a real `src` and an explicit `load()` to show
+   * anything without the member pressing ▶. The ♥ hydrates on the SAME
+   * response. A returning member therefore sees the correct filled-or-hollow
+   * heart on first paint, with no request that did not already happen, and
+   * the zero-requests-at-load invariant is untouched.
+   */
+  setPlayerLike(
+    entry.file_id,
+    body.liked === true,
+    typeof body.like_count === 'number' ? body.like_count : 0,
+    currentTitle,
+  )
   audio.addEventListener('loadedmetadata', () => {
     audio.currentTime = entry.position_s
     updateTime()
@@ -1730,7 +1896,7 @@ async function restorePlayer() {
    * it must back the engine off too. `hydrate: false` because a restore is
    * neither of §5's two triggers.
    */
-  apply({ type: 'RESTORE_CURRENT', entry: resumedEntry(entry.file_id, entry.title) }, false)
+  apply({ type: 'RESTORE_CURRENT', entry: resumedEntry(entry.file_id, currentTitle) }, false)
   // Unconditional, and it is the event above that earns it: the engine now
   // names this track, so the lock screen is describing what is really loaded.
   // This line used to be guarded on the two agreeing, which — before the

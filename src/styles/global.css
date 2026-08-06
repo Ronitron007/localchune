@@ -236,6 +236,15 @@ td.uploader, td.added { color: var(--mid); }
    .btn-danger only, and this is a toggle, not an action button. Bold is
    the only "pressed" cue besides aria-pressed itself. --- */
 .likeform { display: inline-block; }
+/* A `display` declaration on the same element BEATS the UA sheet's
+   `[hidden] { display: none }`, because an author rule always does. That
+   made the player bar's ♥ — which ships `hidden` and is unhidden by site.ts
+   only once a track is known — fully visible on an idle bar, showing ♡ 0
+   over nothing playing. Caught by driving the real CSS in a browser, not by
+   any test: the markup says `hidden` and reads correctly. The two
+   server-rendered like forms never set the attribute, so this rule costs
+   them nothing. */
+.likeform[hidden] { display: none; }
 .likebtn {
   border: none;
   background: none;
@@ -290,6 +299,31 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
 .playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
+/* The track name is a link now — to /track/<id>, set by site.ts on every
+   change. It inherits .nowplaying's ellipsis (the span is the block that
+   clips; the anchor is inline inside it) and --mid, so the bar reads exactly
+   as it did before: this is a link that looks like the label it replaced,
+   not a blue interruption in a monochrome bar. Underline on hover/focus is
+   the affordance. */
+.playerbar .nowplayinglink { color: inherit; text-decoration: none; }
+.playerbar .nowplayinglink:hover,
+.playerbar .nowplayinglink:focus-visible { text-decoration: underline; }
+
+/* The ♥, beside the title. .likebtn's own rule (see the like-toggle block
+   above) already strips the button chrome and keeps the glyph monochrome —
+   this only gives it a real tap target, which the pool table's dense rows
+   deliberately do not have room for. 44px is the WCAG 2.5.8 target size, and
+   the bar is the one place a thumb reaches for it on a phone. */
+.playerbar .playerlike { flex: none; }
+.playerbar .likebtn {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+}
+
 /* On a phone the scrubber has no room to be a middle sliver between name
    and time — give it its own full-width row below the controls instead.
    DOM order stays name/toggle/next/seek/time (site.ts doesn't care); `order`
@@ -303,6 +337,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    `.playertoggle` rule: equal specificity, and source order is what decides. */
 @media (max-width: 640px) {
   .playerbar .nowplaying { order: 1; }
+  /* SAME ORDER GROUP AS THE TITLE, on purpose. Equal `order` values lay out
+     in DOM order, and .playerlike follows #player-label in the markup — so
+     the ♥ stays welded to the name it is about, on both rows and at every
+     width, instead of drifting into the transport cluster. */
+  .playerbar .playerlike { order: 1; }
   .playerbar .playertoggle { order: 2; }
   .playerbar .playernext { order: 3; }
   .playerbar .playertime { order: 4; }

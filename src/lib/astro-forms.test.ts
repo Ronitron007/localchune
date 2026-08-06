@@ -103,14 +103,25 @@ describe('every POST form opts out of ClientRouter', () => {
     expect(posts.filter((f) => /enctype/i.test(f.tag))).toEqual([])
   })
 
-  // M6b, stated POSITIVELY so it has to be argued with rather than merely
+  // M6b stated POSITIVELY, so it has to be argued with rather than merely
   // not noticed: the queue drawer adds no form at all. The queue is CLIENT
   // state — there is no server resource for a queue operation to POST to —
   // so every control in it is <button type="button">. A task that finds
   // itself wanting a form in the drawer has invented server state the queue
   // does not have; see src/layouts/shell-bundle.test.ts for the full
   // argument and the markup-level assertion.
-  it('the queue drawer contributes no POST form to that list', () => {
-    expect(posts.filter((f) => f.file.includes('Shell.astro'))).toEqual([])
+  //
+  // THE SHELL NOW HAS EXACTLY ONE POST FORM, and it is the player bar's ♥.
+  // That does not weaken the sentence above, it sharpens it: a LIKE has a
+  // real server resource (/api/track/[id]/like, migration 26's toggle_like),
+  // so it is a form; a queue operation still has none, so it is not. This
+  // assertion counts rather than forbids, because the interesting failure is
+  // a SECOND form appearing in the shell — which would mean either the queue
+  // grew server state or a control was built as a form for the wrong reason.
+  it('the shell contributes exactly one POST form: the player bar\'s like', () => {
+    const shellForms = posts.filter((f) => f.file.includes('Shell.astro'))
+    expect(shellForms.length).toBe(1)
+    expect(shellForms[0].tag).toContain('id="player-like"')
+    expect(shellForms[0].tag).toContain('class="likeform playerlike"')
   })
 })
