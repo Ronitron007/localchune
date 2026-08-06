@@ -30,8 +30,21 @@
      copies used to drift. Measured against the rendered bar: 47px on a
      desktop row, 84.5px below 640px where the seek slider takes its own
      line. Rounded up to the next multiple of 8. Re-measure and update
-     this value whenever the bar's contents or padding change. */
-  --bar-h: 48px;
+     this value whenever the bar's contents or padding change. Measured
+     after the 44px floor: 65px desktop, 117px below 640px. Rounded up. */
+  --bar-h: 68px;
+
+  /* THE minimum interactive box. Not a suggestion, and a token rather than
+     a comment because the failure was systemic: before this, NOTHING
+     interactive in the app reached 44px. .btn* computed to ~27px tall,
+     .likebtn had padding: 0, `a.play` was a bare glyph at 14x18.5px, and
+     `.cratepick > summary` was 1.6em wide. Every recipe below references
+     this one name so the number is never retyped.
+
+     The rule it encodes: a control's VISUAL box may be small in a dense
+     row; its HIT box may never be under 44px. Where the two must differ,
+     a ::after overlay extends the hit box and paints nothing. */
+  --tap: 44px;
 
   /* Task 8 — the ONE deliberate colour exception to the brutalist
      monochrome above. These four values exist for .btn/.btn-secondary/
@@ -78,7 +91,7 @@ body {
    line), so the reservation and every offset derived from --bar-h grow
    with it. One declaration, and the derived rules follow for free. */
 @media (max-width: 640px) {
-  :root { --bar-h: 88px; }
+  :root { --bar-h: 120px; }
 }
 
 /* Vertical rhythm between a page's top-level blocks (h1, filter form,
@@ -172,8 +185,14 @@ input, select, button {
   accent-color: var(--fg);
   border: 1px solid var(--line);
   padding: calc(var(--pad-1) / 2) var(--pad-1);
+  /* The 44px floor, applied at the widest selector in the file so a
+     control added tomorrow inherits it without anyone remembering to. */
+  min-height: var(--tap);
 }
-input[type='checkbox'], input[type='radio'] { border: none; }
+/* A 13px checkbox with a 44px label is the correct shape; a 44px checkbox
+   is not. These two opt out of the floor and their labels take it on
+   below — see .filterbar label. */
+input[type='checkbox'], input[type='radio'] { border: none; min-height: 0; }
 /* Buttons sitting side by side in a row (upload actions, retry rows, tag
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
@@ -192,7 +211,13 @@ button + button { margin-left: var(--pad-1); }
    of these classes (see src/layouts/Shell.astro). A link kept as a link
    (e.g. the filter bar's Clear) does not take one either. */
 .btn, .btn-secondary, .btn-danger {
-  display: inline-block;
+  /* inline-flex, not inline-block: min-height only reads as a box if the
+     label is centred inside it, and a 44px button with top-aligned text
+     looks like a bug rather than a target. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
   border-width: 1px;
   border-style: solid;
   padding: calc(var(--pad-1) / 2) var(--pad-2);
@@ -238,10 +263,21 @@ button + button { margin-left: var(--pad-1); }
   gap: var(--pad-1);
   padding: var(--pad-1) var(--pad-2);
 }
-.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* The label carries the 44px box for the checkbox it wraps (see the
+   input[type='checkbox'] opt-out above) — the whole "half / double" or
+   "harmonic" phrase becomes the target, which is bigger and easier than
+   the box itself could ever be. */
+.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; min-height: var(--tap); }
 .filterbar input[type='number'] { width: 4.5rem; }
 
-/* --- the table --- */
+/* --- the table ---
+   `.tracktable` had NO CSS rule at all, which is why a 15-column table
+   scrolled the whole PAGE sideways instead of scrolling itself. The
+   section owns the overflow now: the table may be as wide as it needs to
+   be and the page never is. Growing every row control to 44px widened the
+   table by ~100px, so this is the rule that keeps that fix from costing a
+   horizontal page scroll on a desktop. */
+.tracktable { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }
 th, td {
   text-align: left;
@@ -269,9 +305,61 @@ td.uploader, td.added { color: var(--mid); }
   color: inherit;
   padding: 0;
   cursor: pointer;
+  /* Was 9.5 x 30px. Height comes from the global button floor; the width
+     comes from the hit-area extender below, because "♥ 12" is under 44px
+     wide and widening the visual box would push the likes column out. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2em;
+  position: relative;
 }
 .likebtn[aria-pressed='true'] { font-weight: bold; }
 .likebtn:disabled { cursor: wait; opacity: 0.6; }
+
+/* --- the 44px hit-area extender ---
+   Paints nothing. Centres a >=44px transparent box on a control whose
+   VISUAL box has to stay small in a dense row, so the thumb target is
+   full size while the layout is not. Used by every row-level control the
+   audit measured under 44px. `max(100%, ...)` never SHRINKS a control
+   that is already big enough. */
+.likebtn::after,
+td.download > a::after,
+.cratecontrols button::after,
+.tageditor form.tagform button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, var(--tap));
+  height: max(100%, var(--tap));
+}
+td.download > a,
+.cratecontrols button,
+.tageditor form.tagform button { position: relative; }
+
+/* `a.play` is a LINK, so the global button floor never reached it — it was
+   a bare ▶ glyph at 14 x 18.5px, the single worst target in the app and
+   the one a member hits most. It becomes a real 44px box; below 640px the
+   whole row becomes the play control (Task 3.3) and this box stays as the
+   visual affordance inside it. `td.download`'s ↓ is the same shape. */
+/* ▶ and +Q are one control pair, and two 44px boxes in a narrow cell wrap
+   onto two lines — a 105px row. Keeping them on one line keeps the row at
+   44. Deliberately NOT `display: flex` on the cell: overriding a <td>'s
+   display: table-cell drops it out of the table's column model and the
+   browser wraps it in an anonymous cell. nowrap does the whole job. */
+td.controls { white-space: nowrap; }
+
+a.play,
+td.download > a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  text-decoration: none;
+}
 .signals { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-2); }
 .signal { color: var(--mid); }
 
@@ -317,7 +405,17 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   flex: 1 1 6rem;
   min-width: 0;
 }
-.playerbar .playertoggle { flex: none; }
+/* Play/pause and skip take no .btn tier (survive-list #8's transport
+   exemption) so they never inherited the tier's geometry either. The floor
+   applies to them as a control, not as a tier. */
+.playerbar .playertoggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
 .playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
 .playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
 
@@ -450,27 +548,32 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    has to clear it too. Its height is not a constant — the drawer grows with
    the queue up to 60vh — so site.ts measures the rendered drawer and writes
    --queue-height onto <body>, and body.queueopen adds it here. One class, one
-   variable, naming the coupling instead of hiding it. The two numbers below
-   stay exactly what UX.12 eyeballed; nothing about them changed. */
+   variable, naming the coupling instead of hiding it.
+
+   THE TWO EYEBALLED NUMBERS ARE GONE. `3.5rem` and `6.75rem` were guesses
+   at the bar's one-row and two-row heights, and the 44px floor invalidated
+   both the moment it grew the bar. They are now one expression over
+   --bar-h, which the same media query already sets per breakpoint — so the
+   mobile override disappears too, and survive-list #5's "nothing binds
+   them automatically" stops being true. */
 .uploadchip-slot {
   position: fixed;
   right: var(--pad-2);
-  bottom: 3.5rem;
+  bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-1));
   pointer-events: none;
 }
-body.queueopen .uploadchip-slot { bottom: calc(3.5rem + var(--queue-height, 0px)); }
-/* Below 640px the player bar is TWO rows (the seek slider is forced onto its
-   own line), so the chip has to clear roughly twice as much. It stays
-   right-anchored and content-sized here rather than stretching to the full
-   width — the text is a dozen characters, and a full-width bar on a phone
-   reads as a second toolbar rather than as a pill. */
-@media (max-width: 640px) {
-  .uploadchip-slot { bottom: 6.75rem; }
-  body.queueopen .uploadchip-slot { bottom: calc(6.75rem + var(--queue-height, 0px)); }
+body.queueopen .uploadchip-slot {
+  bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-1) + var(--queue-height, 0px));
 }
 .uploadchip {
   pointer-events: auto;
-  display: block;
+  /* Column flex, stretched: the text sits above the progress bar and the
+     bar must still span the chip's full width, so this deliberately does
+     NOT centre on the cross axis. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--tap);
   padding: calc(var(--pad-1) / 2) var(--pad-1);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -622,7 +725,10 @@ tr[draggable='true']:active { cursor: grabbing; }
 .cratepick { position: relative; display: inline-block; }
 .cratepick > summary {
   list-style: none;
-  width: 1.6em;
+  /* Was width: 1.6em (~26px). The summary carries .btn-secondary, so the
+     tier's own inline-flex centring applies; this only has to stop the
+     fixed width from defeating the floor. */
+  min-width: var(--tap);
   text-align: center;
 }
 .cratepick > summary::-webkit-details-marker { display: none; }
