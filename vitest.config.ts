@@ -13,6 +13,19 @@
 /// <reference types="vitest/config" />
 import { getViteConfig } from 'astro/config'
 
+// wrangler.jsonc marks the R2 bucket and the analyze queue `"remote": true`,
+// which is right for `astro dev` — a local miniflare bucket would disagree
+// with the presigned URLs the ingest path hands out. It is wrong here.
+// Loading the real Astro pipeline loads the Cloudflare vite plugin with it,
+// and that plugin opens a REMOTE PROXY SESSION against the account for any
+// remote binding — which needs a CLOUDFLARE_API_TOKEN. CI has none, so the
+// whole suite died at startup with "Failed to start the remote proxy
+// session" before a single test ran. This is the plugin's own opt-out
+// (@cloudflare/vite-plugin reads it through vite's loadEnv). Nothing in
+// this suite touches a binding: the tests read source, run pure modules,
+// and render components with the container API.
+process.env.CLOUDFLARE_VITE_FORCE_LOCAL = 'true'
+
 export default getViteConfig({
   // The Astro pipeline brings a dev server with it, and its websocket
   // listener binds a fixed port. Two checkouts running vitest at once (the
