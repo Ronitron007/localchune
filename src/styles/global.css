@@ -292,16 +292,21 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 
 /* On a phone the scrubber has no room to be a middle sliver between name
    and time — give it its own full-width row below the controls instead.
-   DOM order stays name/toggle/seek/time (site.ts doesn't care); `order`
-   alone reflows it: row 1 = name, play/pause, elapsed/total; row 2 = seek,
+   DOM order stays name/toggle/next/seek/time (site.ts doesn't care); `order`
+   alone reflows it: row 1 = name, play/pause, ⏭, elapsed/total; row 2 = seek,
    forced onto its own line by flex-basis: 100%. Desktop is untouched —
    this block only applies at the same 640px breakpoint the rest of the
-   site already treats as "mobile" (see the body padding rule above). */
+   site already treats as "mobile" (see the body padding rule above).
+
+   `.playernext` carries `.playertoggle` too (it is the same control shape and
+   takes the same `flex: none` above), so its own `order` MUST come after the
+   `.playertoggle` rule: equal specificity, and source order is what decides. */
 @media (max-width: 640px) {
   .playerbar .nowplaying { order: 1; }
   .playerbar .playertoggle { order: 2; }
-  .playerbar .playertime { order: 3; }
-  .playerbar .playerseek { order: 4; flex: 1 1 100%; }
+  .playerbar .playernext { order: 3; }
+  .playerbar .playertime { order: 4; }
+  .playerbar .playerseek { order: 5; flex: 1 1 100%; }
 }
 
 /* --- the queue drawer (M6b) ---

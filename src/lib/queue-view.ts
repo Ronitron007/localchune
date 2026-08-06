@@ -109,6 +109,39 @@ export function toQueueEntry(
 }
 
 /**
+ * A QueueEntry for a track the RESUME path put into the transport, built from
+ * the only two things player memory holds: the file id and the label.
+ *
+ * WHY THE ARTIST IS NULL. player-memory.ts stores `title` as the player bar
+ * renders it — already "Artist — Title" — so splitting it back apart would
+ * mean guessing at an em dash that can legitimately appear inside either half.
+ * `entryTitle` joins on exactly the same rule, so a null artist here renders
+ * the stored label verbatim in the drawer and in the status region: identical
+ * text, no guess.
+ *
+ * WHY bpm/key ARE NULL, AND WHY THAT IS SURVIVABLE. Player memory never had
+ * them. A seed without them scores every candidate identically, so only the
+ * FIRST auto pick is arbitrary — `greedyWalk` re-seeds from each pick, so the
+ * chain is harmonic again from the second entry on. The alternative was a
+ * metadata request on every returning member's first paint, which is the one
+ * thing §5's deferral exists to prevent. Full metadata arrives by itself the
+ * moment anything goes through the engine: queue memory carries it, and
+ * RESTORE_CURRENT never overwrites a current that is already there.
+ */
+export function resumedEntry(fileId: string, title: string): QueueEntry {
+  return {
+    file_id: fileId,
+    display_artist: null,
+    display_title: title,
+    duration_ms: null,
+    bpm: null,
+    key_camelot: null,
+    origin: 'current',
+    source_label: null,
+  }
+}
+
+/**
  * The list a play click means. `index` is where the clicked track sits in it;
  * `reduce`'s PLAY_TRACK takes everything AFTER that index as the new layer 1.
  *

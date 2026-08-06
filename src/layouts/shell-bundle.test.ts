@@ -62,6 +62,27 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     expect(shell).toContain('id="queue-toggle"')
   })
 
+  it('renders the transport row: play/pause, then ⏭, then seek and clock', () => {
+    // The queue shipped with no on-page skip control at all — the only way to
+    // reach the next track was the lock screen, which does not exist on a
+    // desktop. Order is asserted because the mobile `order` rules in
+    // global.css are written against this DOM order.
+    const ids = [...shell.matchAll(/id="(player-[a-z]+)"/g)].map((m) => m[1])
+    expect(ids).toEqual(['player-label', 'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio'])
+  })
+
+  it('ships the skip button hidden, like every other JS-only control', () => {
+    const btn = shell.slice(shell.indexOf('id="player-next"'))
+    expect(btn.slice(0, btn.indexOf('>'))).toContain('hidden')
+  })
+
+  it('keeps the skip button inside the persisted player node', () => {
+    // Outside it, a ClientRouter navigation would recreate the button and drop
+    // the listener site.ts bound once, at module load.
+    const persisted = shell.slice(shell.indexOf('transition:persist="player"'))
+    expect(persisted).toContain('id="player-next"')
+  })
+
   it('keeps the drawer inside the persisted player node', () => {
     // Outside it, a ClientRouter navigation recreates the drawer and it closes
     // itself on every filter submit and every sort click.
