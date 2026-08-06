@@ -26,9 +26,42 @@
 
   /* Spacing scale — breathing room only. No new colour, no radius, no
      shadow rides along with these; see the header note above. */
+  --pad-0: 4px;    /* icon-to-label gap, chip padding      */
   --pad-1: 8px;
   --pad-2: 16px;
   --pad-3: 24px;
+  --pad-4: 32px;   /* section separation at 640px and up   */
+
+  /* =========================================================
+     TYPE. Owner decision: the system sans stack, not a webfont and not
+     the browser-default serif this app shipped with. The audit's verdict
+     was that "shabby" is mostly the default serif plus sub-44px controls
+     rather than the monochrome system itself, and a serif reads as "a
+     document" however good the borders get.
+
+     Zero webfonts, zero requests, zero bytes, zero CLS — the performance
+     profile is IDENTICAL to the serif, because no file is fetched either
+     way. That is the whole reason this branch was recommended.
+
+     --font-num pins what `.num` and `.keychip` already did informally
+     (`font-family: monospace`), so a phone cannot decide the answer is
+     Courier. A numeric column in a proportional face is a bug at any
+     font decision. */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+             'Helvetica Neue', Arial, sans-serif;
+  --font-num: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* The scale steps DOWN from the 16px browser default, which is why the
+     app currently reads spacious-but-unstyled. `html` keeps its 16px
+     root size on purpose so every existing `rem` length (body's 72rem,
+     the 16rem form inputs) means what it meant before — the type shrinks,
+     the layout does not move under it. */
+  --text-micro: 11px;  /* labels, eyebrows, column heads — 700, uppercase */
+  --text-xs: 12px;     /* chips, meta, table secondary                    */
+  --text-sm: 13px;     /* body, list rows, buttons                        */
+  --text-base: 15px;   /* prose, form values                              */
+  --text-lg: 17px;     /* card titles, h2                                 */
+  --text-xl: 22px;     /* h1                                              */
 
   /* The player bar's height, DECLARED rather than eyeballed. Everything
      that has to clear the bar (the body's bottom reservation, the upload
@@ -209,6 +242,10 @@
 html {
   background: var(--bg);
   color: var(--fg);
+  font-family: var(--font-ui);
+  /* NOT font-size. The root stays at the browser's 16px so every rem in
+     this file keeps its current meaning; the readable size is set on
+     <body> below. */
   /* The browser's horizontal back-swipe and a bottom sheet's drag are the
      same gesture on a phone. Turning the overscroll off here means a drag
      that starts inside a panel never navigates away mid-gesture. */
@@ -218,6 +255,8 @@ html {
 body {
   margin: 0 auto;
   max-width: 72rem;
+  font-size: var(--text-base);
+  line-height: 1.45;
   /* Page margins: tighter on a phone, roomier once there is width to
      spare. The bottom reservation is DERIVED from the bar's own height
      plus the home-indicator inset, not the hard-coded 6rem it replaces —
@@ -289,10 +328,14 @@ body.loginpage > *, body.centerpage main > * { max-width: 30rem; }
 
 a { color: var(--fg); }
 
-h1, h2 { font-weight: bold; }
+h1, h2 { font-weight: bold; line-height: 1.15; }
+h1 { font-size: var(--text-xl); }
+h2 { font-size: var(--text-lg); }
+h3 { font-size: var(--text-base); }
 
-/* Numeric data is the one permitted second face. */
-.num, .keychip { font-family: monospace; }
+/* Numeric data is the one permitted second face. The stack is pinned so
+   a phone with no ui-monospace cannot decide the answer is Courier. */
+.num, .keychip, .reason { font-family: var(--font-num); }
 
 /* --- nav / footer --- */
 .appnav {
@@ -334,6 +377,14 @@ input, select, button {
    is not. These two opt out of the floor and their labels take it on
    below — see .filterbar label. */
 input[type='checkbox'], input[type='radio'] { border: none; min-height: 0; }
+
+/* 16px on a phone REGARDLESS of the type scale. Anything smaller makes
+   iOS Safari zoom the viewport when the field takes focus, and that zoom
+   does not undo itself — the member is left on a page they now have to
+   pinch back out of. This is the one place a literal beats the scale. */
+@media (max-width: 640px) {
+  input, select, textarea { font-size: 16px; }
+}
 /* Buttons sitting side by side in a row (upload actions, retry rows, tag
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
@@ -772,7 +823,8 @@ body.queueopen .uploadchip-slot {
 .claimform input[type='text'] { width: 16rem; }
 
 .explain, .reason { color: var(--mid); }
-.reason { font-family: monospace; }
+/* .reason takes --font-num with .num and .keychip, above — a raw error
+   string is machine output and reads as such. */
 .empty { border: 1px solid var(--faint); padding: var(--pad-2); color: var(--mid); }
 .empty a, .empty p { color: var(--fg); }
 .counts { color: var(--mid); }
