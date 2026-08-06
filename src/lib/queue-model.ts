@@ -62,6 +62,23 @@ export type AutoMethod = (typeof AUTO_METHODS)[number]
 export const DEFAULT_METHOD: AutoMethod = 'off'
 
 /**
+ * What each method is CALLED, in the drawer's method selector and in the
+ * `UP NEXT · AUTO — MIX` section title.
+ *
+ * It lives here, not in queue-strategies.ts, for the reason HISTORY_MAX lives
+ * here: the drawer renders the label on every page and must not import the
+ * strategy registry to learn it — that would pull the Camelot scorer into the
+ * render path. queue-strategies.ts reads these for its own `Strategy.label`,
+ * so there is one string per method and not two that have to agree.
+ */
+export const METHOD_LABELS: Record<AutoMethod, string> = {
+  off: 'OFF',
+  harmonic: 'MIX',
+  bpm: 'TEMPO',
+  shuffle: 'SHUFFLE',
+}
+
+/**
  * Where an entry came from. `source_label` (the crate name, "pool", or a
  * filter description) is the only way a reader can tell layer 1 from layer 2
  * without reading this file, so it is part of the entry, not of the render.

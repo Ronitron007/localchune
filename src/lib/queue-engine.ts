@@ -66,6 +66,12 @@ export type QueueEvent =
   | { type: 'SKIP'; queue: readonly QueueEntry[] }
   | { type: 'TRACK_ENDED'; queue: readonly QueueEntry[] }
   | { type: 'REMOVE_QUEUE_ENTRY'; index: number; queue: readonly QueueEntry[] }
+  | {
+    type: 'MOVE_QUEUE_ENTRY'
+    index: number
+    dir: 'up' | 'down'
+    queue: readonly QueueEntry[]
+  }
   | { type: 'TRACK_FAILED'; file_id: string; queue: readonly QueueEntry[] }
   | { type: 'SET_METHOD'; method: AutoMethod }
   | { type: 'CLEAR_QUEUE' }
@@ -303,6 +309,35 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
         // immediately follows re-picks it and the button looks broken.
         next.suppressed = pushFront(next.suppressed, [target.file_id], HISTORY_MAX)
       }
+      return { state: next }
+    }
+
+    /**
+     * The drawer's ↑ / ↓. LAYER 1 ONLY, and the restriction is not a
+     * limitation but the model: layer 2 has no identity across regenerations
+     * — an auto entry that "moved" would be re-ranked into a different place
+     * by the very next strategy run, so the button would appear to do nothing
+     * at random. `intent` is the one part of the queue with an order the user
+     * owns, and it is the only part that can be reordered.
+     *
+     * Order is swapped INSIDE `intent` rather than inside the rendered array,
+     * because the rendered array is derived and the intent layer is what
+     * persists. A boundary move (first up, last down) is a no-op that still
+     * returns a new state, same total-function discipline as every case here.
+     */
+    case 'MOVE_QUEUE_ENTRY': {
+      const next = copy(state)
+      if (event.index <= 0 || event.index >= event.queue.length) return { state: next }
+      const target = event.queue[event.index]
+      const at = next.intent.findIndex((e) => e.file_id === target.file_id)
+      if (at < 0) return { state: next }
+      const to = event.dir === 'up' ? at - 1 : at + 1
+      if (to < 0 || to >= next.intent.length) return { state: next }
+      const reordered = next.intent.slice()
+      const tmp = reordered[at]
+      reordered[at] = reordered[to]
+      reordered[to] = tmp
+      next.intent = reordered
       return { state: next }
     }
 

@@ -452,6 +452,58 @@ describe('REMOVE_QUEUE_ENTRY', () => {
   })
 })
 
+describe('MOVE_QUEUE_ENTRY — the drawer\'s ↑ / ↓', () => {
+  const s = state({ current: entry('c'), intent: many(3) })
+  const auto = [entry('a0', { origin: 'auto' }), entry('a1', { origin: 'auto' })]
+  const queue = rendered(s, auto)
+
+  it('swaps a pin with the one above it', () => {
+    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e2', 'e1'])
+  })
+
+  it('swaps a pin with the one below it', () => {
+    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 1, dir: 'down', queue })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e0', 'e2'])
+  })
+
+  // Layer 2 has no identity across regenerations: an auto entry that "moved"
+  // would be re-ranked into a different place by the very next strategy run,
+  // so the button would appear to work at random. Only layer 1 has an order
+  // the user owns.
+  it('refuses to move an AUTO entry — layer 2 has no order to own', () => {
+    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 4, dir: 'up', queue })
+    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('is a no-op at either boundary', () => {
+    expect(reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 1, dir: 'up', queue })
+      .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+    expect(reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'down', queue })
+      .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('refuses to move what is playing, and any out-of-range index', () => {
+    for (const index of [0, -1, 99]) {
+      const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index, dir: 'up', queue })
+      expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+      expect(next.current?.file_id).toBe('c')
+    }
+  })
+
+  it('never mutates the input state', () => {
+    const input = frozen(state({ current: entry('c'), intent: many(3) }))
+    const { state: next } = reduce(input, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue })
+    expect(input.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+    expect(next.intent).not.toBe(input.intent)
+  })
+
+  it('never prompts — reordering is not a replace', () => {
+    expect(requiresClearConfirm(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue }))
+      .toBe(false)
+  })
+})
+
 describe('TRACK_FAILED', () => {
   const s = state({ current: entry('c'), intent: many(2) })
   const queue = rendered(s)

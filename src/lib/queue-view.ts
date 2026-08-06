@@ -26,7 +26,9 @@
  * does: whatever the drawer's render path imports is shipped to every page.
  */
 
-import { QUEUE_MAX, type QueueEntry, type QueueOrigin } from './queue-model'
+import {
+  METHOD_LABELS, QUEUE_MAX, type QueueEntry, type QueueOrigin, type QueueState,
+} from './queue-model'
 
 /** How early the next entry's signed URL is fetched. A URL held for twenty
  *  seconds cannot meaningfully expire (presigned GETs live an hour), and it is
@@ -203,4 +205,136 @@ export function appendReport({ added, offered, label, full = true }: AppendOutco
       : `added ${added} of ${offered}${from}`
   }
   return `added ${added} track${added === 1 ? '' : 's'}${from}`
+}
+
+// ------------------------------------------------------------- the drawer
+
+/** Artist and title on one line, exactly as the player bar joins them, so a
+ *  row in the drawer and the name in the status region read identically. */
+export function entryTitle(e: QueueEntry): string {
+  return e.display_artist === null || e.display_artist === ''
+    ? e.display_title
+    : `${e.display_artist} — ${e.display_title}`
+}
+
+export interface QueueRow {
+  /**
+   * THE INDEX INTO THE RENDERED ARRAY, and the drawer's entire contract with
+   * the reducer: `SELECT_QUEUE_ENTRY {index}` and `REMOVE_QUEUE_ENTRY {index}`
+   * are resolved against the same array these rows were built from. Row 3 must
+   * mean queue[3] or a click plays the wrong track.
+   */
+  index: number
+  entry: QueueEntry
+  /** `current` is not removable — there is no REMOVE for what is playing;
+   *  SKIP is that gesture. Everything behind it is. */
+  removable: boolean
+}
+
+export interface QueueSection {
+  id: 'now' | 'yours' | 'auto'
+  title: string
+  rows: QueueRow[]
+  /** The one line under the heading: a truncation count, an explanation for an
+   *  empty section, or nothing. */
+  note: string | null
+}
+
+export interface RenderOptions {
+  /** From the last write that did not fit — `warehouse · 24 of 60`. */
+  truncation?: { label: string | null; added: number; offered: number } | null
+  /** Why the last regeneration produced no tail. `regenerate` swallows a port
+   *  failure by design and returns a tail-less queue with no exception, so
+   *  without this an unreachable pool and an exhausted one look identical. */
+  candidateError?: string | null
+}
+
+/**
+ * THE SEAM, MADE VISIBLE. Three labelled sections — NOW PLAYING, YOUR QUEUE,
+ * UP NEXT · AUTO — because they are three real fields of `QueueState`, not
+ * three CSS classes over one array. A member has to be able to see at a glance
+ * which part of what they are looking at survives a strategy switch, and the
+ * answer (all of layer 1, none of layer 2) is only obvious if the boundary is
+ * drawn.
+ *
+ * MEMBERSHIP COMES FROM `state.intent`, NOT FROM `entry.origin`. The origin is
+ * a provenance label a persisted entry could carry from an older build; the
+ * intent layer is the authority on what is pinned, and it is what `reduce`
+ * itself consults. The two agree today, and this function keeps working the
+ * day they do not.
+ *
+ * Pure: takes the rendered array and the state, returns a description. It does
+ * not touch the DOM, and it imports queue-model alone — whatever the drawer's
+ * render path imports is shipped to every page in the app.
+ */
+export function renderQueueSections(
+  queue: readonly QueueEntry[], state: QueueState, opts: RenderOptions,
+): QueueSection[] {
+  const pinned = new Set(state.intent.map((e) => e.file_id))
+  const now: QueueRow[] = []
+  const yours: QueueRow[] = []
+  const auto: QueueRow[] = []
+
+  queue.forEach((entry, index) => {
+    if (index === 0 && state.current !== null) {
+      now.push({ index, entry, removable: false })
+    } else if (pinned.has(entry.file_id)) {
+      yours.push({ index, entry, removable: true })
+    } else {
+      auto.push({ index, entry, removable: true })
+    }
+  })
+
+  const methodLabel = METHOD_LABELS[state.method]
+  const failed = opts.candidateError ?? null
+
+  return [
+    {
+      id: 'now',
+      title: 'NOW PLAYING',
+      rows: now,
+      note: now.length === 0 ? 'Nothing playing.' : null,
+    },
+    {
+      id: 'yours',
+      title: 'YOUR QUEUE',
+      rows: yours,
+      // The truncation line belongs to layer 1: it counts what a play or an
+      // append put there, and it is the only place the 36 tracks that did not
+      // fit are ever mentioned.
+      note: opts.truncation != null
+        ? truncationLine(opts.truncation)
+        : yours.length === 0 ? 'Nothing queued by hand.' : null,
+    },
+    {
+      id: 'auto',
+      title: `UP NEXT · AUTO — ${methodLabel}`,
+      rows: auto,
+      note: autoNote(state, auto.length, failed),
+    },
+  ]
+}
+
+/**
+ * Why the auto section looks the way it does. Four distinct answers, and
+ * collapsing them into one blank space is how "autoplay is off" gets mistaken
+ * for "the mix is broken".
+ *
+ * A FAILED FETCH OUTRANKS EVERYTHING. An empty MIX section after a dropped
+ * connection is not a musical dead end, and saying "nothing harmonically
+ * close" there would be a diagnosis of the pool for a fault in the network.
+ */
+function autoNote(state: QueueState, tailLength: number, failed: string | null): string | null {
+  if (failed !== null) return failed
+  if (state.method === 'off') {
+    return 'Autoplay is off. Playback stops when the queue runs out.'
+  }
+  if (tailLength > 0) return null
+  if (state.current === null && state.intent.length === 0) {
+    return 'Play something to seed the mix.'
+  }
+  // §1.3 cases 2-5: a small pool, a narrow band already exhausted this
+  // session, or an unanalysed seed. All of them are "correct behaviour, not a
+  // defect", and all of them look the same from here.
+  return 'Nothing harmonically close is left in the pool.'
 }

@@ -4,10 +4,11 @@
 // worker includes Essentia. LICENSE explains why.
 
 import { describe, expect, it } from 'vitest'
-import { QUEUE_MAX, type QueueEntry } from './queue-model'
+import { QUEUE_MAX, emptyState, type QueueEntry, type QueueState } from './queue-model'
 import {
-  CRATE_TRACK_KEYS, LOOKAHEAD_S, appendReport, nextSourceLookahead, readListContext,
-  toCrateTrack, toQueueEntry, truncationLine, type QueueRowData,
+  CRATE_TRACK_KEYS, LOOKAHEAD_S, appendReport, entryTitle, nextSourceLookahead,
+  readListContext, renderQueueSections, toCrateTrack, toQueueEntry, truncationLine,
+  type QueueRowData,
 } from './queue-view'
 
 const row = (over: Partial<QueueRowData> & { file_id: string }): QueueRowData => ({
@@ -192,6 +193,133 @@ describe('nextSourceLookahead — the T-20 s band', () => {
 
   it('is true from the first second of a track shorter than the band', () => {
     expect(nextSourceLookahead(0, 10)).toBe(true)
+  })
+})
+
+describe('renderQueueSections — the layer seam is visible', () => {
+  const entry = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({
+    file_id: id,
+    display_artist: 'Artist',
+    display_title: `Title ${id}`,
+    duration_ms: 240000,
+    bpm: 128,
+    key_camelot: '8A',
+    origin: 'list',
+    source_label: 'pool',
+    ...over,
+  })
+
+  const state = (over: Partial<QueueState> = {}): QueueState => ({ ...emptyState(), ...over })
+
+  it('renders three sections, always, in play order', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), intent: [entry('b')] })
+    const queue = [entry('a', { origin: 'current' }), entry('b'), entry('c', { origin: 'auto' })]
+    const out = renderQueueSections(queue, s, {})
+    expect(out.map((sec) => sec.id)).toEqual(['now', 'yours', 'auto'])
+  })
+
+  // A user must be able to see at a glance which part survives a strategy
+  // switch. Three real fields, not three CSS classes over one array.
+  it('puts each entry in the section its origin says, with its queue index', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), intent: [entry('b'), entry('c')] })
+    const queue = [
+      entry('a', { origin: 'current' }), entry('b'), entry('c'),
+      entry('d', { origin: 'auto' }), entry('e', { origin: 'auto' }),
+    ]
+    const [now, yours, auto] = renderQueueSections(queue, s, {})
+    expect(now.rows.map((r) => r.entry.file_id)).toEqual(['a'])
+    expect(yours.rows.map((r) => r.entry.file_id)).toEqual(['b', 'c'])
+    expect(auto.rows.map((r) => r.entry.file_id)).toEqual(['d', 'e'])
+    // The index is the drawer's whole contract with the reducer: row 3 must
+    // mean queue[3], or a click plays the wrong track.
+    expect([...now.rows, ...yours.rows, ...auto.rows].map((r) => r.index)).toEqual([0, 1, 2, 3, 4])
+  })
+
+  it('titles the auto section with the live method label', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), method: 'harmonic' })
+    const out = renderQueueSections([entry('a', { origin: 'current' })], s, {})
+    expect(out[2].title).toBe('UP NEXT · AUTO — MIX')
+  })
+
+  it('says autoplay is off under an empty auto section, rather than nothing', () => {
+    const s = state({ current: entry('a', { origin: 'current' }) })
+    const out = renderQueueSections([entry('a', { origin: 'current' })], s, {})
+    expect(out[2].title).toBe('UP NEXT · AUTO — OFF')
+    expect(out[2].note).toBe('Autoplay is off. Playback stops when the queue runs out.')
+    expect(out[2].rows).toEqual([])
+  })
+
+  it('carries the truncation line on the section it belongs to', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), intent: [entry('b')] })
+    const out = renderQueueSections([entry('a', { origin: 'current' }), entry('b')], s, {
+      truncation: { label: 'warehouse', added: 24, offered: 60 },
+    })
+    expect(out[1].note).toBe('warehouse · 24 of 60')
+  })
+
+  // regenerate() swallows a port failure and returns a tail-less queue with
+  // no exception. If the drawer does not say so, an empty MIX section reads
+  // as "the pool has nothing for you" rather than "the request failed".
+  it('explains an empty auto section caused by an unreachable pool', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), method: 'harmonic' })
+    const out = renderQueueSections([entry('a', { origin: 'current' })], s, {
+      candidateError: 'Could not reach the pool — no auto tail.',
+    })
+    expect(out[2].note).toBe('Could not reach the pool — no auto tail.')
+  })
+
+  it('prefers the failure note to the harmonic dead-end note', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), method: 'harmonic' })
+    const withError = renderQueueSections([entry('a', { origin: 'current' })], s, {
+      candidateError: 'Could not reach the pool — no auto tail.',
+    })
+    const without = renderQueueSections([entry('a', { origin: 'current' })], s, {})
+    expect(withError[2].note).not.toBe(without[2].note)
+    expect(without[2].note).toContain('Nothing harmonically close')
+  })
+
+  it('renders an empty queue as three empty sections, not an error', () => {
+    const out = renderQueueSections([], state(), {})
+    expect(out.map((sec) => sec.rows.length)).toEqual([0, 0, 0])
+    expect(out[0].note).toBe('Nothing playing.')
+  })
+
+  it('marks removable rows: an auto entry and a pin can go, the current track cannot', () => {
+    const s = state({ current: entry('a', { origin: 'current' }), intent: [entry('b')] })
+    const out = renderQueueSections(
+      [entry('a', { origin: 'current' }), entry('b'), entry('c', { origin: 'auto' })], s, {},
+    )
+    expect(out[0].rows[0].removable).toBe(false)
+    expect(out[1].rows[0].removable).toBe(true)
+    expect(out[2].rows[0].removable).toBe(true)
+  })
+
+  it('carries each entry\'s own source label so layer 1 is legible', () => {
+    const s = state({
+      current: entry('a', { origin: 'current' }),
+      intent: [entry('b', { source_label: 'warehouse' }), entry('c', { source_label: 'pool' })],
+    })
+    const out = renderQueueSections(
+      [entry('a', { origin: 'current' }),
+        entry('b', { source_label: 'warehouse' }), entry('c', { source_label: 'pool' })], s, {},
+    )
+    expect(out[1].rows.map((r) => r.entry.source_label)).toEqual(['warehouse', 'pool'])
+  })
+})
+
+describe('entryTitle — one line per row', () => {
+  it('joins artist and title the way the player bar does', () => {
+    expect(entryTitle({
+      file_id: 'a', display_artist: 'Artist', display_title: 'Title',
+      duration_ms: null, bpm: null, key_camelot: null, origin: 'list', source_label: null,
+    })).toBe('Artist — Title')
+  })
+
+  it('drops the dash when there is no artist', () => {
+    expect(entryTitle({
+      file_id: 'a', display_artist: null, display_title: 'Title',
+      duration_ms: null, bpm: null, key_camelot: null, origin: 'list', source_label: null,
+    })).toBe('Title')
   })
 })
 

@@ -102,4 +102,15 @@ describe('every POST form opts out of ClientRouter', () => {
   it('no POST form declares an enctype, which is what makes the rule absolute', () => {
     expect(posts.filter((f) => /enctype/i.test(f.tag))).toEqual([])
   })
+
+  // M6b, stated POSITIVELY so it has to be argued with rather than merely
+  // not noticed: the queue drawer adds no form at all. The queue is CLIENT
+  // state — there is no server resource for a queue operation to POST to —
+  // so every control in it is <button type="button">. A task that finds
+  // itself wanting a form in the drawer has invented server state the queue
+  // does not have; see src/layouts/shell-bundle.test.ts for the full
+  // argument and the markup-level assertion.
+  it('the queue drawer contributes no POST form to that list', () => {
+    expect(posts.filter((f) => f.file.includes('Shell.astro'))).toEqual([])
+  })
 })

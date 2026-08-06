@@ -15,11 +15,13 @@ import {
   confirmMessage, reduce, regenerate, requiresClearConfirm,
   type CandidatePort, type QueueEvent, type ReduceResult,
 } from '../lib/queue-engine'
-import { assembleQueue, slotsFor, type QueueEntry } from '../lib/queue-model'
+import {
+  AUTO_METHODS, METHOD_LABELS, assembleQueue, isAutoMethod, slotsFor, type QueueEntry,
+} from '../lib/queue-model'
 import { QUEUE_MEMORY_KEY, getState, serializeState, setState } from '../lib/queue-store'
 import {
-  appendReport, nextSourceLookahead, readListContext, toCrateTrack, toQueueEntry,
-  truncationLine, type QueueRowData,
+  appendReport, entryTitle, nextSourceLookahead, readListContext, renderQueueSections,
+  toCrateTrack, toQueueEntry, truncationLine, type QueueRowData,
 } from '../lib/queue-view'
 
 /**
@@ -262,13 +264,15 @@ const candidatePort: CandidatePort = async (seed, need) => {
   }
 }
 
-/** THE ONLY WRITER of `renderedQueue`. Task 7 hangs the drawer render here. */
+/** THE ONLY WRITER of `renderedQueue`, and therefore the one place the drawer
+ *  is ever re-rendered from. */
 function setRenderedQueue(next: readonly QueueEntry[]): void {
   renderedQueue = [...next]
   autoTail = renderedQueue.filter((e) => e.origin === 'auto')
   // The prefetched URL belongs to whatever WAS next. If that changed, drop it
   // rather than start the wrong track instantly.
   if ((renderedQueue[1]?.file_id ?? null) !== lookaheadId) clearLookahead()
+  renderDrawer()
 }
 
 /**
@@ -530,6 +534,216 @@ function loadCrateTracks(crateId: string): Promise<QueueRowData[]> {
 
 document.addEventListener('astro:after-swap', () => {
   crateTracksCache.clear()
+})
+
+/* ------------------------------------------------------ the queue drawer
+ *
+ * Shell.astro renders an EMPTY drawer inside the persisted player node; every
+ * control below is built here. That is the UX.12 bundle rule applied again:
+ * the shell mounts on every page, and an island would ship the engine, the
+ * four strategies and the candidate client to /login for a drawer nobody
+ * opened. Vanilla DOM, one render function, one delegation per control.
+ *
+ * NOT ONE OF THESE CONTROLS MUTATES AN ARRAY. Every one dispatches an engine
+ * event against `renderedQueue` — the array the member is looking at — and the
+ * re-render falls out of `setRenderedQueue`. "The queue is derived, not
+ * mutated" has to be true in the UI layer too, or it is not true at all.
+ */
+const drawer = document.getElementById('queue-drawer')
+const drawerToggle = document.getElementById('queue-toggle') as HTMLButtonElement | null
+const drawerMethods = document.getElementById('queue-methods')
+const drawerSections = document.getElementById('queue-sections')
+
+/** Lazy hydration (§5): the auto tail is not persisted and not recomputed at
+ *  page load. It waits for the first of (drawer opened | playback started) —
+ *  and with the default `off` it never costs a request at all. */
+let drawerOpened = false
+
+function button(cls: string, text: string, aria?: string): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.className = cls
+  b.textContent = text
+  if (aria !== undefined) b.setAttribute('aria-label', aria)
+  return b
+}
+
+/** The method selector — a segmented set of aria-pressed toggles in the
+ *  `.likebtn` idiom, not action buttons, so they take no .btn class and no
+ *  colour token. OFF is pressed on first load because OFF is the default. */
+function renderMethods(): void {
+  if (drawerMethods === null) return
+  drawerMethods.textContent = ''
+  const active = getState().method
+  for (const method of AUTO_METHODS) {
+    const b = button('queuemethod', METHOD_LABELS[method])
+    b.dataset.method = method
+    b.setAttribute('aria-pressed', String(method === active))
+    drawerMethods.appendChild(b)
+  }
+}
+
+function renderDrawer(): void {
+  if (drawerSections === null) return
+  renderMethods()
+  drawerSections.textContent = ''
+
+  const sections = renderQueueSections(renderedQueue, getState(), {
+    truncation: lastTruncation,
+    candidateError,
+  })
+
+  for (const section of sections) {
+    const el = document.createElement('section')
+    el.className = 'queuesection'
+    el.dataset.section = section.id
+
+    const h = document.createElement('h3')
+    h.textContent = section.title
+    el.appendChild(h)
+
+    if (section.note !== null) {
+      const p = document.createElement('p')
+      p.className = 'explain'
+      p.textContent = section.note
+      el.appendChild(p)
+    }
+
+    if (section.rows.length > 0) {
+      const list = document.createElement('ul')
+      list.className = 'queuelist'
+      for (const row of section.rows) {
+        const li = document.createElement('li')
+        li.className = section.id === 'now' ? 'queuerow queuerow-current' : 'queuerow'
+
+        // The row itself is the play control. `data-index` is the drawer's
+        // whole contract with the reducer: row 3 means renderedQueue[3].
+        const play = button('queuerow-play', entryTitle(row.entry))
+        play.dataset.index = String(row.index)
+        play.disabled = section.id === 'now'
+        li.appendChild(play)
+
+        if (row.entry.source_label !== null) {
+          const src = document.createElement('span')
+          src.className = 'queuerow-src'
+          src.textContent = row.entry.source_label
+          li.appendChild(src)
+        }
+
+        if (row.removable) {
+          const controls = document.createElement('span')
+          controls.className = 'queuerow-controls'
+          // ↑/↓ move a PIN. They are rendered for auto rows too and the engine
+          // no-ops them there by design — layer 2 is re-ranked on every
+          // regeneration, so it has no order anyone owns.
+          for (const [dir, glyph] of [['up', '↑'], ['down', '↓']] as const) {
+            const b = button('btn-secondary queuerow-move', glyph, `Move ${entryTitle(row.entry)} ${dir}`)
+            b.dataset.index = String(row.index)
+            b.dataset.dir = dir
+            b.disabled = section.id === 'auto'
+            controls.appendChild(b)
+          }
+          const rm = button('btn-secondary queuerow-remove', '✕', `Remove ${entryTitle(row.entry)} from the queue`)
+          rm.dataset.index = String(row.index)
+          controls.appendChild(rm)
+          li.appendChild(controls)
+        }
+
+        list.appendChild(li)
+      }
+      el.appendChild(list)
+    }
+    drawerSections.appendChild(el)
+  }
+
+  syncDrawerHeight()
+}
+
+/**
+ * The upload chip is fixed above the player bar and knows nothing about the
+ * drawer, whose height is not a constant — it grows with the queue up to
+ * 60vh. Measuring it here and writing --queue-height is what lets one CSS
+ * rule (`body.queueopen .uploadchip-slot`) push the chip clear without a
+ * third eyeballed number. No-op while the drawer is shut.
+ */
+/** `hidden` is no longer a plain boolean in lib.dom (it also takes
+ *  `'until-found'`), so open-ness is read through one predicate rather than
+ *  coerced at four call sites. */
+const isDrawerOpen = (): boolean => drawer !== null && drawer.hidden === false
+
+function syncDrawerHeight(): void {
+  if (drawer === null) return
+  document.body.style.setProperty(
+    '--queue-height', isDrawerOpen() ? `${drawer.offsetHeight}px` : '0px')
+}
+
+function setDrawerOpen(open: boolean): void {
+  if (drawer === null || drawerToggle === null) return
+  drawer.hidden = !open
+  drawerToggle.setAttribute('aria-expanded', String(open))
+  document.body.classList.toggle('queueopen', open)
+  syncDrawerHeight()
+  if (open && !drawerOpened) {
+    drawerOpened = true
+    // First open — §5's lazy hydration. With `method: 'off'` regenerate
+    // short-circuits before the port, so this still costs no request.
+    void hydrateTail()
+  }
+}
+
+if (drawerToggle !== null) {
+  drawerToggle.hidden = false
+  drawerToggle.addEventListener('click', () => {
+    setDrawerOpen(!isDrawerOpen())
+  })
+}
+
+/** Click a row: play it, and drop everything jumped over. §1.4 — "click the
+ *  fourth track" must not mean "play the fourth track and then the two you
+ *  just skipped", which is what holding them would produce. */
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.queuerow-play')
+  if (!(btn instanceof HTMLButtonElement) || btn.disabled) return
+  const index = Number(btn.dataset.index)
+  if (!Number.isInteger(index)) return
+  handleAdvance({ type: 'SELECT_QUEUE_ENTRY', index, queue: renderedQueue })
+})
+
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.queuerow-remove')
+  if (!(btn instanceof HTMLButtonElement)) return
+  const index = Number(btn.dataset.index)
+  if (!Number.isInteger(index)) return
+  apply({ type: 'REMOVE_QUEUE_ENTRY', index, queue: renderedQueue })
+})
+
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.queuerow-move')
+  if (!(btn instanceof HTMLButtonElement) || btn.disabled) return
+  const index = Number(btn.dataset.index)
+  const dir = btn.dataset.dir
+  if (!Number.isInteger(index) || (dir !== 'up' && dir !== 'down')) return
+  apply({ type: 'MOVE_QUEUE_ENTRY', index, dir, queue: renderedQueue })
+})
+
+/** A strategy switch writes ONE field. The pins survive in place and in
+ *  order — structurally, because a strategy cannot reach layer 1 at all. */
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.queuemethod')
+  if (!(btn instanceof HTMLButtonElement)) return
+  const method = btn.dataset.method
+  if (!isAutoMethod(method)) return
+  apply({ type: 'SET_METHOD', method })
+})
+
+/** CLEAR destroys layer 1, which is why it is the one .btn-danger in here.
+ *  It is also the manual path §1.5 relies on: a browser that has suppressed
+ *  further dialogs makes every replace prompt read as cancel, and clearing
+ *  by hand then playing needs no prompt at all. `current` keeps playing. */
+document.getElementById('queue-clear')?.addEventListener('click', () => {
+  apply({ type: 'CLEAR_QUEUE' })
+  lastTruncation = null
+  renderDrawer()
 })
 
 if (audio && toggle) {

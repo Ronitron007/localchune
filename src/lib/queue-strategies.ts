@@ -27,7 +27,7 @@
  */
 
 import { parseCamelot } from './track-format'
-import type { AutoMethod } from './queue-model'
+import { METHOD_LABELS, type AutoMethod } from './queue-model'
 
 // ------------------------------------------------------------- constants
 
@@ -274,14 +274,14 @@ export const STRATEGIES: Record<AutoMethod, Strategy> = {
    *  the UI has a label to press. */
   off: {
     id: 'off',
-    label: 'OFF',
+    label: METHOD_LABELS.off,
     select: () => [],
   },
 
   /** The greedy Camelot + BPM chain. M3's key and BPM analysis, on the decks. */
   harmonic: {
     id: 'harmonic',
-    label: 'MIX',
+    label: METHOD_LABELS.harmonic,
     select: (ctx) => greedyWalk(ctx, score),
   },
 
@@ -292,7 +292,7 @@ export const STRATEGIES: Record<AutoMethod, Strategy> = {
    */
   bpm: {
     id: 'bpm',
-    label: 'TEMPO',
+    label: METHOD_LABELS.bpm,
     select: (ctx) => greedyWalk(ctx, (seed, cand) => bpmPenalty(seed?.bpm ?? null, cand.bpm)),
   },
 
@@ -302,7 +302,7 @@ export const STRATEGIES: Record<AutoMethod, Strategy> = {
    *  one that anybody wants. */
   shuffle: {
     id: 'shuffle',
-    label: 'SHUFFLE',
+    label: METHOD_LABELS.shuffle,
     select: (ctx) => {
       const want = slotsWanted(ctx.need)
       if (want === 0) return []

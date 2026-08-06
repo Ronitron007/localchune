@@ -304,6 +304,94 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   .playerbar .playerseek { order: 4; flex: 1 1 100%; }
 }
 
+/* --- the queue drawer (M6b) ---
+   Same brutalist grammar as the bar it sits on: --bg fill, one 1px --line
+   edge, no radius, no shadow.
+
+   WHY IT IS A CHILD OF .playerbar AND NOT A SIBLING. The player bar is
+   position: fixed, so it is a containing block for an absolutely positioned
+   child — `bottom: 100%` therefore means "exactly the top edge of the bar",
+   whatever height the bar happens to be. That matters because the bar
+   REFLOWS TO TWO ROWS below 640px (the seek slider takes its own line), and
+   .uploadchip-slot's own offsets — 3.5rem and 6.75rem — are eyeballed
+   against those two shapes and cannot be measured from CSS. The drawer would
+   have needed a third and fourth eyeballed number; anchoring it to the bar
+   costs none and cannot drift when the bar's padding changes.
+
+   Full width at every breakpoint, deliberately: the bar is already a
+   full-width fixed element, and anchoring the drawer to it keeps ONE layout
+   to reason about instead of a phone reflow and a desktop side panel.
+
+   60vh so a 25-row queue never eats a phone screen. */
+.queuedrawer {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: var(--pad-1) var(--pad-2);
+}
+.queuedrawer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-1) var(--pad-2);
+  padding-bottom: var(--pad-1);
+  border-bottom: 1px solid var(--faint);
+}
+.queuemethods { display: flex; flex-wrap: wrap; gap: var(--pad-1); flex: 1 1 auto; }
+/* A toggle, not an action button — same argument as the like button above:
+   no .btn class and no colour token, because the monochrome exception in
+   :root is reserved for .btn/.btn-secondary/.btn-danger. Bold is the pressed
+   state, as it is for ♥. */
+.queuemethod {
+  background: none;
+  border: 1px solid var(--line);
+  padding: calc(var(--pad-1) / 2) var(--pad-1);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.queuemethod[aria-pressed='true'] { font-weight: bold; background: var(--faint); }
+.queuesection { margin-top: var(--pad-2); }
+.queuesection h3 {
+  font-size: 1rem;
+  font-weight: normal;
+  color: var(--mid);
+  border-bottom: 1px solid var(--faint);
+}
+.queuesection .explain { margin: calc(var(--pad-1) / 2) 0; }
+.queuelist { list-style: none; padding: 0; margin: 0; }
+.queuerow {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  padding: calc(var(--pad-1) / 2) 0;
+}
+.queuerow + .queuerow { border-top: 1px solid var(--faint); }
+.queuerow-play {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queuerow-current .queuerow-play { font-weight: bold; cursor: default; }
+.queuerow-src { color: var(--mid); flex: none; }
+.queuerow-controls { flex: none; display: flex; gap: calc(var(--pad-1) / 2); }
+.queuetoggle { flex: none; }
+
 /* --- upload chip (UX.12) ---
    The batch, visible from every page that is not /upload. Same brutalist
    grammar as the player bar it sits above: --bg fill, one 1px --line edge,
@@ -320,13 +408,21 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    desktop, and around TWO rows below 640px, where the seek slider is forced
    onto its own line (see the .playerbar media query above). Change the
    player's padding or its mobile reflow and these two numbers need
-   rechecking — there is no way to bind them automatically. */
+   rechecking — there is no way to bind them automatically.
+
+   M6b: an OPEN queue drawer stands between the bar and the chip, so the chip
+   has to clear it too. Its height is not a constant — the drawer grows with
+   the queue up to 60vh — so site.ts measures the rendered drawer and writes
+   --queue-height onto <body>, and body.queueopen adds it here. One class, one
+   variable, naming the coupling instead of hiding it. The two numbers below
+   stay exactly what UX.12 eyeballed; nothing about them changed. */
 .uploadchip-slot {
   position: fixed;
   right: var(--pad-2);
   bottom: 3.5rem;
   pointer-events: none;
 }
+body.queueopen .uploadchip-slot { bottom: calc(3.5rem + var(--queue-height, 0px)); }
 /* Below 640px the player bar is TWO rows (the seek slider is forced onto its
    own line), so the chip has to clear roughly twice as much. It stays
    right-anchored and content-sized here rather than stretching to the full
@@ -334,6 +430,7 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    reads as a second toolbar rather than as a pill. */
 @media (max-width: 640px) {
   .uploadchip-slot { bottom: 6.75rem; }
+  body.queueopen .uploadchip-slot { bottom: calc(6.75rem + var(--queue-height, 0px)); }
 }
 .uploadchip {
   pointer-events: auto;
