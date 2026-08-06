@@ -23,6 +23,16 @@
   --pad-2: 16px;
   --pad-3: 24px;
 
+  /* The player bar's height, DECLARED rather than eyeballed. Everything
+     that has to clear the bar (the body's bottom reservation, the upload
+     chip's offset) derives from this one number instead of carrying its
+     own copy — audit survive-list #5 and #17 both exist because those
+     copies used to drift. Measured against the rendered bar: 47px on a
+     desktop row, 84.5px below 640px where the seek slider takes its own
+     line. Rounded up to the next multiple of 8. Re-measure and update
+     this value whenever the bar's contents or padding change. */
+  --bar-h: 48px;
+
   /* Task 8 — the ONE deliberate colour exception to the brutalist
      monochrome above. These four values exist for .btn/.btn-secondary/
      .btn-danger ONLY (see that block below); nothing else in this file
@@ -45,17 +55,30 @@
 html {
   background: var(--bg);
   color: var(--fg);
+  /* The browser's horizontal back-swipe and a bottom sheet's drag are the
+     same gesture on a phone. Turning the overscroll off here means a drag
+     that starts inside a panel never navigates away mid-gesture. */
+  overscroll-behavior-x: none;
 }
 
 body {
   margin: 0 auto;
   max-width: 72rem;
   /* Page margins: tighter on a phone, roomier once there is width to
-     spare. Room at the bottom for the fixed player bar either way. */
-  padding: 0 var(--pad-2) 6rem;
+     spare. The bottom reservation is DERIVED from the bar's own height
+     plus the home-indicator inset, not the hard-coded 6rem it replaces —
+     survive-list #17 asks for an equivalent reservation, and one that is
+     computed cannot fall out of step with the bar the way a constant can. */
+  padding: 0 var(--pad-2) calc(var(--bar-h) + env(safe-area-inset-bottom) + var(--pad-2));
 }
 @media (min-width: 640px) {
   body { padding-left: var(--pad-3); padding-right: var(--pad-3); }
+}
+/* Below 640px the bar reflows to two rows (the seek slider takes its own
+   line), so the reservation and every offset derived from --bar-h grow
+   with it. One declaration, and the derived rules follow for free. */
+@media (max-width: 640px) {
+  :root { --bar-h: 88px; }
 }
 
 /* Vertical rhythm between a page's top-level blocks (h1, filter form,
@@ -123,6 +146,9 @@ h1, h2 { font-weight: bold; }
   align-items: baseline;
   gap: var(--pad-2);
   padding: var(--pad-1) 0;
+  /* Clears the notch in landscape, where the inset is on the top edge.
+     max() keeps the normal 8px on every device that reports 0. */
+  padding-top: max(var(--pad-1), env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -274,6 +300,11 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   flex-wrap: wrap;
   gap: var(--pad-1) var(--pad-2);
   padding: var(--pad-1) var(--pad-2);
+  /* The seek slider used to sit at the extreme bottom edge, inside the iOS
+     home-indicator gesture zone, so a thumb drag on the scrubber fought
+     the system's swipe-up. This is the fix, and it only works because
+     Shell.astro's viewport meta now carries viewport-fit=cover. */
+  padding-bottom: max(var(--pad-1), env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--line);
 }

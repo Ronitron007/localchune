@@ -9,7 +9,9 @@ const error = Astro.url.searchParams.get('error_description')
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  {/* Same viewport-fit=cover as Shell.astro — /login renders without the
+      Shell, so it needs its own copy or its safe-area rules evaluate to 0. */}
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>localchune</title>
 </head>
 <body class="loginpage">
