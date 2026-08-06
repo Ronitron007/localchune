@@ -126,6 +126,68 @@ describe('the ink ladder and the border set', () => {
   })
 })
 
+describe('the button doctrine', () => {
+  /** The declaration body of the first rule whose selector list matches. */
+  function ruleBody(selectorFragment: string): string {
+    const i = decls.indexOf(selectorFragment)
+    expect(i, `no rule for ${selectorFragment}`).toBeGreaterThan(-1)
+    const open = decls.indexOf('{', i)
+    return decls.slice(open, decls.indexOf('}', open))
+  }
+
+  // survive-list #8. Toggles are deliberately NOT buttons of the tier
+  // system: aria-pressed plus inversion, no tier class, no colour token.
+  // The one colour exception must not widen by accident.
+  it('.likebtn references no --btn- colour', () => {
+    expect(ruleBody('.likebtn {')).not.toContain('--btn-')
+  })
+
+  it('.queuemethod references no --btn- colour', () => {
+    expect(ruleBody('.queuemethod {')).not.toContain('--btn-')
+  })
+
+  // THE TRANSPORT EXCEPTION, and it is the failure mode that would make
+  // the whole redesign feel worse than what it replaced. 2-3px of travel
+  // on a CTA reads as physicality; the same 2-3px on a play button reads
+  // as LATENCY — the eye takes the movement for the app thinking about
+  // it. Banned outright, asserted so it cannot creep back.
+  it('no transform: translate rule ever names .playertoggle', () => {
+    for (const m of decls.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const [, selector, body] = m
+      if (!/transform:\s*translate/.test(body)) continue
+      expect(selector, `${selector.trim()} moves a transport control`)
+        .not.toMatch(/\.playertoggle|\[data-transport\]/)
+    }
+  })
+
+  it('the transport animates opacity only, and fast', () => {
+    const body = ruleBody('.playertoggle, [data-transport]')
+    expect(body).toMatch(/transition:[^;]*opacity/)
+    expect(body).not.toMatch(/transition:[^;]*transform/)
+  })
+
+  it('the three tiers lift on hover and sink on active', () => {
+    expect(decls).toMatch(/:hover[^{]*\{[^}]*box-shadow: var\(--lift-1\)/)
+    // The sink must be declared AFTER the lift or equal specificity puts
+    // the lift last and the button never sinks.
+    const lift = decls.indexOf('box-shadow: var(--lift-1)')
+    const sink = decls.lastIndexOf('box-shadow: none')
+    expect(sink).toBeGreaterThan(lift)
+  })
+
+  it('focus-visible is a square blue ring, declared once and globally', () => {
+    const rings = decls.match(/:focus-visible/g) ?? []
+    expect(rings.length).toBeGreaterThan(0)
+    expect(ruleBody(':focus-visible {')).toContain('var(--focus-ring)')
+  })
+
+  it('disabled drops pointer-events, so cursor: not-allowed is unreachable', () => {
+    const body = ruleBody('.btn:disabled')
+    expect(body).toContain('pointer-events: none')
+    expect(body).not.toContain('not-allowed')
+  })
+})
+
 describe('the tap floor and the bar height', () => {
   it('declares --tap as 44px', () => {
     expect(rootBlock()).toMatch(/--tap:\s*44px/)

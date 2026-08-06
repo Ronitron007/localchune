@@ -389,34 +389,64 @@ input[type='checkbox'], input[type='radio'] { border: none; min-height: 0; }
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
 
-/* --- Task 8: the three-tier button system ---
-   Every button/submit in the app is one of these three. Geometry (square
-   corners — border-radius: 0 is already global above — 1px border, same
-   padding) is identical across all three; only fill/text/border colour
-   differ. This is the ONE deliberate colour exception to the brutalist
-   monochrome (see the --btn-* tokens in :root above) — nothing else in
-   this file gains colour.
-     .btn           primary   — solid blue, white text, darker-blue border
-     .btn-secondary secondary — white fill, black text, black border
-     .btn-danger    danger    — solid red,  white text, darker-red border
-   The player's play/pause button stays icon-minimal and does NOT take one
-   of these classes (see src/layouts/Shell.astro). A link kept as a link
-   (e.g. the filter bar's Clear) does not take one either. */
-.btn, .btn-secondary, .btn-danger {
+/* --- the three tiers ---
+   Every button/submit in the app is one of these three. The FILLS are the
+   one deliberate colour exception (the --btn-* tokens in :root); nothing
+   else in this file gains colour.
+     .btn           primary   — solid blue
+     .btn-secondary secondary — white fill, black text
+     .btn-danger    danger    — solid red
+   Plus .btn-ghost, which is NOT a fourth colour: it is the ABSENCE of a
+   fill, so it does not widen the exception.
+
+   WHAT MAKES THE THREE READ AS ONE FAMILY is not the fills — they are
+   three different colours — it is that every one of them darkens its
+   border to full ink and lifts by the same 1px on hover. The edge is the
+   shared object language.
+
+   .btn-secondary is the tier that changes most. Its resting border was
+   --line, full black, so it looked IDENTICAL hovered and resting; that is
+   half of "shabby" on its own. It rests at --ink-35 now, which gives the
+   hover somewhere to go.
+
+   ONE FILLED BUTTON PER BAR OR ROW. Everything else is secondary or
+   ghost. That is what stops a toolbar reading as a ransom note.
+
+   Toggles (the like button, the queue methods) are deliberately NOT part
+   of this system — aria-pressed plus inversion, no tier class, no colour
+   token. So is the player's play/pause, which takes no tier class and
+   gets §3.5's transport rule instead. global-tokens.test.ts asserts both. */
+.btn, .btn-secondary, .btn-danger, .btn-ghost {
   /* inline-flex, not inline-block: min-height only reads as a box if the
      label is centred inside it, and a 44px button with top-aligned text
      looks like a bug rather than a target. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--pad-0);
   min-height: var(--tap);
-  border-width: 1px;
+  padding: 0 var(--pad-2);
+  /* 1.5px, not 1px. The half pixel is what separates a drawn object from
+     a gridline, and at 90 degrees with no radius it is the whole
+     difference between "brutalist" and "unstyled". */
+  border-width: 1.5px;
   border-style: solid;
-  padding: calc(var(--pad-1) / 2) var(--pad-2);
-  font: inherit;
-  line-height: normal;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.01em;
   text-decoration: none;
   cursor: pointer;
+  /* Transforms get --ease-pop; everything else gets a plain ease at
+     --dur-fast. A colour that overshoots is the thing that makes an
+     interface feel like a toy. */
+  transition: transform var(--dur-base) var(--ease-pop),
+              box-shadow var(--dur-base) ease,
+              background var(--dur-fast) ease,
+              border-color var(--dur-fast) ease,
+              color var(--dur-fast) ease,
+              opacity var(--dur-fast) ease;
 }
 .btn {
   background: var(--btn-blue);
@@ -429,18 +459,110 @@ button + button { margin-left: var(--pad-1); }
 .btn-secondary {
   background: var(--bg);
   color: var(--fg);
-  border-color: var(--line);
+  border-color: var(--ink-35);
 }
 .btn-danger {
   background: var(--btn-red);
   color: var(--bg);
   border-color: var(--btn-red-line);
 }
-.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled,
-.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'], .btn-danger[aria-disabled='true'] {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* Ghost: icon-only buttons and menu rows. No fill and no border until it
+   is asked for. */
+.btn-ghost {
+  background: none;
+  border-color: transparent;
+  color: inherit;
+}
+
+/* :active DUPLICATES :hover before overriding it — touch has no hover,
+   and a button that only responds to a cursor is dead on the target
+   device. The sink is declared second, and must stay second: equal
+   specificity means source order decides. */
+.btn:hover, .btn-secondary:hover, .btn-danger:hover,
+.btn:active, .btn-secondary:active, .btn-danger:active {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--lift-1);
+  border-color: var(--ink-100);
+}
+.btn:hover, .btn:active { background: var(--btn-blue-line); }
+.btn-secondary:hover, .btn-secondary:active { background: var(--surface-2); }
+.btn-danger:hover, .btn-danger:active { background: var(--btn-red-line); }
+.btn-ghost:hover, .btn-ghost:active {
+  background: var(--surface-2);
+  border-color: var(--ink-20);
+}
+/* It sinks. Elevation is literal: the shadow is the gap under the button,
+   so pressing it closes the gap. */
+.btn:active, .btn-secondary:active, .btn-danger:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+/* Sizes. .btn-lg is one per page, at most. .btn-sm is legal ONLY where a
+   44px hit area is restored another way — a ::after extender, or a parent
+   row that is itself at least 44px tall and fully tappable. The visual
+   box may be 36px; the hit box may never be under 44. */
+.btn-lg { min-height: 48px; font-size: var(--text-base); }
+.btn-sm { min-height: 36px; padding: 0 var(--pad-1); font-size: var(--text-xs); }
+
+/* Loading. The button KEEPS ITS SIZE and never becomes a spinner: a size
+   change reflows the whole row the moment the request resolves, which is
+   the exact instant the member is looking at it. The label shimmers
+   instead — greys only, one pass per 1.6s, and it stops when the
+   attribute goes. */
+[aria-busy='true'].btn, [aria-busy='true'].btn-secondary,
+[aria-busy='true'].btn-danger, [aria-busy='true'].btn-ghost {
+  cursor: progress;
+}
+[aria-busy='true'].btn > *, [aria-busy='true'].btn-secondary > *,
+[aria-busy='true'].btn-danger > *, [aria-busy='true'].btn-ghost > * {
+  animation: btn-shimmer 1600ms linear 3;
+}
+@keyframes btn-shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Disabled. pointer-events: none already makes a cursor rule
+   unreachable, so `cursor: not-allowed` is deleted rather than kept as
+   decoration that never renders. */
+.btn:disabled, .btn-secondary:disabled, .btn-danger:disabled, .btn-ghost:disabled,
+.btn[aria-disabled='true'], .btn-secondary[aria-disabled='true'],
+.btn-danger[aria-disabled='true'], .btn-ghost[aria-disabled='true'] {
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
   pointer-events: none;
+}
+
+/* --- THE TRANSPORT EXCEPTION — mandatory, not optional ---
+   Play/pause, next, previous and seek NEVER lift and NEVER sink.
+
+   2-3px of travel on a call to action reads as physicality. The same
+   2-3px on a play button reads as LATENCY: the eye takes the movement for
+   the app thinking about whether to obey. This is the one place the
+   signature move is banned outright, and getting it wrong is the failure
+   that would make the whole redesign feel worse than what it replaced.
+
+   Under 100ms, opacity only, no travel. global-tokens.test.ts fails the
+   build if any `transform: translate` rule ever names these selectors. */
+.playertoggle, [data-transport] {
+  transition: opacity 80ms linear, background var(--dur-fast) ease;
+}
+.playertoggle:active, [data-transport]:active { opacity: 0.6; }
+
+/* --- focus ---
+   One global recipe, and it is only possible because the reset's blanket
+   `box-shadow: none` is gone. A square ring is free at 90 degrees.
+
+   Blue, the action colour, so focus and primary AGREE rather than
+   compete. That is only safe because selection is inversion (--surface-inv)
+   and can therefore never be confused with either. :focus-visible, not
+   :focus — a ring on a mouse click is noise. */
+:focus-visible {
+  outline: none;
+  border-color: var(--btn-blue);
+  box-shadow: var(--focus-ring);
 }
 
 /* --- filter form --- */
