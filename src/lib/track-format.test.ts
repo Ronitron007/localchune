@@ -130,3 +130,48 @@ describe('artThumbUrl', () => {
     expect(artThumbUrl(undefined, 'abc')).toBe('/api/track/abc/art?full=1')
   })
 })
+
+import { likeActionLabel, likeGlyph, trackHref } from './track-format'
+
+/* The player bar's ♥ and its title link. site.ts writes these into the DOM
+ * and cannot be imported here (it touches `document` at module scope), so
+ * the three decisions it makes live in the module above and are checked
+ * here — the same split queue-view.ts already uses for the drawer. */
+describe('trackHref', () => {
+  it('points at the detail page for the id it is given', () => {
+    expect(trackHref('9f1c0f0e-0000-4000-8000-000000000001'))
+      .toBe('/track/9f1c0f0e-0000-4000-8000-000000000001')
+  })
+
+  it('encodes the id rather than trusting what came over the wire', () => {
+    // A file id is a uuid today. This is what keeps the href honest if a
+    // route ever hands back something else — an unencoded `?` or `#` would
+    // silently truncate the path into a query or a fragment.
+    expect(trackHref('a b?c#d')).toBe('/track/a%20b%3Fc%23d')
+  })
+})
+
+describe('likeGlyph', () => {
+  // The exact pair TrackRow.astro's pool cell and track/[id].astro's
+  // .signals block already render. The bar has to agree with both, or one
+  // track reads two ways on a single screen.
+  it('is filled when liked and hollow when not', () => {
+    expect(likeGlyph(true)).toBe('♥')
+    expect(likeGlyph(false)).toBe('♡')
+  })
+})
+
+describe('likeActionLabel', () => {
+  it('names the action and the track, and flips with the state', () => {
+    expect(likeActionLabel(false, 'Aphex Twin — Xtal')).toBe('Like Aphex Twin — Xtal')
+    expect(likeActionLabel(true, 'Aphex Twin — Xtal')).toBe('Unlike Aphex Twin — Xtal')
+  })
+
+  it('falls back to the bare verb when there is no title yet', () => {
+    // The bar is the one caller that can be in this state: the glyph is
+    // aria-hidden, so this string is the whole accessible name, and
+    // "Like " with a trailing space is not an answer.
+    expect(likeActionLabel(false, '')).toBe('Like')
+    expect(likeActionLabel(true, '   ')).toBe('Unlike')
+  })
+})

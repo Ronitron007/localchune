@@ -140,3 +140,49 @@ export function artThumbUrl(base: string | undefined, fileId: string): string {
   if (!base) return `/api/track/${fileId}/art?full=1` // unset env: fall back to the signed path
   return `${base.replace(/\/+$/, '')}/derived/${fileId}/thumb.jpg`
 }
+
+/* ------------------------------------------------- the player bar's two
+ *
+ * The bar gained a ♥ and a title link, and both are BUILT BY site.ts at
+ * runtime rather than rendered by Shell.astro — the bar's markup is inert
+ * until a track is known. That puts three one-line decisions in a script
+ * that cannot be imported under vitest's node environment (site.ts touches
+ * `document` at module scope), which is exactly the split queue-view.ts
+ * already established: the decision lives here and is tested, the DOM write
+ * stays in site.ts.
+ *
+ * They are here rather than in a new module because a fourth copy of "what
+ * does a ♥ look like" is the thing to avoid: TrackRow.astro's pool cell and
+ * track/[id].astro's .signals block both hard-code the same two glyphs and
+ * the same Like/Unlike verb, and the bar now has to agree with both or the
+ * same track reads differently in two places on one screen.
+ */
+
+/** The track detail page. Encoded because it is written into an href from a
+ *  value that arrived over the wire — a file id is always a uuid today, and
+ *  this costs nothing if it stops being one. */
+export function trackHref(fileId: string): string {
+  return `/track/${encodeURIComponent(fileId)}`
+}
+
+/** Filled when liked, hollow when not — TrackRow.astro's convention, stated
+ *  once so the bar cannot drift from the row. */
+export function likeGlyph(liked: boolean): string {
+  return liked ? '♥' : '♡'
+}
+
+/**
+ * The button's accessible name. The glyph itself is `aria-hidden`, so this
+ * string is the ONLY thing a screen reader has to go on — it must name both
+ * the action and the track, and it must flip with the state, exactly as the
+ * two server-rendered like buttons already do.
+ *
+ * The bar is the one caller that can be in a state neither row can: playing
+ * nothing, or holding a track whose title has not arrived yet. A bare verb
+ * is the honest answer there — "Like " with a trailing space is not.
+ */
+export function likeActionLabel(liked: boolean, title: string): string {
+  const verb = liked ? 'Unlike' : 'Like'
+  const name = title.trim()
+  return name === '' ? verb : `${verb} ${name}`
+}
