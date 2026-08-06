@@ -11,13 +11,18 @@ import { formatBytes } from '../../lib/format'
 // Astro.locals.supabase — reuse the cookie-bound client middleware already
 // built for this request, not a second serverClient(cookies, request); see
 // the API note in the allowlist API route above for why that matters.
-const { data: rows, error } = await Astro.locals.supabase.rpc('admin_members')
+// PERF TASK 2.1 — one stage. The two share no input; each keeps its own
+// error branch, because a failed member_storage must not read as "nobody
+// has stored anything".
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [{ data: rows, error }, { data: storageRows, error: storageErr }] = await Promise.all([
+  rpc('admin_members'),
+  // member_storage() (migration 08) returns every member's row for the
+  // owner, and only the caller's own row for anyone else — the
+  // RLS-equivalent filter lives inside the function itself, not here.
+  rpc('member_storage'),
+])
 if (error) console.error('admin_members failed:', error.message)
-
-// member_storage() (migration 08) returns every member's row for the owner,
-// and only the caller's own row for anyone else — the RLS-equivalent filter
-// lives inside the function itself, not here.
-const { data: storageRows, error: storageErr } = await Astro.locals.supabase.rpc('member_storage')
 if (storageErr) console.error('member_storage failed:', storageErr.message)
 ---
 <Shell title="localchune — members">

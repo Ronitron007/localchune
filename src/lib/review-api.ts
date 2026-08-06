@@ -14,7 +14,19 @@
 export const REVIEW_STATUSES = ['pending', 'resolved', 'all'] as const
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number]
 export const DEFAULT_STATUS: ReviewStatus = 'pending'
-export const REVIEW_PAGE_SIZE = 50
+/**
+ * Ten pairs, not fifty — owner decision Q4 of the 2026-08-06 redesign.
+ *
+ * A review is a two-second decision (PRD §6), so a page is a working set,
+ * not an archive: nobody answers fifty in one sitting, and the fifty-first
+ * pair costs exactly as much to render as the first. With perf task 2.4's
+ * SVG strips the two changes multiply — 1.42 MB of strip markup at fifty
+ * spans-per-second pairs becomes ~28 KB at ten path pairs.
+ *
+ * There is no pager on /review. Answering the pairs on the page is what
+ * fetches the next ten, which is the queue working as intended.
+ */
+export const REVIEW_PAGE_SIZE = 10
 export const MERGES_PAGE_SIZE = 50
 
 export type Thresholds = { t_same: number; t_probable: number; t_related: number }
@@ -181,4 +193,48 @@ export function formatScore(score: number | null | undefined): string {
 export function barHeightPct(v: number | null | undefined): number {
   if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) return 2
   return Math.max(Math.round(Math.min(v, 0.5) * 200), 2)
+}
+
+/**
+ * PERF TASK 2.4 — the same strip, as one path instead of 360 elements.
+ *
+ * /review rendered one `<span class="bar">` per second of overlap, each
+ * carrying an inline `style` and a `title`, ~81 bytes apiece. At the old
+ * page size of 50 pairs that was up to 18,000 spans and ~1.42 MB of strip
+ * markup on the single heaviest page in the app — the OWNER's page, the one
+ * that made phones stutter or drop the tab.
+ *
+ * The geometry is unchanged: `barHeightPct` still decides every height, so
+ * the picture a reviewer reads is the same picture. Only the elements are
+ * gone.
+ *
+ * THE COORDINATE SYSTEM, because the SVG has no units of its own: x runs
+ * 0..N, one unit per second; y runs 0 (top) to 100 (bottom), so a bar of
+ * height h% has its top edge at 100 - h. The caller sets
+ * `viewBox="0 0 N 100"` and `preserveAspectRatio="none"`, which is what
+ * lets one path stretch to whatever width the strip box gives it.
+ *
+ * A STEP OUTLINE, not a polyline: `V` then `H` walks up the left edge of a
+ * bar and across its top, so consecutive bars share their vertical edge and
+ * the whole run closes into one filled shape with square corners. Two
+ * characters and two numbers per second, against 81 bytes per span.
+ */
+export function stripPath(bars: readonly (number | null)[]): string {
+  if (bars.length === 0) return ''
+  let d = 'M0 100'
+  for (let s = 0; s < bars.length; s += 1) d += `V${100 - barHeightPct(bars[s])}H${s + 1}`
+  return `${d}V100Z`
+}
+
+/**
+ * The one second of maximum divergence, as its own closed bar so it can take
+ * its own fill. This replaces the `.bar.peak` outline, which needed a class
+ * on one of 360 elements to say the same thing.
+ *
+ * Returns '' for an out-of-range index rather than drawing at the edge — the
+ * caller renders no second path at all in that case.
+ */
+export function peakBarPath(bars: readonly (number | null)[], peakAt: number): string {
+  if (!Number.isInteger(peakAt) || peakAt < 0 || peakAt >= bars.length) return ''
+  return `M${peakAt} 100V${100 - barHeightPct(bars[peakAt])}H${peakAt + 1}V100Z`
 }

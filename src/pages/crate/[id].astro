@@ -25,12 +25,21 @@ import { isUuid } from '../../lib/upload-api'
 const { id } = Astro.params
 if (!isUuid(id)) return new Response('Not found', { status: 404 })
 
-const { data: cardsData, error: listError } = await Astro.locals.supabase.rpc('crate_list')
+// PERF TASK 2.1 — one stage. crate_get takes the id from the URL, not from
+// crate_list's result, so only the 404 gate below depended on the order.
+// For a crate that does not exist (or is not the caller's) the extra
+// crate_get is one wasted round trip on a request that 404s; every real
+// view saves a whole sequential stage, which is 60–165 ms.
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [{ data: cardsData, error: listError }, { data: rowsData, error: getError }] =
+  await Promise.all([
+    rpc('crate_list'),
+    rpc('crate_get', { p_crate: id }),
+  ])
 if (listError) console.error('crate_list failed:', listError.message)
 const meta = ((cardsData ?? []) as CrateCard[]).find((c) => c.id === id)
 if (!meta) return new Response('Not found', { status: 404 })
 
-const { data: rowsData, error: getError } = await Astro.locals.supabase.rpc('crate_get', { p_crate: id })
 // A non-42501 failure here (dropped connection, Postgres unreachable) must
 // not render the same "no tracks" empty state a genuinely empty crate
 // gets — that reads as data loss during an outage. 42501 already returns

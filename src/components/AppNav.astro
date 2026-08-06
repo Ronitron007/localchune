@@ -4,6 +4,7 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 import { creditsRemaining } from '../lib/session'
+import { chromeData } from '../lib/page-data'
 const m = Astro.locals.member!
 const here = Astro.url.pathname
 
@@ -17,12 +18,16 @@ const here = Astro.url.pathname
 //
 // A failed RPC degrades to no badge. The nav is not the place to report a
 // database outage; the page below it will.
-let pending = 0
-if (m.role === 'owner') {
-  const { data, error } = await Astro.locals.supabase.rpc('review_pending_count')
-  if (error) console.error('review_pending_count failed:', error.message)
-  else if (typeof data === 'number') pending = data
-}
+//
+// PERF TASK 2.1 — the call itself moved to the middleware, which starts it
+// before the page runs so it overlaps the page's own data instead of
+// following it (Astro renders components after frontmatter, so an await
+// here was always last). What is left is the same read of the same result:
+// the owner test is now inside startChromeData, which skips the request
+// entirely for a member and hands back 0.
+const { reviewPending } = await chromeData(Astro.locals)
+if (reviewPending.error) console.error('review_pending_count failed:', reviewPending.error.message)
+const pending = typeof reviewPending.data === 'number' ? reviewPending.data : 0
 ---
 <nav class="appnav">
   {/* M6c Task 2: "/" is now the home feed; the browse table moved to

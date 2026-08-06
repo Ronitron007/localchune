@@ -769,8 +769,9 @@ dd { margin: 0; }
   overflow-x: auto;
   max-width: 100%;
 }
-.strip .bar { flex: 1 0 2px; min-width: 2px; background: var(--fg); }
-.strip .bar.peak { outline: 1px solid var(--mid); background: var(--mid); }
+/* The `.bar` span rules that used to live here are gone with the spans —
+   perf task 2.4 replaced 360 elements per strip with one <svg>. Its rules
+   are in the PERF PHASE 2 block at the end of this file. */
 
 /* An undone merge stays in the feed — struck through, never removed. The
    event is the record; deleting it would lose the fact that someone
@@ -866,3 +867,21 @@ dd { margin: 0; }
   .tracktable td.art img.thumb,
   .tracktable td.art .thumb-empty { width: 44px; height: 44px; }
 }
+
+/* --- Task 2.4: the divergence strip is one path, not 360 spans ---
+   The box itself is unchanged and was already right: 48px tall, bordered,
+   its own horizontal scroller so the strip pans instead of the page. Only
+   its contents changed. `--strip-seconds` is set inline by
+   DivergenceStrip.astro — the ONE inline style on a strip now, where there
+   used to be one per second — and keeps the old 3px-per-second density, so
+   a long overlap still scrolls in its box rather than being squeezed
+   illegibly into 343px. */
+.strip { display: block; }
+.strip svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+  min-width: calc(var(--strip-seconds, 0) * 3px);
+}
+.strip .stripfill { fill: var(--fg); }
+.strip .strippeak { fill: var(--mid); }

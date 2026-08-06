@@ -18,7 +18,17 @@ const { id } = Astro.params
 // Postgres and come back as 22P02 — a 500-shaped answer to a 404 question.
 if (!isUuid(id)) return new Response('Not found', { status: 404 })
 
-const { data, error } = await Astro.locals.supabase.rpc('pool_get', { p_file_id: id })
+// PERF TASK 2.1 — pool_get and crate_list share no input, so they go in one
+// stage. crate_list feeds the no-JS add-to-crate form far down the page (see
+// its own comment below); awaiting it there made it a third round trip after
+// this one and the conditional ingest_jobs read. Each result keeps its own
+// error branch — a failed crate_list must render "could not load your
+// crates", never an empty picker that reads as "you have none".
+const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
+const [{ data, error }, { data: cardsData, error: cardsError }] = await Promise.all([
+  rpc('pool_get', { p_file_id: id }),
+  rpc('crate_list'),
+])
 if (error) console.error('pool_get failed:', error.message)
 const t = data?.[0]
 // pool_get applies the visibility rule, so "not yours to see" and "does
@@ -64,7 +74,8 @@ const tagsAction = `/api/track/${t.file_id}/tags`
 // to add-dispatch.ts with crate_id as a second field. Every member reaching
 // this page (middleware requires one) can see it; only crate_list's is_mine
 // rows are offered, since crate_add rejects anything else with 42501 anyway.
-const { data: cardsData, error: cardsError } = await Astro.locals.supabase.rpc('crate_list')
+// The call itself now runs in the first stage at the top of this file — its
+// result is read here, where it is used.
 if (cardsError) console.error('crate_list failed:', cardsError.message)
 const myCrates = ((cardsData ?? []) as CrateCard[]).filter((c) => c.is_mine)
 

@@ -33,6 +33,26 @@ export default defineConfig({
   integrations: [solid()],
   vite: {
     ssr: { external: ['node:buffer'] },
+    /**
+     * PERF TASK 2.5 — the pre-flight Worker stops carrying its own copy of
+     * every audio parser.
+     *
+     * Vite's `worker.format` defaults to `'iife'`, and an IIFE cannot code
+     * split: every dynamic `import()` inside the worker graph is inlined.
+     * music-metadata's `parseBlob` picks its parser by container at
+     * runtime — MP4, Mpeg, Ogg, Flac, Matroska, ASF, APE, Musepack, WavPack,
+     * DSD and the ID3 readers — so an IIFE worker shipped ALL of them,
+     * 219 KB raw / 64 KB gzip, to read one duration out of one header. The
+     * same parsers were separately code split for the main-thread fallback,
+     * which is the "double ship" the audit's sin #5 names.
+     *
+     * `format: 'es'` makes the worker a real module (which the call site
+     * already requires — `new Worker(url, { type: 'module' })`), so it code
+     * splits and SHARES those chunks with the fallback graph: one parser
+     * graph in the manifest, and a member uploading MP3s downloads the MP3
+     * parser rather than all sixteen.
+     */
+    worker: { format: 'es' },
     // Textual substitution at build time, so the constant reaches both the
     // server bundle and any island that imports it, with no runtime cost
     // and no secret involved.
