@@ -86,19 +86,6 @@ const publicDate = (c: FeedCrate): string | null =>
   </section>
 
   <section class="feedsection">
-    <h2>Most liked</h2>
-    {top.error ? (
-      <p class="explain">Could not load — try again.</p>
-    ) : topTracks.length === 0 ? (
-      <p class="explain">Nothing here this week.</p>
-    ) : (
-      <ul class="feedlist">
-        {topTracks.map((t) => <FeedRow track={t} />)}
-      </ul>
-    )}
-  </section>
-
-  <section class="feedsection">
     <h2>New public crates</h2>
     {crates.error ? (
       <p class="explain">Could not load — try again.</p>
@@ -118,6 +105,19 @@ const publicDate = (c: FeedCrate): string | null =>
             </div>
           </li>
         ))}
+      </ul>
+    )}
+  </section>
+
+  <section class="feedsection">
+    <h2>Most liked</h2>
+    {top.error ? (
+      <p class="explain">Could not load — try again.</p>
+    ) : topTracks.length === 0 ? (
+      <p class="explain">No likes yet — ♥ something.</p>
+    ) : (
+      <ul class="feedlist">
+        {topTracks.map((t) => <FeedRow track={t} />)}
       </ul>
     )}
   </section>
