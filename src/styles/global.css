@@ -1286,7 +1286,7 @@ body.queueopen .uploadchip-slot {
   margin-right: 0.25em;
 }
 .tagform { display: inline-flex; align-items: center; gap: var(--pad-1); margin: var(--pad-1) 0 0; }
-.tagform input[type='text'] { width: 12rem; }
+
 .tageditor {
   list-style: none;
   display: flex;
@@ -1299,9 +1299,30 @@ body.queueopen .uploadchip-slot {
 .tageditor .tagchip { margin-right: 0; font-size: 1em; }
 .tageditor form.tagform button { padding: 0 0.35em; }
 
+/* --- FIXED-WIDTH INPUTS, AND WHY THEY ALL BECOME FLUID ---
+   Offender #9, and it lands on the worst possible screen: `.claimform` was
+   `display: flex` with no wrap and a 16rem input, so 256px plus a "claim
+   username" button is about 390px against a 343px content box — the app's
+   FIRST screen after sign-up overflowed a phone. The same 16rem is in
+   `.cratecreate` and `.renameform`, and 12rem in `.tagform`.
+
+   One recipe for all four: fill the line, stop at 20rem, and let the form
+   wrap so the button drops under the field instead of off the edge. A
+   fixed rem width on an input is a guess about a viewport; `100%` with a
+   ceiling is the same design at every width. */
+.claimform, .cratecreate, .renameform, .tagform { flex-wrap: wrap; }
+.claimform input[type='text'],
+.cratecreate input[type='text'],
+.renameform input[type='text'],
+.tagform input[type='text'] {
+  width: 100%;
+  max-width: 20rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
 /* --- /welcome: the username claim form --- */
 .claimform { display: flex; align-items: center; gap: var(--pad-1); margin-top: var(--pad-2); }
-.claimform input[type='text'] { width: 16rem; }
 
 .explain, .reason { color: var(--mid); }
 /* .reason takes --font-num with .num and .keychip, above — a raw error
@@ -1313,7 +1334,7 @@ body.queueopen .uploadchip-slot {
 
 /* --- /crates: create form + the Mine/Pool card lists (M6a Task 6) --- */
 .cratecreate { display: flex; align-items: center; gap: var(--pad-1); }
-.cratecreate input[type='text'] { width: 16rem; }
+
 .crates-section h2 { font-weight: normal; color: var(--mid); }
 .cratelist {
   list-style: none;
@@ -1384,7 +1405,7 @@ body.queueopen .uploadchip-slot {
   gap: var(--pad-1) var(--pad-2);
 }
 .renameform { display: inline-flex; align-items: center; gap: var(--pad-1); }
-.renameform input[type='text'] { width: 16rem; }
+
 .cratecontrols {
   display: flex;
   align-items: center;
