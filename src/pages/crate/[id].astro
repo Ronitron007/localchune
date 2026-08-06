@@ -73,6 +73,34 @@ const HEADERS = [
         {!meta.is_public && <span class="privatechip">PRIVATE</span>}
       </p>
 
+      {/* M6b: play the crate, or append it. Two buttons, side by side,
+          because that adjacency is what makes "play REPLACES, + queue
+          APPENDS" learnable without documentation (§4). Both are
+          `type="button"` and `hidden` until site.ts unhides them: the queue
+          is client state with no server endpoint behind it, so without JS
+          there is nothing for either to do and neither should be visible.
+          Playing reads the rendered rows straight out of the table below —
+          no fetch — and appending onto a nearly-full queue reports its own
+          truncation into the player's status region. */}
+      {items.length > 0 && (
+        <p class="cratetransport">
+          <button
+            type="button"
+            class="crateplay btn"
+            hidden
+            data-crate-id={id}
+            data-crate-name={meta.name}
+          >▶ PLAY</button>
+          <button
+            type="button"
+            class="queueadd btn-secondary"
+            hidden
+            data-crate-id={id}
+            data-crate-name={meta.name}
+          >+ QUEUE</button>
+        </p>
+      )}
+
       {/* Owner-only management forms — plain <form> POSTs, brutalist
           idiom, same shape as /crates.astro's create form and the track
           page's tag editor: every one of these works with no JS. */}
@@ -131,7 +159,7 @@ const HEADERS = [
             parsing the page URL, so the enhancement works regardless of
             how this page is ever routed. Absent entirely for a non-owner:
             read-only list, no drag, no controls cell below. */}
-        <tbody data-reorder={isOwner ? id : undefined}>
+        <tbody data-reorder={isOwner ? id : undefined} data-queue-list={meta.name}>
           {items.map((item, idx) => (
             <TrackRow track={crateItemToPoolTrack(item)} reorderable={isOwner}>
               {isOwner && (

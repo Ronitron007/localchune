@@ -10,6 +10,17 @@ import {
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
+import { fetchCandidates } from '../lib/queue-candidates'
+import {
+  confirmMessage, reduce, regenerate, requiresClearConfirm,
+  type CandidatePort, type QueueEvent, type ReduceResult,
+} from '../lib/queue-engine'
+import { assembleQueue, slotsFor, type QueueEntry } from '../lib/queue-model'
+import { QUEUE_MEMORY_KEY, getState, serializeState, setState } from '../lib/queue-store'
+import {
+  appendReport, nextSourceLookahead, readListContext, toCrateTrack, toQueueEntry,
+  truncationLine, type QueueRowData,
+} from '../lib/queue-view'
 
 /**
  * The whole client: play-link delegation into the one persisted <audio>,
@@ -122,10 +133,22 @@ function updateSeekRange() {
  * back to where the transport stood, resume if we were resuming. Only a
  * failure of the FRESH url earns the error message. One attempt per
  * failure — `refreshing` stops an expired-session loop.
+ *
+ * M6b: the result is a THREE-valued thing, not a boolean, and the third value
+ * is load-bearing. §5 says a failed *refresh* is what fires `TRACK_FAILED` —
+ * never a first `error` event, which still goes to this function alone. A
+ * plain `false` could not tell "I tried a fresh URL and it was dead" (the
+ * track really is unplayable; strike it and advance) apart from "another
+ * refresh was already in flight, so I did nothing" (`busy` — the other call
+ * owns the outcome). Reporting the second as a failure would skip a track for
+ * the crime of having two `error` events, which is exactly the loop the
+ * `refreshing` guard exists to prevent.
  */
+type RefreshResult = 'ok' | 'failed' | 'busy'
+
 let refreshing = false
-async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<boolean> {
-  if (audio === null || currentFileId === null || refreshing) return false
+async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<RefreshResult> {
+  if (audio === null || currentFileId === null || refreshing) return 'busy'
   refreshing = true
   try {
     const res = await fetch(`/api/track/${currentFileId}/source`, {
@@ -133,10 +156,12 @@ async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<boole
     })
     if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
       if (label) label.textContent = 'Session ended — reload to sign in.'
-      return false
+      // A dead session is not a dead TRACK. Striking it would poison `failed`
+      // for a file that plays perfectly once the member signs back in.
+      return 'busy'
     }
     const body = (await res.json()) as { url?: string }
-    if (!res.ok || !body.url) return false
+    if (!res.ok || !body.url) return 'failed'
     audio.addEventListener('loadedmetadata', () => {
       if (resumeAt > 0) audio.currentTime = resumeAt
       updateTime()
@@ -145,13 +170,367 @@ async function refreshSource(resumeAt: number, thenPlay: boolean): Promise<boole
     audio.src = body.url
     audio.load()
     if (thenPlay) await audio.play()
-    return true
+    return 'ok'
   } catch {
-    return false
+    return 'failed'
   } finally {
     refreshing = false
   }
 }
+
+/* ==================================================================
+ * M6b — THE QUEUE, WIRED.
+ *
+ * Everything below is the DOM half of one engine. The decisions live in
+ * src/lib/queue-*.ts (pure, node-tested); this file scrapes `dataset`, calls
+ * `reduce`, and drives the one persisted <audio> element. Nothing here builds
+ * a play order of its own — that is the owner's "one queue engine", enforced
+ * by there being exactly one call to `reduce` in the whole client (`apply`).
+ * ================================================================== */
+
+/**
+ * THE LAST ASSEMBLED QUEUE — the sharpest edge in this wiring.
+ *
+ * `reduce` resolves `SKIP`, `TRACK_ENDED`, `TRACK_FAILED`,
+ * `SELECT_QUEUE_ENTRY` and `REMOVE_QUEUE_ENTRY` against an index into THE
+ * ARRAY THE USER WAS LOOKING AT — which includes the auto tail, and the auto
+ * tail is not in `QueueState`. Hand the reducer a stale array and it advances
+ * to the wrong track, with no error anywhere: the wrong song simply plays.
+ *
+ * So this variable has ONE WRITER, `setRenderedQueue`, and every event source
+ * reads it rather than re-deriving an array of its own. It is updated
+ * SYNCHRONOUSLY on every state change (carrying the previous auto tail
+ * forward through `assembleQueue`, which re-filters exclusions and re-applies
+ * the cap, so consumed entries drop out by themselves) and then refined when
+ * the async regeneration lands. There is deliberately no moment between an
+ * event and its successor where this array describes a state that has already
+ * been replaced.
+ */
+let renderedQueue: QueueEntry[] = []
+
+/** Layer 2 as last computed, carried across a synchronous re-assembly so a
+ *  SKIP that lands before the next regeneration still knows what is next. */
+let autoTail: QueueEntry[] = []
+
+/** Monotonic regeneration ticket. Two events in quick succession start two
+ *  regenerations; the older one may resolve LAST and would otherwise install
+ *  a tail computed from a state two events out of date. Same supersession
+ *  semantics as PR #29's AbortError rule — a superseded result is not an
+ *  error, it is simply discarded. */
+let regenSeq = 0
+
+/** Why the last regeneration produced no tail, or null. `regenerate` swallows
+ *  a port failure ON PURPOSE (a dead network must never take the transport
+ *  down with it) and returns a tail-less queue with no exception, so if this
+ *  is not captured at the call site the signal does not exist anywhere. The
+ *  drawer renders it. */
+let candidateError: string | null = null
+
+/** What the last replacing play or append actually took, for the drawer's
+ *  `warehouse · 24 of 60` line. Cleared by anything that clears layer 1. */
+let lastTruncation: { label: string | null; added: number; offered: number } | null = null
+
+function saveQueueMemory() {
+  try {
+    localStorage.setItem(QUEUE_MEMORY_KEY, serializeState(getState()))
+  } catch {
+    // Storage disabled or full. A queue is a thirty-minute artefact; losing
+    // one costs a member nothing they will notice.
+  }
+}
+
+/**
+ * The engine's candidate fetch, plus the error capture `regenerate` cannot do
+ * for us. A dead session is reported immediately through the same status
+ * region every other handler uses; anything else is left for the drawer,
+ * because "the harmonic tail is missing" is not worth stepping on the track
+ * name for.
+ */
+const candidatePort: CandidatePort = async (seed, need) => {
+  try {
+    const out = await fetchCandidates(seed, need)
+    candidateError = null
+    return out
+  } catch (err) {
+    if (err instanceof SessionExpiredError) {
+      candidateError = 'Session ended — reload to sign in.'
+      if (label) label.textContent = candidateError
+    } else {
+      candidateError = 'Could not reach the pool — no auto tail.'
+    }
+    throw err
+  }
+}
+
+/** THE ONLY WRITER of `renderedQueue`. Task 7 hangs the drawer render here. */
+function setRenderedQueue(next: readonly QueueEntry[]): void {
+  renderedQueue = [...next]
+  autoTail = renderedQueue.filter((e) => e.origin === 'auto')
+  // The prefetched URL belongs to whatever WAS next. If that changed, drop it
+  // rather than start the wrong track instantly.
+  if ((renderedQueue[1]?.file_id ?? null) !== lookaheadId) clearLookahead()
+}
+
+/**
+ * THE ONE CALL TO `reduce` IN THE CLIENT. Every surface routes through here:
+ * reduce, store, persist, re-assemble synchronously, then regenerate.
+ */
+function apply(event: QueueEvent): ReduceResult {
+  const result = reduce(getState(), event)
+  setState(result.state)
+  saveQueueMemory()
+  setRenderedQueue(assembleQueue(result.state, autoTail))
+  void hydrateTail()
+  return result
+}
+
+async function hydrateTail(): Promise<void> {
+  const seq = ++regenSeq
+  const next = await regenerate(getState(), candidatePort)
+  if (seq !== regenSeq) return // superseded by a newer event — discard.
+  setRenderedQueue(next)
+}
+
+// ---------------------------------------------------------- the transport
+
+/** Matches TrackRow.astro's own `data-label` convention, so a queued track
+ *  and a clicked one read identically in the status region. */
+const entryLabel = (e: QueueEntry): string =>
+  e.display_artist === null || e.display_artist === ''
+    ? e.display_title
+    : `${e.display_artist} — ${e.display_title}`
+
+/**
+ * Claim the transport for whatever `current` now is. SYNCHRONOUS, and it has
+ * to stay that way: `currentFileId` claimed before any fetch is what lets a
+ * click beat an in-flight restore (see that variable's own comment, and
+ * restorePlayer()'s re-check).
+ */
+function claimCurrent(): QueueEntry | null {
+  const entry = getState().current
+  if (entry === null) return null
+  currentFileId = entry.file_id
+  currentTitle = entryLabel(entry)
+  return entry
+}
+
+/**
+ * One signed URL. `report` is false for the lookahead prefetch — a failed
+ * prefetch is invisible by design; the real fetch on advance reports for it.
+ * The try/catch is new relative to M6a's inline version: a dropped connection
+ * used to reject inside a floating promise with nothing to catch it.
+ */
+async function fetchSourceUrl(fileId: string, report: boolean): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/track/${fileId}/source`, {
+      headers: { accept: 'application/json' },
+    })
+    // Non-JSON means middleware redirected to /login — say so, do not parse.
+    if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
+      if (report && label) label.textContent = 'Session ended — reload to sign in.'
+      return null
+    }
+    const body = (await res.json()) as { url?: string; message?: string; error?: string }
+    if (!res.ok || !body.url) {
+      if (report && label) label.textContent = body.message ?? body.error ?? 'could not load that track'
+      return null
+    }
+    return body.url
+  } catch {
+    if (report && label) label.textContent = 'could not load that track'
+    return null
+  }
+}
+
+/** One lookahead URL, at most, for exactly one file id. */
+let lookaheadId: string | null = null
+let lookaheadUrl: string | null = null
+
+function clearLookahead(): void {
+  lookaheadId = null
+  lookaheadUrl = null
+}
+
+function takeLookahead(fileId: string): string | null {
+  if (lookaheadId !== fileId || lookaheadUrl === null) return null
+  const url = lookaheadUrl
+  clearLookahead()
+  return url
+}
+
+/**
+ * §5's small, deliberate lookahead. At T-20 s the NEXT entry's signed URL is
+ * fetched into a module variable so the advance is instant instead of a round
+ * trip between tracks. A URL held for twenty seconds cannot meaningfully
+ * expire. `lookaheadId` is what makes the pure band predicate fire once
+ * instead of on every tick, and `setRenderedQueue` drops it the moment a
+ * regeneration changes what is next.
+ */
+function maybePrefetchNext(): void {
+  if (audio === null) return
+  const next = renderedQueue[1]
+  if (next === undefined || lookaheadId === next.file_id) return
+  if (!nextSourceLookahead(audio.currentTime, audio.duration)) return
+  lookaheadId = next.file_id
+  lookaheadUrl = null
+  void (async () => {
+    const url = await fetchSourceUrl(next.file_id, false)
+    if (lookaheadId === next.file_id) lookaheadUrl = url
+  })()
+}
+
+/**
+ * Load and play whatever the transport is currently claimed for. Every path
+ * that starts audio goes through here, which is what makes "a play is a play"
+ * (§2.2) true structurally: `playMeter.reset()` lives on this line, so an
+ * autoplayed track arms the 30 s meter exactly as a clicked one does. Before
+ * M6b the reset sat in the play-link handler alone and a queued track could
+ * never have counted.
+ */
+async function startCurrent(startAt: number): Promise<void> {
+  if (audio === null || currentFileId === null) return
+  const fileId = currentFileId
+  const url = takeLookahead(fileId) ?? (await fetchSourceUrl(fileId, true))
+  if (url === null) return
+  // A newer claim landed while the URL was in flight — that click outranks
+  // this load, exactly as it outranks a restore.
+  if (currentFileId !== fileId) return
+
+  audio.src = url
+  playMeter.reset()
+  // §1.2: a play truncated by the cap "says so once". The track name is the
+  // ordinary content of this region; the count rides along after it rather
+  // than replacing it, so nobody has to choose between knowing what is
+  // playing and knowing that 36 tracks did not fit.
+  if (label) {
+    label.textContent = lastTruncation === null
+      ? currentTitle
+      : `${currentTitle} · ${truncationLine(lastTruncation)}`
+  }
+  // M4 Task 7 — /review's A/B audition opens at the point of maximum
+  // divergence. Only that page renders data-start; `once` matters, or a later
+  // seek would be yanked back here on the next metadata event.
+  if (Number.isFinite(startAt) && startAt > 0) {
+    audio.addEventListener('loadedmetadata', () => { audio.currentTime = startAt }, { once: true })
+  }
+  // Clear the previous track's clock and scrubber rather than leaving them on
+  // screen until the new track's first timeupdate.
+  if (time) time.textContent = `${formatDuration(0)} / --:--`
+  if (seek) { seek.value = '0'; seek.max = '0' }
+  // §5: "clearPlayerMemory() on ended must become save the new current".
+  // audio.currentTime is 0 here — assigning .src resets it — so this records
+  // the new track at position zero rather than the old track's offset.
+  savePlayerMemory()
+
+  await audio.play().catch((err: unknown) => {
+    // AbortError = a NEWER load superseded this play(). Playback of the newer
+    // track is fine; surfacing it was the "sometimes it fails" noise (PR #29).
+    if (err instanceof DOMException && err.name === 'AbortError') return
+    if (label) label.textContent = 'That track would not play. Try downloading it.'
+  })
+}
+
+/**
+ * The advance path — `SKIP`, `TRACK_ENDED`, `TRACK_FAILED`,
+ * `SELECT_QUEUE_ENTRY`. One place, because every one of them ends the same
+ * way: a new `current`, or none at all.
+ *
+ * BEHAVIOURAL CHANGE, CALLED OUT BECAUSE IT IS ONE (§5). `ended` used to fire
+ * `clearPlayerMemory()` unconditionally. With a queue that would forget the
+ * queue the moment a track finished, so memory is now SAVED for the new
+ * current track and cleared only when the queue is genuinely exhausted —
+ * which, with the default `method: 'off'`, is the ordinary end of a session.
+ */
+function handleAdvance(event: QueueEvent): void {
+  const before = getState().current
+  apply(event)
+  const after = getState().current
+
+  if (after === null) {
+    // Exhausted. Playback stops — the documented consequence of opt-in
+    // autoplay, not a failure.
+    currentFileId = null
+    currentTitle = ''
+    clearLookahead()
+    clearPlayerMemory()
+    if (label) label.textContent = 'Queue finished.'
+    updateToggle()
+    return
+  }
+  // A no-op event (an out-of-range index) leaves `current` where it was. Do
+  // not reload the track the member is already listening to.
+  if (before !== null && before.file_id === after.file_id) return
+  claimCurrent()
+  void startCurrent(0)
+}
+
+// ------------------------------------------------------------- DOM reads
+
+/** The `[data-queue-list]` container a control sits in — the pool table's
+ *  tbody, or a crate's. A play link outside any container (the track page,
+ *  /review) has no list, plays alone, and queues nothing. */
+function listContainerOf(el: Element): HTMLElement | null {
+  const c = el.closest('[data-queue-list]')
+  return c instanceof HTMLElement ? c : null
+}
+
+/** Every queueable row in a container, in rendered order — which IS play
+ *  order, so a sort click or a filter changes the queue a play would build,
+ *  exactly as a member would expect. */
+function scrapeRows(container: HTMLElement): QueueRowData[] {
+  return Array.from(container.querySelectorAll<HTMLElement>('a.play[data-track-id]')).map((a) => ({
+    file_id: a.dataset.trackId ?? '',
+    artist: a.dataset.artist ?? null,
+    title: a.dataset.title ?? '',
+    duration_ms: a.dataset.duration ?? null,
+    bpm: a.dataset.bpm ?? null,
+    key_camelot: a.dataset.key ?? null,
+  }))
+}
+
+/** One control's own metadata — a `+Q` button, or a play link with no list. */
+function scrapeOne(el: HTMLElement, fileId: string): QueueRowData {
+  return {
+    file_id: fileId,
+    artist: el.dataset.artist ?? null,
+    title: el.dataset.title ?? '',
+    duration_ms: el.dataset.duration ?? null,
+    bpm: el.dataset.bpm ?? null,
+    key_camelot: el.dataset.key ?? null,
+  }
+}
+
+/**
+ * A crate's tracks, for the `+ QUEUE` button on a card — the one surface with
+ * no rows of its own to read. Cached per crate for the life of the document,
+ * the same idiom (and the same `astro:after-swap` invalidation) as
+ * `loadCrateList()`: a soft navigation can bring a crate whose contents
+ * changed on another page.
+ */
+const crateTracksCache = new Map<string, Promise<QueueRowData[]>>()
+
+function loadCrateTracks(crateId: string): Promise<QueueRowData[]> {
+  const hit = crateTracksCache.get(crateId)
+  if (hit !== undefined) return hit
+  const p = fetch(`/api/crate/${crateId}/tracks`, { headers: { accept: 'application/json' } })
+    .then((res) => {
+      const type = res.headers.get('content-type') ?? ''
+      // Content-type first: middleware redirects a dead session to /login and
+      // fetch() follows it, so a lost session arrives as 200 text/html.
+      if (!res.ok || !type.includes('application/json')) throw new SessionExpiredError()
+      return res.json() as Promise<{ tracks?: Record<string, unknown>[] }>
+    })
+    .then((body) => (body.tracks ?? []).map(toCrateTrack))
+  crateTracksCache.set(crateId, p)
+  // A rejected promise must not be cached, or one dropped connection makes
+  // the button dead for the life of the document.
+  void p.catch(() => crateTracksCache.delete(crateId))
+  return p
+}
+
+document.addEventListener('astro:after-swap', () => {
+  crateTracksCache.clear()
+})
 
 if (audio && toggle) {
   toggle.addEventListener('click', () => {
@@ -159,7 +538,11 @@ if (audio && toggle) {
       void audio.play().catch(async (err: unknown) => {
         // Same AbortError rule as the play-link handler: superseded, not broken.
         if (err instanceof DOMException && err.name === 'AbortError') return
-        const recovered = await refreshSource(audio.currentTime, true)
+        // Deliberately NOT a TRACK_FAILED path. The member just pressed play
+        // on this track; skipping to another one under their finger is the
+        // wrong answer to "that would not play". §5 puts TRACK_FAILED on the
+        // mid-play `error` route alone.
+        const recovered = (await refreshSource(audio.currentTime, true)) === 'ok'
         if (!recovered && label && currentFileId === null) {
           label.textContent = 'Nothing to play yet.'
         } else if (!recovered && label) {
@@ -180,14 +563,36 @@ if (audio && toggle) {
   audio.addEventListener('error', () => {
     const wasPlaying = !audio.paused && !audio.ended
     const at = seek ? Number(seek.value) : 0
-    void refreshSource(Number.isFinite(at) ? at : 0, wasPlaying)
+    void (async () => {
+      const result = await refreshSource(Number.isFinite(at) ? at : 0, wasPlaying)
+      // §5, exactly: a failed REFRESH fires TRACK_FAILED, never a first
+      // `error`. 'busy' means another refresh owns the outcome (or the
+      // session died) — no strike, no skip, no second path around the
+      // `refreshing` guard.
+      if (result !== 'failed' || currentFileId === null) return
+      handleAdvance({ type: 'TRACK_FAILED', file_id: currentFileId, queue: renderedQueue })
+    })()
   })
   // Player-resume: a pause is a deliberate "I might come back to this"
   // moment, worth a save even before the next ~1 Hz timeupdate tick would
-  // have caught it. `ended` is the opposite signal — the track finished,
-  // so there is nothing left to resume.
+  // have caught it.
   audio.addEventListener('pause', savePlayerMemory)
-  audio.addEventListener('ended', clearPlayerMemory)
+  /**
+   * M6b — THE ADVANCE. `ended` used to clear player memory outright; it now
+   * runs the engine, and `handleAdvance` saves the NEW current instead (§5).
+   * With the default `method: 'off'` and an empty layer 1 there is no
+   * `queue[1]`, `current` becomes null and playback stops — the ordinary case
+   * for opt-in autoplay, not an edge.
+   */
+  audio.addEventListener('ended', () => {
+    if (getState().current === null) {
+      // Nothing ever went through the engine (a restore that only loaded a
+      // src, say) — keep M6a's behaviour exactly.
+      clearPlayerMemory()
+      return
+    }
+    handleAdvance({ type: 'TRACK_ENDED', queue: renderedQueue })
+  })
 }
 
 if (audio && seek) {
@@ -217,6 +622,7 @@ if (audio) {
     updateSeekRange()
     playMeter.tick(audio.currentTime)
     savePlayerMemory()
+    maybePrefetchNext()
   })
 }
 
@@ -243,64 +649,175 @@ if (audio) {
  * fix. Plain management forms opt out declaratively with
  * data-astro-reload instead (see crate/[id].astro).
  */
+/**
+ * M6b — the play link now dispatches PLAY_TRACK instead of claiming the
+ * transport itself. Three things happen in a strict order, and the order is
+ * the whole design:
+ *
+ *  1. `preventDefault` (capture phase — see the block comment above).
+ *  2. THE PROMPT, if layer 1 is non-empty. `confirm()` BLOCKS, so it must run
+ *     before the claim and before any fetch: a cancel has to leave the state
+ *     byte-for-byte unchanged — no claim, no history push, no request (§1.5).
+ *     Native confirm() called from this bundle, never an inline handler
+ *     attribute: Cloudflare's API WAF challenges a Worker upload whose bundle
+ *     contains one, and the deploy POST 403s with an HTML challenge page.
+ *     The `data-confirm` ATTRIBUTE form cannot serve here — it is
+ *     unconditional and form-only, and this prompt fires only when there is
+ *     something to lose.
+ *  3. `apply` + claim + start, all synchronous up to the fetch.
+ *
+ * A SUPPRESSED DIALOG READS AS CANCEL. After several rapid prompts a browser
+ * offers "prevent this page from creating additional dialogs", and a
+ * suppressed confirm() returns false — the play then does nothing, which is
+ * safe but could look broken. The drawer's CLEAR button is the always-
+ * available manual path (clear, then play, no prompt).
+ */
 document.addEventListener('click', (e) => {
   const a = (e.target as Element).closest?.('a.play[data-track-id]')
   if (!(a instanceof HTMLAnchorElement) || audio === null) return
   e.preventDefault()
   const trackId = a.dataset.trackId
   if (trackId === undefined) return
-  // Claimed synchronously, before the fetch below even starts — this is
-  // what lets a click always win a race against an in-flight restore (see
-  // restorePlayer()'s own re-check of currentFileId after its fetch).
-  currentFileId = trackId
-  currentTitle = a.dataset.label ?? ''
-  void (async () => {
-    const res = await fetch(`/api/track/${trackId}/source`, {
-      headers: { accept: 'application/json' },
-    })
-    // Non-JSON means middleware redirected to /login — say so, do not parse.
-    if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
-      if (label) label.textContent = 'Session ended — reload to sign in.'
-      return
-    }
-    const body = (await res.json()) as { url?: string; message?: string; error?: string }
-    if (!res.ok || !body.url) {
-      if (label) label.textContent = body.message ?? body.error ?? 'could not load that track'
-      return
-    }
-    audio.src = body.url
-    playMeter.reset()
-    if (label) label.textContent = currentTitle
-    // M4 Task 7 — the A/B audition opens at the point of maximum
-    // divergence, not at 0:00. PRD §6 asks for snippets "taken at the point
-    // of maximum divergence", and starting both sides at the top makes the
-    // reviewer listen to the one part that carries no information. Only
-    // /review renders data-start; every other play link omits it and this
-    // branch never runs. `once` matters — without it a later seek would be
-    // yanked back here on the next metadata event.
-    const startAt = Number(a.dataset.start ?? 0)
-    if (Number.isFinite(startAt) && startAt > 0) {
-      audio.addEventListener(
-        'loadedmetadata',
-        () => { audio.currentTime = startAt },
-        { once: true },
-      )
-    }
-    // Clear the previous track's elapsed/total and seek position rather
-    // than leaving them on screen until the new track's first timeupdate —
-    // loadedmetadata still fires normally afterwards and fills in the new
-    // duration.
-    if (time) time.textContent = `${formatDuration(0)} / --:--`
-    if (seek) { seek.value = '0'; seek.max = '0' }
-    void audio.play().catch((err: unknown) => {
-      // AbortError = a NEWER load superseded this play() (the user clicked
-      // another row, or clicked fast twice). Playback of the newer track is
-      // fine — surfacing it as an error was the "sometimes it fails" noise.
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      if (label) label.textContent = 'That track would not play. Try downloading it.'
-    })
-  })()
+
+  // The list this play means: the rest of THIS container, in rendered order.
+  // Outside a [data-queue-list] (the track page, /review) it is the clicked
+  // track alone — play it, queue nothing.
+  const container = listContainerOf(a)
+  const ctx = container === null
+    ? readListContext([scrapeOne(a, trackId)], trackId, null)
+    : readListContext(scrapeRows(container), trackId, container.dataset.queueList ?? null)
+  const event: QueueEvent = ctx.index < 0
+    // A row that is not in its own container (a stale DOM after a swap) still
+    // has to play. One-entry list, index 0, no intent.
+    ? { type: 'PLAY_TRACK', file_id: trackId, list: [toQueueEntry(scrapeOne(a, trackId), 'list', ctx.source_label)], index: 0, source_label: ctx.source_label }
+    : { type: 'PLAY_TRACK', file_id: trackId, list: ctx.list, index: ctx.index, source_label: ctx.source_label }
+
+  if (requiresClearConfirm(getState(), event)
+      && !window.confirm(confirmMessage(getState(), event))) return
+
+  const result = apply(event)
+  // Claimed synchronously, before the fetch even starts — this is what lets a
+  // click always win a race against an in-flight restore (see currentFileId's
+  // own comment and restorePlayer()'s re-check).
+  claimCurrent()
+  noteTruncation(result, ctx.source_label)
+  // Only /review renders data-start (the A/B audition opens at the point of
+  // maximum divergence, PRD §6); every other play link omits it.
+  void startCurrent(Number(a.dataset.start ?? 0))
 }, true)
+
+/** The drawer's `warehouse · 24 of 60` line, remembered from whichever write
+ *  last truncated. Null when the whole list fit — there is nothing to say. */
+function noteTruncation(result: ReduceResult, sourceLabel: string | null): void {
+  const { added, offered } = result
+  lastTruncation = added !== undefined && offered !== undefined && added < offered
+    ? { label: sourceLabel, added, offered }
+    : null
+}
+
+/**
+ * M6b — `▶ PLAY` in a crate page header. PLAY_CRATE rather than PLAY_TRACK,
+ * so every entry is stamped `origin: 'crate'` and the drawer can say where
+ * the queue came from. The items are the rendered rows: the crate page has
+ * them all in the DOM already, so this surface needs no fetch at all.
+ */
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.crateplay')
+  if (!(btn instanceof HTMLButtonElement) || audio === null) return
+  e.preventDefault()
+  const container = document.querySelector('[data-queue-list]')
+  if (!(container instanceof HTMLElement)) return
+  const sourceLabel = btn.dataset.crateName ?? container.dataset.queueList ?? null
+  const items = scrapeRows(container).map((r) => toQueueEntry(r, 'crate', sourceLabel))
+  if (items.length === 0) return
+
+  const event: QueueEvent = {
+    type: 'PLAY_CRATE', crate_id: btn.dataset.crateId ?? '', items, start: 0, source_label: sourceLabel,
+  }
+  if (requiresClearConfirm(getState(), event)
+      && !window.confirm(confirmMessage(getState(), event))) return
+
+  const result = apply(event)
+  claimCurrent()
+  noteTruncation(result, sourceLabel)
+  void startCurrent(0)
+}, true)
+
+/**
+ * M6b — `+ queue`, three surfaces, ONE delegation. A track row's `+Q` carries
+ * its own metadata; a crate card's `+ QUEUE` carries a crate id and fetches
+ * the tracks once. Both end in the same ADD_TO_QUEUE.
+ *
+ * EVERY APPEND REPORTS, and a truncated one reports what it dropped: §1.2's
+ * `added 4 of 17 from warehouse — queue is full (25)`. Silent partial success
+ * is the failure mode the 25 cap would otherwise introduce, so the count goes
+ * into `#player-label` — the same status region the play, like and crate
+ * handlers already use.
+ */
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.queueadd')
+  if (!(btn instanceof HTMLButtonElement)) return
+  e.preventDefault()
+
+  const crateId = btn.dataset.crateId
+  const fileId = btn.dataset.fileId
+  if (crateId === undefined && fileId === undefined) return
+
+  btn.disabled = true
+  void (async () => {
+    try {
+      let entries: QueueEntry[]
+      let sourceLabel: string | null
+      if (crateId !== undefined) {
+        sourceLabel = btn.dataset.crateName ?? 'crate'
+        entries = (await loadCrateTracks(crateId)).map((r) => toQueueEntry(r, 'crate', sourceLabel))
+      } else {
+        const container = listContainerOf(btn)
+        sourceLabel = container?.dataset.queueList ?? null
+        entries = [toQueueEntry(scrapeOne(btn, fileId as string), 'add', sourceLabel)]
+      }
+
+      const result = apply({ type: 'ADD_TO_QUEUE', entries })
+      // WHY THE APPEND FELL SHORT, and it matters: an `added: 0` because the
+      // track was already queued is not an `added: 0` because the queue is
+      // full, and telling a member the queue is full when it has room is a
+      // lie they cannot act on. `need === 0` afterwards means layer 1 now
+      // fills every slot — the cap really is what stopped it.
+      noteTruncation(result, sourceLabel)
+      if (label) {
+        label.textContent = appendReport({
+          added: result.added ?? 0,
+          offered: result.offered ?? entries.length,
+          label: sourceLabel,
+          full: slotsFor(getState()).need === 0,
+        })
+      }
+    } catch (err) {
+      if (label) {
+        label.textContent = err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : 'Could not add to the queue.'
+      }
+    } finally {
+      btn.disabled = false
+    }
+  })()
+})
+
+/**
+ * The queue's controls are `hidden` in the markup and unhidden here, because
+ * a button that would do nothing without JS must not be visible without JS —
+ * the queue is client state with no server endpoint to fall back to. Re-run
+ * on every ClientRouter swap: a swapped-in page body brings its own hidden
+ * buttons, and `<script src>` modules are evaluated once per document, never
+ * again on a soft navigation.
+ */
+function revealQueueControls(): void {
+  document.querySelectorAll<HTMLElement>('button.queueadd[hidden], button.crateplay[hidden]')
+    .forEach((el) => { el.hidden = false })
+}
+revealQueueControls()
+document.addEventListener('astro:after-swap', revealQueueControls)
 
 /**
  * M6a Task 3 — the ♥ toggle. `form.likeform` renders in two places
