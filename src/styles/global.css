@@ -692,7 +692,25 @@ td.download > a {
   min-height: var(--tap);
   text-decoration: none;
 }
-.signals { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-2); }
+/* --- COUNT RUNS, AND WHY THEY CARRY A DOT ---
+   The owner, reading the live app: "♥ 1 0 plays" reads as "10 plays".
+   Two numbers separated only by whitespace ARE one number to the eye, and
+   whitespace was the only thing that ever separated them — the gap here
+   used to be --pad-2 and nothing else. A middle dot is the separator, and
+   it is generated rather than typed so no template repeats it, no surface
+   forgets it, and adding a fourth count to a run needs no copy edit.
+
+   `> * + *` — every item after the first. The dot belongs to the item on
+   its RIGHT with a symmetric --pad-1 either side, so a wrapped run breaks
+   BEFORE a dot and never leaves one orphaned at the end of a line. */
+.signals, .stats, .feedrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-1); }
+.signals > * + *::before,
+.stats > * + *::before,
+.feedrow-meta > * + *::before {
+  content: '·';
+  margin-right: var(--pad-1);
+  color: var(--ink-35);
+}
 .signal { color: var(--mid); }
 
 /* --- artwork thumbs: content keeps its colour; the box is chrome --- */

@@ -171,10 +171,14 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           upload_count is a live count(*) over file_claims — see that
           migration's header for why these are two different mechanisms
           under one format-agnostic-by-design plan. */}
+      {/* The separator is no longer typed here. Every count run in the app
+          (.signals, .feedrow-meta, this one) gets its middle dot from one
+          generated rule in global.css — see the "COUNT RUNS" block there
+          for the owner report that caused it. Each count is its own
+          element so that rule has an adjacent sibling to hang the dot on. */}
       <p class="stats">
-        downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}
-        {' · '}
-        brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}
+        <span class="signal">downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}</span>
+        <span class="signal">brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}</span>
       </p>
     </header>
 
