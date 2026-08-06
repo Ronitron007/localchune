@@ -3,11 +3,18 @@
    NOTE: the distributed combination is AGPL-3.0 because the analysis
    worker includes Essentia. LICENSE explains why.
 
-   The entire visual language. Six greyscale tokens, no font-family (the
-   browser default is the typeface), 1px solid borders, zero radii, zero
-   shadows. v1 is light-only, on purpose — see the spec, §1 point 2 — if a
-   component ever needs a colour this file does not define, the design is
-   wrong, not this file. */
+   The entire visual language. The six greyscale tokens and the four
+   button colours are FROZEN — src/styles/global-tokens.test.ts asserts
+   every one of them byte-for-byte, because "the colour scheme stays same"
+   is an owner instruction and not a preference. Zero radii, forever, same
+   test. v1 is light-only, on purpose — if a component ever needs a colour
+   this file does not define, the design is wrong, not this file.
+
+   Two things the header used to claim and no longer does:
+   - borders are 1.5px on components and 1px only as a divider inside one;
+   - shadows exist, hard-offset and RATIONED (see --lift-* below). The
+     blanket `box-shadow: none` reset is gone, because it also vetoed the
+     focus ring. */
 
 :root {
   --bg: #fff;
@@ -57,12 +64,146 @@
   --btn-blue-line: #0842a0;
   --btn-red: #c0392b;
   --btn-red-line: #962d22;
+
+  /* =========================================================
+     THE INK LADDER
+     One ink — #000, the --fg we already had — at declared alphas.
+     Before this, hierarchy had exactly two rungs (--line #000 and
+     --faint #ddd) and every component picked one by feel. That is why
+     nothing had a hover state worth the name: a border already at full
+     black has nowhere to go. The ladder is what gives border-opacity
+     somewhere to travel, which is the single change the owner asked for
+     by name ("what changes are animations and borders").
+
+     The six frozen greyscale tokens above keep their exact literal
+     values — that is the "colour scheme stays same" mandate and
+     global-tokens.test.ts asserts it byte-for-byte. --faint (#ddd) and
+     --mid (#555) sit almost exactly on --ink-12 and --ink-55, so a call
+     site moves from one to the other with no visible change. The
+     migration is per-surface in Phase 3, not a redefinition here: this
+     commit must leave the app looking identical. */
+  --ink-04: rgba(0, 0, 0, 0.04);   /* zebra / inset panel fill              */
+  --ink-08: rgba(0, 0, 0, 0.08);   /* row hover fill                        */
+  --ink-12: rgba(0, 0, 0, 0.12);   /* hairline INSIDE a bordered container  */
+  --ink-20: rgba(0, 0, 0, 0.20);   /* resting edge: inputs, cards, lists    */
+  --ink-35: rgba(0, 0, 0, 0.35);   /* emphasised edge; dashed affordances   */
+  --ink-55: rgba(0, 0, 0, 0.55);   /* secondary text                        */
+  --ink-100: #000;                 /* hover, active, hero, section rules    */
+
+  /* =========================================================
+     BORDERS — one weight. Hierarchy is alpha; interaction earns full ink.
+
+     1.5px is the component stroke, not 1px. The half pixel is what
+     separates a drawn object from a table gridline, and at 90 degrees
+     with no radius it is the whole difference between "brutalist" and
+     "unstyled".
+
+     1px is ONLY ever a divider inside something that already owns a
+     1.5px outer edge, and the last one is removed. A list is one
+     object, not N boxes. */
+  --line-hair: 1px solid var(--ink-12);
+  --line-soft: 1.5px solid var(--ink-20);
+  --line-mid: 1.5px solid var(--ink-35);
+  --line-full: 1.5px solid var(--ink-100);
+  --rule-sec: 2px solid var(--ink-100);
+  --line-dash: 1.5px dashed var(--ink-35);
+  /* The ONE coloured border in the app, at most once per view: a left bar
+     on a callout. It takes --btn-blue rather than a new token, so it does
+     not widen the colour exception. */
+  --accent-3: 3px solid var(--btn-blue);
+
+  /* =========================================================
+     SURFACES. Mono has no cream or warm paper to separate planes with,
+     so the greys do it. SELECTION IS INVERSION, NEVER BLUE — blue
+     already means "primary action", and a blue-tinted selected row would
+     read as a button. Decided once here so no surface re-litigates it. */
+  --surface-0: var(--bg);
+  --surface-1: var(--ink-04);
+  --surface-2: var(--ink-08);
+  --surface-inv: var(--fg);
+
+  /* =========================================================
+     MOTION — fixed and small. A component that wants a seventh value is
+     wrong.
+
+     Colour, border-colour, background and opacity animate at --dur-fast
+     and NEVER overshoot: --ease-pop on a colour is the thing that makes
+     an interface feel like a toy. --ease-pop is confined to transform
+     deltas of 3px or less — the lift and the sink, nothing else. */
+  --dur-fast: 150ms;   /* colour, border, background, opacity              */
+  --dur-base: 200ms;   /* transforms: lift, sink, nudge                    */
+  --dur-panel: 280ms;  /* drawers, sheets, the now-playing expand          */
+  --dur-slow: 350ms;   /* one-shot entrances                               */
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);   /* transforms ONLY      */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);      /* fills, sweeps, enters */
+  --ease-panel: cubic-bezier(0.32, 0.72, 0, 1);    /* panels — the iOS curve */
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);        /* bottom-bar slide     */
+
+  /* =========================================================
+     SHADOWS. `Npx Npx 0` is a rectilinear projection: on a 0-radius box
+     it lines up exactly, which is why the hard offset looks better here
+     than on a rounded one. In mono it is pure #000, and this one device
+     replaces most of what a colour system does with tints.
+
+     THE RATION, and it is the rule that prevents the collapse: if
+     everything lifts, nothing lifts. At most ONE resting shadow per view
+     (--rest-1, on the page's hero object); --lift-* appears ONLY inside a
+     :hover / :active / [aria-pressed=true] block; shadow size scales with
+     object size; fixed bars use --edge-bar and never a lift. Rows do not
+     lift at all — a list of 100 lifting rows is the collapse in its
+     purest form. */
+  --lift-1: 3px 3px 0 var(--ink-100);        /* buttons, chips, small tiles */
+  --lift-2: 4px 4px 0 var(--ink-100);        /* cards, the active nav item  */
+  --lift-3: 6px 6px 0 var(--ink-100);        /* the hero object on hover    */
+  --rest-1: 4px 4px 0 rgba(0, 0, 0, 0.10);   /* the ONE resting hero shadow */
+  --edge-bar: 0 -2px 0 var(--ink-100);       /* fixed bars: a line, not blur */
+  --sheet: 0 -4px 32px rgba(0, 0, 0, 0.12);  /* the only soft shadow, ever  */
+  /* Focus. Blue at 0.35 — see the :focus-visible recipe below. Focus and
+     primary AGREE rather than compete, which is only safe because
+     selection is inversion and can never be confused with either. */
+  --focus-ring: 0 0 0 3px rgba(11, 87, 208, 0.35);
+
+  /* =========================================================
+     Z-INDEX. There was no ladder: .cratepick-menu sat at 1 and everything
+     else relied on paint order. That works until the second overlay
+     exists, which is this redesign. Declared once; do not invent steps. */
+  --z-rowmenu: 1;    /* in-row overlays (the crate picker) — unchanged value */
+  --z-thead: 10;     /* sticky table headers                                 */
+  --z-nav: 20;       /* the compact top nav bar                              */
+  --z-chip: 30;      /* the upload chip                                      */
+  --z-player: 40;    /* the player bar, and the queue drawer inside it       */
+  --z-nowplaying: 50;/* the now-playing sheet surface                        */
+  --z-sheet: 60;     /* bottom action sheets and their scrims                */
+  --z-dialog: 70;    /* confirm dialogs                                      */
 }
 
+/* border-radius: 0 STAYS — that is the 90 degree mandate, enforced
+   globally, and global-tokens.test.ts asserts it survives.
+
+   `box-shadow: none` IS GONE, and that is a rule being deliberately
+   removed. It was a blanket veto on the hard offset shadow — the
+   signature device of this whole design — AND on the focus ring, which
+   made it an accessibility bug wearing an aesthetic rule's clothes. What
+   replaces it is the rationing doctrine in the --lift-* comment above,
+   which is a STRICTER rule than "none": "none" needs no judgement and a
+   ration does. */
 *, *::before, *::after {
   border-radius: 0;
-  box-shadow: none;
   box-sizing: border-box;
+}
+
+/* Reduced motion, ONE global block rather than per-component — a rule
+   that has to be remembered in twenty places is a rule that will be
+   forgotten in one. Any JS that waits out a transition must ALSO
+   short-circuit its timeout under matchMedia('(prefers-reduced-motion:
+   reduce)'), or a panel stays mounted for 280ms with nothing happening. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html {
@@ -228,7 +369,10 @@ button + button { margin-left: var(--pad-1); }
 }
 .btn {
   background: var(--btn-blue);
-  color: #fff;
+  /* var(--bg), not a #fff literal: white is already a named token, and
+     the file's rule is that a component references tokens, never values.
+     global-tokens.test.ts fails on any hex outside :root. */
+  color: var(--bg);
   border-color: var(--btn-blue-line);
 }
 .btn-secondary {
@@ -238,7 +382,7 @@ button + button { margin-left: var(--pad-1); }
 }
 .btn-danger {
   background: var(--btn-red);
-  color: #fff;
+  color: var(--bg);
   border-color: var(--btn-red-line);
 }
 .btn:disabled, .btn-secondary:disabled, .btn-danger:disabled,
