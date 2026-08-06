@@ -52,6 +52,7 @@ import {
 const audio = document.getElementById('player-audio') as HTMLAudioElement | null
 const label = document.getElementById('player-label')
 const link = document.getElementById('player-link') as HTMLAnchorElement | null
+const artistEl = document.getElementById('player-artist')
 const likeForm = document.getElementById('player-like') as HTMLFormElement | null
 const toggle = document.getElementById('player-toggle') as HTMLButtonElement | null
 const nextBtn = document.getElementById('player-next') as HTMLButtonElement | null
@@ -87,17 +88,41 @@ function setStatus(text: string): void {
   label.textContent = text
 }
 
-function setNowPlaying(text: string, fileId: string | null): void {
+/**
+ * The name, as two lines: the title as the anchor, the artist under it.
+ *
+ * OWNER-CONFIRMED LAYOUT, 2026-08-06. It used to be one joined
+ * "Artist — Title" in a `nowrap` span at `flex: 1 1 6rem`, which on a
+ * phone truncated to the artist and three characters of the title — the
+ * half a member does not need. Two lines ellipsize independently.
+ *
+ * The two arguments are the entry's own `display_title` and
+ * `display_artist`, which is the same pair Media Session sends to the
+ * lock screen. NOTHING SPLITS THE JOINED STRING BACK APART: a title with
+ * an em dash in it would make that a guess, and the separate fields have
+ * been on the entry all along.
+ *
+ * Both nodes are captured once at module load and re-appended here,
+ * because setStatus() writes textContent and textContent removes every
+ * child — the same reason `link` has always been captured rather than
+ * re-queried.
+ */
+function setNowPlaying(title: string, artistName: string | null, fileId: string | null): void {
   if (label === null) return
   label.textContent = ''
   if (link === null || fileId === null) {
-    label.textContent = text
+    label.textContent = title
     return
   }
-  link.textContent = text
+  link.textContent = title
   link.href = trackHref(fileId)
   link.hidden = false
   label.appendChild(link)
+  if (artistEl === null) return
+  const named = artistName !== null && artistName !== ''
+  artistEl.textContent = named ? artistName : ''
+  artistEl.hidden = !named
+  if (named) label.appendChild(artistEl)
 }
 
 /**
@@ -157,6 +182,11 @@ let seeking = false
 // stay DOM-free per play-meter.ts's testability contract.
 let currentFileId: string | null = null
 let currentTitle = ''
+/** The two lines the bar shows, kept apart. `currentTitle` above stays the
+ *  JOINED string, because that is what player memory serialises and what
+ *  the ♥'s aria-label reads — neither wants two fields. */
+let currentName = ''
+let currentArtist: string | null = null
 
 /**
  * M6a Task 4 — anti-scrub play counting. One meter for the one persisted
@@ -417,6 +447,11 @@ function claimCurrent(): QueueEntry | null {
   if (entry === null) return null
   currentFileId = entry.file_id
   currentTitle = entryLabel(entry)
+  // The same two fields Media Session sends to the lock screen, kept for
+  // the bar's two-line stack. Read from the entry, never split back out
+  // of `currentTitle`.
+  currentName = entry.display_title
+  currentArtist = entry.display_artist
   return entry
 }
 
@@ -537,7 +572,7 @@ async function startCurrent(startAt: number): Promise<void> {
   // truncated play falls back to plain text for the one track it decorates,
   // and the link returns on the next one.
   if (lastTruncation === null) {
-    setNowPlaying(currentTitle, fileId)
+    setNowPlaying(currentName, currentArtist, fileId)
   } else {
     setStatus(`${currentTitle} · ${truncationLine(lastTruncation)}`)
   }
@@ -672,6 +707,8 @@ function handleAdvance(event: QueueEvent): void {
     // autoplay, not a failure.
     currentFileId = null
     currentTitle = ''
+    currentName = ''
+    currentArtist = null
     clearLookahead()
     clearPlayerMemory()
     updateMediaSession()
@@ -967,6 +1004,14 @@ function setDrawerOpen(open: boolean): void {
   if (drawer === null || drawerToggle === null) return
   drawer.hidden = !open
   drawerToggle.setAttribute('aria-expanded', String(open))
+  // OWNER-APPROVED OPEN STATE, from a mock: the button inverts to solid
+  // ink and its glyph becomes a ✕, so the control that opened the drawer
+  // is visibly the one that closes it. The FILL is CSS off aria-expanded
+  // — this line only owns the glyph and the accessible name, because a
+  // button reading "☰ QUEUE" while it means "close" is a lie a screen
+  // reader would repeat.
+  drawerToggle.textContent = open ? '✕ QUEUE' : '☰ QUEUE'
+  drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
   document.body.classList.toggle('queueopen', open)
   syncDrawerHeight()
   // One of §5's two triggers for the deferred tail. The other is in
@@ -1947,7 +1992,7 @@ async function restorePlayer() {
     return
   }
   const body = (await res.json()) as
-    { url?: string; liked?: boolean; like_count?: number; title?: string }
+    { url?: string; liked?: boolean; like_count?: number; title?: string; artist?: string | null }
   if (!res.ok || !body.url) {
     // Deleted / no longer visible / not yet available — nothing to resume.
     clearPlayerMemory()
@@ -1966,7 +2011,13 @@ async function restorePlayer() {
    * for a file whose display_title is genuinely empty.
    */
   currentTitle = typeof body.title === 'string' && body.title !== '' ? body.title : entry.title
-  setNowPlaying(currentTitle, entry.file_id)
+  // The route already returns display_title and display_artist as separate
+  // fields (see its own header — four free columns off the pool_get row it
+  // presigned from), so the resumed bar gets the same two-line stack a
+  // click does, from the same source, without a second request.
+  currentName = typeof body.title === 'string' && body.title !== '' ? body.title : entry.title
+  currentArtist = typeof body.artist === 'string' && body.artist !== '' ? body.artist : null
+  setNowPlaying(currentName, currentArtist, entry.file_id)
   /**
    * THE RESUMED TRACK'S ♥, AT ZERO EXTRA REQUESTS — the whole reason the
    * like state rides on this response rather than a fetch of its own.

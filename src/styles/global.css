@@ -71,8 +71,12 @@
      desktop row, 84.5px below 640px where the seek slider takes its own
      line. Rounded up to the next multiple of 8. Re-measure and update
      this value whenever the bar's contents or padding change. Measured
-     after the 44px floor: 65px desktop, 117px below 640px. Rounded up. */
-  --bar-h: 68px;
+     after the 44px floor: 65px desktop, 117px below 640px. Rounded up.
+     Re-measured after the owner-confirmed three-row layout: 61px on one
+     desktop row, 157px on the three mobile rows (three 44px rows — the
+     scrubber's hit box is a tap target too — plus two gaps and the
+     padding). Rounded up to 64 and 160. */
+  --bar-h: 64px;
 
   /* THE minimum interactive box. Not a suggestion, and a token rather than
      a comment because the failure was systemic: before this, NOTHING
@@ -271,11 +275,12 @@ body {
 @media (min-width: 640px) {
   body { padding-left: var(--pad-3); padding-right: var(--pad-3); }
 }
-/* Below 640px the bar reflows to two rows (the seek slider takes its own
-   line), so the reservation and every offset derived from --bar-h grow
-   with it. One declaration, and the derived rules follow for free. */
+/* Below 640px the bar is the owner-confirmed three rows — name+♥, the
+   transport and the clock, then a full-width scrubber lifted off the
+   bottom edge — so the reservation and every offset derived from --bar-h
+   grow with it. One declaration, and the derived rules follow for free. */
 @media (max-width: 640px) {
-  :root { --bar-h: 120px; }
+  :root { --bar-h: 160px; }
 }
 
 /* Vertical rhythm between a page's top-level blocks (h1, filter form,
@@ -943,15 +948,36 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    attr, so browsers give it no box. The visible row is the custom
    play/pause button, the touch-friendly range seek, and the elapsed/total
    clock; see src/scripts/site.ts for the timeupdate/seek wiring. */
+/* THE OWNER-CONFIRMED LAYOUT, from a mock, 2026-08-06.
+     row 1   [QUEUE]  [ title / artist stack ]  [♥]
+     row 2   [▶] [⏭]                   [elapsed / total]
+     row 3   [ ================ scrubber ================ ]
+   lifted off the bottom edge by the safe-area inset.
+
+   GRID AREAS OVER THE SAME DOM. The spec's survive-list #9 asks that
+   site.ts never learn about visual order, and grid keeps that promise
+   more completely than `order` did — three rows out of a flex-wrap
+   needs the row breaks to fall out of the widths, which is exactly how
+   the bar ended up as an accidental three rows at 375px with QUEUE
+   jumping to the front (it had no mobile `order` at all). DOM order is
+   still label / like / queue / toggle / next / seek / time and nothing
+   in the script knows where any of them is drawn.
+
+   #queue-drawer is position: absolute and #player-audio is display:none,
+   so neither takes a grid cell. */
 .playerbar {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "queue name  like"
+    "play  next  time"
+    "seek  seek  seek";
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--pad-1) var(--pad-2);
+  gap: var(--pad-0) var(--pad-1);
   padding: var(--pad-1) var(--pad-2);
   /* The seek slider used to sit at the extreme bottom edge, inside the iOS
      home-indicator gesture zone, so a thumb drag on the scrubber fought
@@ -962,27 +988,61 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
   border-top: 1px solid var(--line);
 }
 .playerbar audio { display: none; }
+
+/* THE NAME STACK. Two lines, each clipping on its own. The old single
+   `nowrap` span at `flex: 1 1 6rem` truncated a joined "Artist — Title"
+   to the artist and three characters of the title — the half a member
+   does not need. */
 .playerbar .nowplaying {
-  color: var(--mid);
+  grid-area: name;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: var(--tap);
+  color: var(--fg);
+}
+.playerbar .nowplayinglink,
+.playerbar .nowplayingartist {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 6rem;
-  min-width: 0;
+  max-width: 100%;
+}
+.playerbar .nowplayingartist {
+  font-size: var(--text-xs);
+  color: var(--ink-55);
 }
 /* Play/pause and skip take no .btn tier (survive-list #8's transport
    exemption) so they never inherited the tier's geometry either. The floor
    applies to them as a control, not as a tier. */
 .playerbar .playertoggle {
-  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: var(--tap);
   min-height: var(--tap);
 }
-.playerbar .playerseek { flex: 2 1 6rem; min-width: 4rem; }
-.playerbar .playertime { flex: none; color: var(--mid); white-space: nowrap; }
+#player-toggle { grid-area: play; justify-self: start; }
+/* `next` sits in the flexible middle column, so it has to be told to hug
+   play rather than centre itself in the gap. */
+#player-next { grid-area: next; justify-self: start; }
+.playerbar .playerseek {
+  grid-area: seek;
+  width: 100%;
+  min-width: 0;
+  /* Row 3 is the scrubber's own row, so it never fights the iOS home
+     indicator: the safe-area padding on the bar is below it. */
+  margin: 0;
+}
+.playerbar .playertime {
+  grid-area: time;
+  justify-self: end;
+  color: var(--ink-55);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
 
 /* The track name is a link now — to /track/<id>, set by site.ts on every
    change. It inherits .nowplaying's ellipsis (the span is the block that
@@ -999,7 +1059,7 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    this only gives it a real tap target, which the pool table's dense rows
    deliberately do not have room for. 44px is the WCAG 2.5.8 target size, and
    the bar is the one place a thumb reaches for it on a phone. */
-.playerbar .playerlike { flex: none; }
+.playerbar .playerlike { grid-area: like; }
 .playerbar .likebtn {
   min-width: 44px;
   min-height: 44px;
@@ -1020,17 +1080,38 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
    `.playernext` carries `.playertoggle` too (it is the same control shape and
    takes the same `flex: none` above), so its own `order` MUST come after the
    `.playertoggle` rule: equal specificity, and source order is what decides. */
-@media (max-width: 640px) {
-  .playerbar .nowplaying { order: 1; }
-  /* SAME ORDER GROUP AS THE TITLE, on purpose. Equal `order` values lay out
-     in DOM order, and .playerlike follows #player-label in the markup — so
-     the ♥ stays welded to the name it is about, on both rows and at every
-     width, instead of drifting into the transport cluster. */
-  .playerbar .playerlike { order: 1; }
-  .playerbar .playertoggle { order: 2; }
-  .playerbar .playernext { order: 3; }
-  .playerbar .playertime { order: 4; }
-  .playerbar .playerseek { order: 5; flex: 1 1 100%; }
+/* ONE ROW ONCE THERE IS ROOM. A desktop has width to spare and three
+   stacked rows of chrome on a 1440px monitor is a waste of it — so the
+   same seven children take one line, same DOM, one changed template.
+   The three-row shape below 640px is the owner-confirmed mock and needs
+   no media query of its own: it is the default. */
+@media (min-width: 640px) {
+  .playerbar {
+    grid-template-columns: auto minmax(8rem, 1fr) auto auto auto minmax(8rem, 2fr) auto;
+    grid-template-areas: "queue name like play next seek time";
+    gap: var(--pad-1) var(--pad-2);
+  }
+}
+
+/* THE QUEUE BUTTON'S OPEN STATE — owner-approved from a mock, 2026-08-06.
+   Open inverts to solid ink with a ✕, so the control that opened the
+   drawer is visibly the one that closes it. Selection is inversion
+   everywhere else in this system (§1.3) and this is a selected state, not
+   an action, which is also why it stays a `.btn-secondary` rather than
+   growing a fourth tier. site.ts swaps the glyph and the label; the fill
+   is CSS off `aria-expanded`, which the button already carried.
+
+   Deliberately NOT the drawer's own top handle. The owner asked for that
+   one last and it is logged as a follow-up, not built here. */
+.playerbar .queuetoggle { grid-area: queue; }
+.playerbar .queuetoggle[aria-expanded='true'] {
+  background: var(--surface-inv);
+  color: var(--bg);
+  border-color: var(--ink-100);
+}
+.playerbar .queuetoggle[aria-expanded='true']:hover,
+.playerbar .queuetoggle[aria-expanded='true']:active {
+  background: var(--surface-inv);
 }
 
 /* --- the queue drawer (M6b) ---
