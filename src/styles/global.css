@@ -2184,6 +2184,27 @@ dd { margin: 0; overflow-wrap: anywhere; }
 /* An empty status is not a bordered empty strip. */
 .searchoverlay-status:empty { display: none; }
 
+/* --- the three messages (§6.6, survive-list #16) ---
+   THE OUTAGE AND THE EMPTY RESULT MUST NOT LOOK ALIKE. That is the whole
+   rule, and a search box is where confusing them costs most: a member who
+   reads "the database is down" as "your pool is empty" stops looking.
+
+   So `is-empty` is the dashed language `.empty` and the upload dropzone
+   already speak — "nothing here", a normal outcome — while `is-error`
+   drops the dash, takes the danger colour the sheet's danger row uses, and
+   reads as a fault. `is-hint` is the quietest of the three: it is not a
+   result at all, only the syntax nobody would otherwise discover. */
+.searchoverlay-message {
+  margin: 0;
+  padding: var(--pad-3) var(--pad-2);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--mid);
+}
+.searchoverlay-message.is-hint  { color: var(--ink-55); font-size: var(--text-xs); }
+.searchoverlay-message.is-empty { border: var(--line-dash); margin: var(--pad-2); color: var(--mid); }
+.searchoverlay-message.is-error { color: var(--btn-red); }
+
 /* --- one result row ---
    §5.1's card, exactly: 44px artwork, two lines of text, chips, one ⋮.
    The row does NOT lift on hover (§4.3) — a background step is the whole

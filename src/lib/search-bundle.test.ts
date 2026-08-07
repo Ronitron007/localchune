@@ -188,6 +188,45 @@ describe('no text-glyph controls — the standing owner directive', () => {
   })
 })
 
+describe('empty, error and hint stay three different things — §6.6, survive-list #16', () => {
+  const css = readFileSync(join(SRC, 'styles/global.css'), 'utf8')
+
+  it('renders an outage with different words from an empty result', () => {
+    // The worst possible outcome of this feature is a member reading "the
+    // database is down" as "your pool is empty" and giving up.
+    expect(overlayCode).toContain('No tracks match that.')
+    expect(overlayCode).toContain('Search is unavailable right now.')
+    expect(overlayCode).toContain('Session ended — reload to sign in.')
+  })
+
+  it('tags each message with its own kind, so CSS can tell them apart', () => {
+    expect(overlayCode).toMatch(/'hint' \| 'empty' \| 'error'/)
+    expect(overlayCode).toMatch(/setMessage\([^)]*'error'\)/s)
+    expect(overlayCode).toMatch(/setMessage\('No tracks match that\.', 'empty'\)/)
+  })
+
+  it('...and the CSS actually distinguishes them', () => {
+    // A `kind` nothing styles differently would be a distinction that
+    // exists only in the source.
+    expect(css).toContain('.searchoverlay-message.is-empty')
+    expect(css).toContain('.searchoverlay-message.is-error')
+    expect(css).toMatch(/\.searchoverlay-message\.is-empty\s*\{[^}]*--line-dash/)
+    expect(css).toMatch(/\.searchoverlay-message\.is-error\s*\{[^}]*--btn-red/)
+  })
+
+  it('teaches the token syntax on open — it is otherwise undiscoverable', () => {
+    // Nothing else in the app hints that `128` or `8A` mean anything in a
+    // search box.
+    expect(overlayCode).toContain('showOpeningHint')
+    expect(overlayCode).toMatch(/128/)
+    expect(overlayCode).toMatch(/8A/)
+  })
+
+  it('returns to that hint when the box is cleared, not to a blank panel', () => {
+    expect(overlayCode).toMatch(/if \(raw\.trim\(\) === ''\) showOpeningHint\(\)/)
+  })
+})
+
 describe('the request discipline', () => {
   it('aborts the previous request before starting another', () => {
     // Without this a slow answer to `mo` can repaint over a fast answer to

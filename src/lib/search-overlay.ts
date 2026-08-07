@@ -324,24 +324,44 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
     row.scrollIntoView({ block: 'nearest' })
   }
 
-  function render(list: SearchResult[]): void {
-    results.replaceChildren()
-    rows = list.map(rowEl)
-    for (const r of rows) results.appendChild(r)
-    active = -1
-    status.textContent = list.length === 0
-      ? 'No tracks match that.'
-      : `${list.length} ${list.length === 1 ? 'track' : 'tracks'}`
-  }
-
-  /** Empty, error and loading all land here — §6.6's three-message contract
-   *  kept distinct, because "the database is down" must never read as
-   *  "you have nothing". */
-  function setMessage(text: string): void {
-    results.replaceChildren()
+  /**
+   * The three messages, kept apart — survive-list #16 and §6.6.
+   *
+   * "No tracks match that" and "Search is unavailable" MUST NOT look alike.
+   * A restyle that made an outage read as an empty pool was named the worst
+   * possible outcome of the redesign, and a search box is exactly where
+   * that confusion costs most: a member who believes their pool is empty
+   * stops looking.
+   *
+   * The message goes in the RESULTS area, not only in the status line — a
+   * blank panel with one small grey line at the bottom is not a state, it
+   * is a page that failed to render.
+   */
+  function setMessage(text: string, kind: 'hint' | 'empty' | 'error'): void {
     rows = []
     active = -1
-    status.textContent = text
+    const box = el('p', `searchoverlay-message is-${kind}`, text)
+    results.replaceChildren(box)
+    // The status line stays the announcement. Silent for the opening hint:
+    // a screen reader has just been handed the input's own label, and
+    // reading the placeholder syntax at it unprompted is noise.
+    status.textContent = kind === 'hint' ? '' : text
+  }
+
+  /** What the overlay says before anything is typed. It TEACHES THE TOKENS,
+   *  because a tempo or a key query is otherwise undiscoverable — nothing
+   *  else in the app hints that `128` or `8A` mean anything here. */
+  const showOpeningHint = (): void => setMessage(
+    'Search by artist or title. A number is a tempo (128), and a Camelot key (8A) finds its harmonic neighbours too.',
+    'hint',
+  )
+
+  function render(list: SearchResult[]): void {
+    if (list.length === 0) { setMessage('No tracks match that.', 'empty'); return }
+    rows = list.map(rowEl)
+    results.replaceChildren(...rows)
+    active = -1
+    status.textContent = `${list.length} ${list.length === 1 ? 'track' : 'tracks'}`
   }
 
   const run = debounce((q: string) => {
@@ -357,7 +377,7 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
         if (isAbortError(err) || closed) return
         setMessage(err instanceof SessionExpiredError
           ? 'Session ended — reload to sign in.'
-          : 'Search is unavailable right now.')
+          : 'Search is unavailable right now.', 'error')
       })
   }, DEBOUNCE_MS)
 
@@ -370,7 +390,11 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
       run.cancel()
       inflight?.abort()
       inflight = null
-      setMessage(raw.trim() === '' ? '' : 'Keep typing…')
+      // Deleting everything returns to the opening hint rather than to a
+      // blank box: the state is "nothing typed yet", which is the state
+      // that hint describes.
+      if (raw.trim() === '') showOpeningHint()
+      else setMessage('Keep typing…', 'hint')
       return
     }
     run(raw.trim())
@@ -426,20 +450,38 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
 
   scrim.addEventListener('click', close)
   closeBtn.addEventListener('click', close)
-  // A tap on a row that reaches site.ts's play delegation should also
-  // dismiss the overlay — the member got what they came for. Bubble phase,
-  // so the play handler (capture, on document) has already run.
+
+  /**
+   * A tap that resolved to an action dismisses the overlay — the member got
+   * what they came for, and leaving a search box over the thing that just
+   * started playing is the one state nobody wants.
+   *
+   * Bubble phase, so site.ts's capture-phase play delegation has already
+   * run by the time this fires.
+   *
+   * THE ⋮ IS THE EXCEPTION, and it is load-bearing. `openRowSheet` builds
+   * its sheet by READING THE ROW — the row's `a.play`, its `likeform`, its
+   * `cratepick`, its metadata cells. Closing here would detach that row
+   * from the document before the sheet had finished reading it, and the
+   * sheet's own "Add to a crate…" step re-queries the row LATER still. So
+   * the overlay stays up underneath the sheet, which is also why it sits at
+   * z-index 45 and the sheet at 60.
+   */
   results.addEventListener('click', (e) => {
     const target = e.target as Element | null
-    // ...but NOT a tap on the ⋮, which opens a sheet built from a row that
-    // has to still be in the document when the sheet reads it.
-    if (target?.closest('button.rowmenu') !== null) return
-    if (target?.closest('details.cratepick') !== null) return
-    if (target?.closest('a, button') !== null || target?.closest('[data-play-row]') !== null) close()
+    if (target === null) return
+    if (target.closest('button.rowmenu') !== null) return
+    if (target.closest('details.cratepick') !== null) return
+    // Either an explicit control was hit, or the row itself was — which
+    // site.ts has just turned into a play.
+    const acted = target.closest('a, button') !== null
+      || target.closest('[data-play-row]') !== null
+    if (acted) close()
   })
   document.addEventListener('keydown', onKeydown, true)
   document.addEventListener('astro:before-swap', close)
 
+  showOpeningHint()
   document.body.appendChild(root)
   requestAnimationFrame(() => root.classList.add('is-open'))
   input.focus()
