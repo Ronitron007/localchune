@@ -62,15 +62,38 @@ describe('one queue engine, one rendered array', () => {
   // Every event that carries an index must carry THE array, by reference.
   // A literal, a `.slice()`, a freshly assembled array or a variable with
   // another name are all ways to reintroduce the stale-index bug.
-  it.each(['SKIP', 'TRACK_ENDED', 'TRACK_FAILED', 'SELECT_QUEUE_ENTRY', 'REMOVE_QUEUE_ENTRY'])(
+  // MOVE_QUEUE_ENTRY joined this list DELIBERATELY. It always carried the
+  // rendered array and was always resolved against it — it was simply missing
+  // from the guard, which is the easiest kind of gap to leave and the hardest
+  // to notice. It matters more now than it did: the event takes a DESTINATION
+  // index as well as a source, so a stale array can put a pin in the wrong
+  // place as well as move the wrong pin.
+  it.each([
+    'SKIP', 'TRACK_ENDED', 'TRACK_FAILED', 'SELECT_QUEUE_ENTRY', 'REMOVE_QUEUE_ENTRY',
+    'MOVE_QUEUE_ENTRY',
+  ])(
     'dispatches %s with `queue: renderedQueue` wherever it dispatches it at all',
     (type) => {
       const dispatches = [...code.matchAll(new RegExp(`type:\\s*'${type}'([^}]*)\\}`, 'g'))]
+      expect(dispatches.length, `${type} is dispatched somewhere`).toBeGreaterThan(0)
       for (const [, rest] of dispatches) {
         expect(rest).toContain('queue: renderedQueue')
       }
     },
   )
+
+  it('never dispatches a reorder in a DIRECTION — the verb takes a destination', () => {
+    // `dir` is gone from the engine. A `dir:` on a MOVE_QUEUE_ENTRY would now
+    // be silently ignored by the reducer and the row would not move, which is
+    // the failure this whole file exists to make loud instead of quiet.
+    const dispatches = [...code.matchAll(/type:\s*'MOVE_QUEUE_ENTRY'([^}]*)\}/g)]
+    expect(dispatches.length).toBeGreaterThan(0)
+    for (const [, rest] of dispatches) {
+      // `to: x` or the shorthand `to,` — both are the destination property.
+      expect(rest).toMatch(/[\s,{]to\s*[:,]/)
+      expect(rest).not.toMatch(/\bdir\s*[:,]/)
+    }
+  })
 
   it('never re-derives an array at a dispatch site', () => {
     expect(code).not.toMatch(/queue:\s*assembleQueue\(/)

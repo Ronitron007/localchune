@@ -41,6 +41,7 @@ import {
 import {
   FALLBACK_METHOD, STRATEGIES, type StrategyContext, type TrackFeatures,
 } from './queue-strategies'
+import { moveItem } from './reorder'
 
 /**
  * The events of §1.4, plus `RESTORE_CURRENT`. The four that advance or address
@@ -74,10 +75,15 @@ export type QueueEvent =
   | { type: 'SKIP'; queue: readonly QueueEntry[] }
   | { type: 'TRACK_ENDED'; queue: readonly QueueEntry[] }
   | { type: 'REMOVE_QUEUE_ENTRY'; index: number; queue: readonly QueueEntry[] }
+  /**
+   * A DESTINATION, NOT A DIRECTION. Both indices address the RENDERED array,
+   * like every other addressing event above. See the `reduce` case for why
+   * `dir: 'up' | 'down'` was removed rather than kept alongside.
+   */
   | {
     type: 'MOVE_QUEUE_ENTRY'
     index: number
-    dir: 'up' | 'down'
+    to: number
     queue: readonly QueueEntry[]
   }
   | { type: 'TRACK_FAILED'; file_id: string; queue: readonly QueueEntry[] }
@@ -240,6 +246,47 @@ function advanceTo(
  */
 const firstAddressable = (state: QueueState): number => (state.current === null ? 0 : 1)
 
+/**
+ * Where LAYER 1 begins in the rendered array — the offset that turns a row the
+ * drawer reported into an index into `intent`.
+ *
+ * It is the same number as `firstAddressable`, and deliberately the same
+ * expression rather than a second one that has to agree. The coincidence is
+ * structural, not luck: `current` is rendered at index 0 when it exists, it is
+ * the only row in neither layer, and it is the only row no addressing event
+ * may touch. "The first row anyone may address" and "the first row of layer 1"
+ * are therefore the same row, always. Two names because the two readings are
+ * both worth having at their call sites; one binding because a future change
+ * to the rendered head must move both at once or neither.
+ */
+const intentBase = firstAddressable
+
+/**
+ * May this event address `queue[index]` at all?
+ *
+ * THE INTEGER CHECK IS NOT DECORATION, and it was missing. Every addressing
+ * event reaches its target through `event.queue[event.index]`, and a bare
+ * range comparison lets two non-integers straight through: `NaN` fails BOTH
+ * `< firstAddressable` and `>= length` (every comparison with NaN is false),
+ * and a fractional index passes both honestly. Either one indexes the array
+ * with a key that is not there, and `undefined` then reaches code that reads
+ * `.file_id` off it — a TypeError from inside the one reducer, or, on the
+ * SELECT path, a `current` spread from `undefined` into an entry with no id
+ * at all. That second one is the bad shape: no exception, and the transport
+ * holding a track that does not exist.
+ *
+ * `Number(el.dataset.index)` is `NaN` for a row whose attribute went missing,
+ * which is one typo in a template away, and a drag reports indices derived
+ * from the DOM rather than from a literal. site.ts guards every dispatch site
+ * with `Number.isInteger`, and it should — but `reduce` documents itself as
+ * total, and total has to be true here rather than upstream of here.
+ */
+const addressable = (
+  state: QueueState, queue: readonly QueueEntry[], index: number,
+): boolean => Number.isInteger(index)
+  && index >= firstAddressable(state)
+  && index < queue.length
+
 const isReplacing = (e: QueueEvent): e is Extract<QueueEvent, { type: 'PLAY_TRACK' | 'PLAY_CRATE' }> =>
   e.type === 'PLAY_TRACK' || e.type === 'PLAY_CRATE'
 
@@ -307,9 +354,7 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
     }
 
     case 'SELECT_QUEUE_ENTRY': {
-      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
-        return { state: copy(state) }
-      }
+      if (!addressable(state, event.queue, event.index)) return { state: copy(state) }
       return advanceTo(state, event.queue, event.index, 'selected')
     }
 
@@ -323,9 +368,7 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
 
     case 'REMOVE_QUEUE_ENTRY': {
       const next = copy(state)
-      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
-        return { state: next }
-      }
+      if (!addressable(state, event.queue, event.index)) return { state: next }
       const target = event.queue[event.index]
       if (next.intent.some((e) => e.file_id === target.file_id)) {
         next.intent = next.intent.filter((e) => e.file_id !== target.file_id)
@@ -338,33 +381,47 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
     }
 
     /**
-     * The drawer's ↑ / ↓. LAYER 1 ONLY, and the restriction is not a
-     * limitation but the model: layer 2 has no identity across regenerations
-     * — an auto entry that "moved" would be re-ranked into a different place
-     * by the very next strategy run, so the button would appear to do nothing
-     * at random. `intent` is the one part of the queue with an order the user
-     * owns, and it is the only part that can be reordered.
+     * THE REORDER. LAYER 1 ONLY, and the restriction is not a limitation but
+     * the model: layer 2 has no identity across regenerations — an auto entry
+     * that "moved" would be re-ranked into a different place by the very next
+     * strategy run, so the gesture would appear to work at random. `intent` is
+     * the one part of the queue with an order the user owns, and it is the
+     * only part that can be reordered. The drawer therefore renders a drag
+     * handle on layer 1 rows and on no others.
      *
-     * Order is swapped INSIDE `intent` rather than inside the rendered array,
+     * IT TAKES A DESTINATION. This event used to be one step in a named
+     * direction, because the only control was a pair of arrow buttons. A drag
+     * from row 3 to row 9 through that verb is six dispatches, six reduces and
+     * six regenerations, and the five intermediate orders are ones the member
+     * never asked for. `dir` was deleted rather than kept as a derived
+     * convenience: two shapes for one verb is how a boundary case comes to
+     * mean two different things, and in this module that is a wrong song with
+     * no exception and no failing test. The remaining one-step callers — the
+     * arrow keys on the drag handle — compute `to` and land on exactly the
+     * permutation `dir` produced, which queue-engine.test.ts asserts directly.
+     *
+     * BOTH INDICES ARE RENDERED INDICES, and converting them is all this case
+     * does that `moveItem` does not. Layer 1 begins at rendered index
+     * `intentBase` — 0 with nothing playing, 1 with `current` above it — so
+     * subtracting it is the whole mapping, and CLAMPING (which `moveItem`
+     * does) is what folds a destination outside layer 1 back onto its
+     * boundary. That is not defensive coding, it is the feature: a member who
+     * drags a pin down past the seam into the auto tail means "put it last",
+     * and one who drags it above the playing track means "play it next".
+     *
+     * The order changes INSIDE `intent` rather than inside the rendered array,
      * because the rendered array is derived and the intent layer is what
-     * persists. A boundary move (first up, last down) is a no-op that still
-     * returns a new state, same total-function discipline as every case here.
+     * persists. Every rejection — a source outside layer 1, an auto row, a
+     * destination equal to the source — is a no-op that still returns a new
+     * state, same total-function discipline as every case here.
      */
     case 'MOVE_QUEUE_ENTRY': {
       const next = copy(state)
-      if (event.index < firstAddressable(state) || event.index >= event.queue.length) {
-        return { state: next }
-      }
+      if (!addressable(state, event.queue, event.index)) return { state: next }
       const target = event.queue[event.index]
       const at = next.intent.findIndex((e) => e.file_id === target.file_id)
       if (at < 0) return { state: next }
-      const to = event.dir === 'up' ? at - 1 : at + 1
-      if (to < 0 || to >= next.intent.length) return { state: next }
-      const reordered = next.intent.slice()
-      const tmp = reordered[at]
-      reordered[at] = reordered[to]
-      reordered[to] = tmp
-      next.intent = reordered
+      next.intent = moveItem(next.intent, at, event.to - intentBase(state))
       return { state: next }
     }
 

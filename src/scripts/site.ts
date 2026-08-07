@@ -1076,13 +1076,17 @@ document.addEventListener('click', (e) => {
   apply({ type: 'REMOVE_QUEUE_ENTRY', index, queue: renderedQueue })
 })
 
+/** One step is a destination too. `MOVE_QUEUE_ENTRY` takes the row to land on
+ *  rather than a direction, so "up" is the row above — computed here, in the
+ *  vocabulary of the button, and resolved against layer 1 by the engine. */
 document.addEventListener('click', (e) => {
   const btn = (e.target as Element).closest?.('button.queuerow-move')
   if (!(btn instanceof HTMLButtonElement) || btn.disabled) return
   const index = Number(btn.dataset.index)
   const dir = btn.dataset.dir
   if (!Number.isInteger(index) || (dir !== 'up' && dir !== 'down')) return
-  apply({ type: 'MOVE_QUEUE_ENTRY', index, dir, queue: renderedQueue })
+  const to = dir === 'up' ? index - 1 : index + 1
+  apply({ type: 'MOVE_QUEUE_ENTRY', index, to, queue: renderedQueue })
 })
 
 /** A strategy switch writes ONE field. The pins survive in place and in
