@@ -1,0 +1,48 @@
+---
+// src/components/RowMenu.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// THE ROW'S ⋮ — the owner's "three dot menus", and now ONE of it.
+//
+// WHY A COMPONENT FOR SEVEN LINES OF MARKUP. This button is the entry
+// point to the action sheet, and site.ts finds it by exactly one selector
+// (`button.rowmenu`, a document-level delegation). It had been hand-typed
+// in TrackRow.astro and again in FeedRow.astro, and a third copy is built
+// in search-overlay.ts for result rows. Three copies of the hook a single
+// delegation depends on is the two-navs incident in miniature: the copies
+// drifted immediately — one carried a text `⋮` and the other an SVG for a
+// while, and nothing failed, because the delegation only ever cared about
+// the class.
+//
+// So the markup is stated once here. The runtime copy in search-overlay.ts
+// cannot import an .astro file, but `sheet-single-source.test.ts` holds it
+// to the same three attributes, which is the part that has to agree.
+//
+// WHAT MUST NOT CHANGE, and why each is here rather than at the call site:
+//   class="rowmenu"       the ONE selector site.ts delegates on
+//   hidden                a sheet is client state with no server
+//                         fallback, so a control that would do nothing
+//                         without JS must not be visible without JS.
+//                         site.ts unhides it and adds `.has-rowmenu`.
+//   aria-haspopup="dialog"  it opens a sheet, not a menu
+//   aria-label            an <svg> is aria-hidden, so the NAME lives on
+//                         the button or the control vanishes from
+//                         assistive tech entirely
+import Icon from './Icon.astro'
+
+interface Props {
+  /** Names the track in the accessible label. The sheet's own title is
+   *  read from the row's `a.play`, not from here. */
+  title: string
+}
+const { title } = Astro.props
+---
+<button
+  type="button"
+  class="rowmenu"
+  hidden
+  aria-haspopup="dialog"
+  aria-label={`More actions for ${title}`}
+><Icon name="kebab" size={20} /></button>

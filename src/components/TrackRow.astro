@@ -25,6 +25,7 @@
 import Icon from './Icon.astro'
 import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
+import RowMenu from './RowMenu.astro'
 import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
 import { artistHref, type PoolTrack } from '../lib/pool-api'
@@ -141,13 +142,7 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       data-file-id={track.file_id}
       aria-label={`Add ${track.display_title} to the queue`}
     ><Icon name="queue-add" size={16} /></button>
-    <button
-      type="button"
-      class="rowmenu"
-      hidden
-      aria-haspopup="dialog"
-      aria-label={`More actions for ${track.display_title}`}
-    ><Icon name="kebab" size={20} /></button>
+    <RowMenu title={track.display_title} />
   </td>
   {/* Task 8: artist and title are now independent columns — each still
       links to the track page, and the tag chips move to the title cell

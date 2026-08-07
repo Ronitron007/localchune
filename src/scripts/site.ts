@@ -2583,6 +2583,15 @@ function openRowSheet(btn: HTMLElement): void {
   const liked = likeBtn?.getAttribute('aria-pressed') === 'true'
   const queueadd = row.querySelector<HTMLButtonElement>('button.queueadd')
   const hasCrates = row.querySelector('details.cratepick') !== null
+  /**
+   * THE ONE CONTEXTUAL ENTRY, and it is contextual by DATA rather than by
+   * a page check. `form.removeform` is rendered only by /crate/[id], and
+   * only for the crate's owner — so asking the row whether it has one is
+   * the same question as "may this member remove this from this crate",
+   * already answered by the server. The sheet never learns what a crate
+   * is, and there is no `if (page === 'crate')` anywhere.
+   */
+  const removeForm = row.querySelector<HTMLFormElement>('form.removeform')
 
   openActionSheet({
     title: play.dataset.title ?? 'Track',
@@ -2597,6 +2606,10 @@ function openRowSheet(btn: HTMLElement): void {
       hasCrates && { id: 'crate', label: 'Add to a crate…', icon: 'crate' },
       { id: 'download', label: 'Download', icon: 'download', href: `/api/track/${fileId}/download` },
       { id: 'open', label: 'Open track page', href: `/track/${fileId}` },
+      // `danger` only — `isLast` is derived by normalizeRows(), not given.
+      removeForm !== null && {
+        id: 'remove', label: 'Remove from crate', icon: 'close' as const, danger: true,
+      },
       ...ROW_META.map(([cls, label]) => {
         const value = cellText(row, cls)
         return value === undefined ? null : { id: cls, label, meta: value, disabled: true }
@@ -2610,6 +2623,10 @@ function openRowSheet(btn: HTMLElement): void {
       // would POST as a full navigation instead.
       if (id === 'like') like?.requestSubmit()
       if (id === 'crate') openCrateSheet(row, btn)
+      // requestSubmit for the same reason the ♥ uses it: submit() fires no
+      // submit event, so the delegated confirm() that guards this form
+      // would never run and the POST would go unguarded.
+      if (id === 'remove') removeForm?.requestSubmit()
     },
   })
 }

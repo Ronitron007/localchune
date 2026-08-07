@@ -1646,7 +1646,10 @@ body.queueopen .uploadchip-slot {
 .feedrow-title a { text-decoration: none; color: inherit; }
 .feedrow-title a:hover { text-decoration: underline; }
 .feedrow-meta { display: flex; align-items: center; gap: var(--pad-1); color: var(--mid); }
-.feedrow-likes { color: var(--mid); }
+/* `.feedrow-likes` is gone: it styled a DISPLAY-ONLY ♥ and a number, and
+   the feed row carries a real `form.likeform` there now — the same one
+   the pool row and the track page use, so it inherits their rules and
+   needs none of its own. */
 .privatechip {
   border: 1px solid var(--line);
   padding: 0 0.35em;
@@ -1689,6 +1692,15 @@ body.queueopen .uploadchip-slot {
    height around when it opens. --- */
 .addcrate { white-space: nowrap; }
 .cratepick { position: relative; display: inline-block; }
+/* A `display` on the element BEATS the UA sheet's `[hidden] { display:
+   none }`, because an author rule always does — the same trap the player
+   bar's ♥ hit (`.likeform[hidden]` above) and the same one the search
+   overlay hit at 375px, where a `hidden` picker drew a visible empty box.
+   That fix was scoped to `.searchrow`; the feed row now ships a `hidden`
+   picker too — it is the action sheet's handle rather than a control of
+   its own — so the rule belongs with the class it corrects, not with one
+   of its callers. Nothing that never sets the attribute pays anything. */
+.cratepick[hidden] { display: none; }
 .cratepick > summary {
   list-style: none;
   /* Was width: 1.6em (~26px). The summary carries .btn-secondary, so the
@@ -2158,7 +2170,11 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .has-rowmenu .tracktable td.download,
   .has-rowmenu .tracktable td.addcrate,
   .has-rowmenu .tracktable td.controls .queueadd,
-  .has-rowmenu .feedrow .queueadd { display: none; }
+  .has-rowmenu .feedrow .queueadd,
+  /* The feed's like toggle goes the same way as its `+Q`: below 640px the
+     ⋮ sheet is the row's whole control set, and the sheet shows this
+     track's like state and count as one of its 44px rows. */
+  .has-rowmenu .feedrow .likeform { display: none; }
   /* Without JS the ⋮ never unhides, so these keep their grid slots. */
   .tracktable td.likes    { grid-column: 2; grid-row: 3; }
   .tracktable td.download { grid-column: 3; grid-row: 3; }

@@ -77,8 +77,16 @@ describe('the overlay stays a lazy chunk', () => {
         if (e.isDirectory()) return astroFiles(full)
         return e.name.endsWith('.astro') || e.name.endsWith('.tsx') ? [full] : []
       })
+    // MATCHED AS AN IMPORT, not as a substring. The bare-name version of
+    // this flagged RowMenu.astro for a frontmatter COMMENT explaining that
+    // search-overlay.ts builds its own copy of the ⋮ — a file documenting
+    // the module it must stay in step with, which is the opposite of the
+    // defect. The rule is "no .astro pulls the overlay into its graph", so
+    // it is `from '…'` and `import('…')` that matter. Both forms are
+    // covered; a bare `import '…'` for side effects is too.
+    const IMPORTS_OVERLAY = /(?:from|import)\s*\(?\s*['"][^'"]*(?:search-overlay|search-api)['"]/
     const offenders = astroFiles(SRC)
-      .filter((f) => /search-overlay|search-api/.test(frontmatter(readFileSync(f, 'utf8'))))
+      .filter((f) => IMPORTS_OVERLAY.test(frontmatter(readFileSync(f, 'utf8'))))
       .map((f) => f.slice(SRC.length))
     // /api/search.ts is a server route, not an .astro file, so it is not
     // in this sweep — it may import search-api freely.

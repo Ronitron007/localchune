@@ -269,14 +269,21 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-  it('stays at or under 2,259 bytes (was 1,290)', async () => {
+  it('stays at or under 3,269 bytes (was 2,259)', async () => {
+    // Re-baselined by the sheet unification. The feed row now carries the
+    // SAME controls the pool row does — `form.likeform` and
+    // `details.cratepick` — because site.ts builds the ⋮ sheet by reading
+    // what the row carries. Without them the feed's sheet had four rows
+    // where the pool's had fourteen: a divergent sheet arrived at by
+    // omission. The bytes buy a real like toggle on a surface that until
+    // now displayed a like count it would not let you cast.
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_259)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(3_269)
   })
 
-  it('costs at most 2.3 KB gzipped across a hundred-row feed', async () => {
+  it('costs at most 3.1 KB gzipped across a hundred-row feed', async () => {
     const html = await render(FeedRow, { track })
-    expect(gzippedPage(html)).toBeLessThanOrEqual(2_300)
+    expect(gzippedPage(html)).toBeLessThanOrEqual(3_100)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
