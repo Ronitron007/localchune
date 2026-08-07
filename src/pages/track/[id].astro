@@ -4,6 +4,7 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 import Shell from '../../layouts/Shell.astro'
+import Icon from '../../components/Icon.astro'
 import KeyChip from '../../components/KeyChip.astro'
 import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
@@ -125,8 +126,26 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           M7 note: if this art is ever Apple-sourced, the "Listen on
           Apple Music" badge is required HERE (PRD §8.1) — this page,
           never the table. */}
+      {/* width/height RESERVE THE BOX — the audit's CLS finding on this
+          page. They are the RENDERED box (256 CSS px square), deliberately
+          not an intrinsic size: `medium.jpg` is built "long edge <= 512,
+          aspect preserved" (scripts/art-derivatives.sh), so its real ratio
+          is unknown to the server and attributes claiming 1:1 would be a
+          lie the browser corrects the moment the bytes land — the exact
+          shift this is meant to stop. global.css pins the same square with
+          `aspect-ratio` and `object-fit: contain`, so a non-square cover is
+          shown whole inside the reserved box instead of being stretched.
+          `class="art"` and `data-art-file` both stay: site.ts's error
+          handler reads them to fall back to the signed full-size original. */}
       {hasArt && (
-        <img class="art" src={artMediumUrl(import.meta.env.PUBLIC_ART_BASE_URL, t.file_id)} data-art-file={t.file_id} alt={`Cover art for ${t.display_title}`} />
+        <img
+          class="art"
+          src={artMediumUrl(import.meta.env.PUBLIC_ART_BASE_URL, t.file_id)}
+          data-art-file={t.file_id}
+          width="256"
+          height="256"
+          alt={`Cover art for ${t.display_title}`}
+        />
       )}
       {/* Final-review finding F1: this block was never state-gated. A
           failed/abandoned file's uploader can reach this page (migration
@@ -136,7 +155,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           needed here. */}
       {t.state === 'stored' && (
         <>
-          <p class="transport">
+          <div class="transport">
             {/* data-artist + data-title, NOT data-label — and this is a
                 bug fix, not a rename. site.ts's `scrapeOne` reads
                 dataset.artist and dataset.title and has never read
@@ -145,9 +164,31 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
                 joined label, queued an entry whose title was the empty
                 string: playing from a track page put a BLANK NAME in the
                 player bar, the drawer and the lock screen. /review's
-                ComparePanel had the same shape and the same bug. */}
+                ComparePanel had the same shape and the same bug.
+
+                `class="play playbtn"` — AN ADDITION, NOT A RENAME.
+                survive-list #7: site.ts scrapes `a.play` and reads these
+                six `data-*` off THIS element, so the class and every
+                attribute stay exactly where they are. `.playbtn` is the
+                second class that says "this one is a hero button, not a
+                row's artwork".
+
+                THE OWNER'S "the play button looks weird", root-caused.
+                Phase 3 made the artwork the play control: `a.play` now
+                draws a 22px scrim square and a CSS border-triangle in
+                `::before`/`::after`, absolutely centred, because in a row
+                the link WRAPS the thumbnail. This page has no thumbnail
+                inside the link — it had the literal text "▶ Play" — so
+                the scrim and the triangle painted straight over the
+                label and it read "►▯ay". The page was never restyled
+                (plan task 3.6 was not done) and the new rules found it.
+
+                No glyph, on the owner's directive: iOS emoji-renders
+                ▶/⏸/⏭, so every control this page owns takes the Phase 1
+                inline SVG set instead. `<Icon>` is aria-hidden and the
+                visible word is the accessible name. */}
             <a
-              class="play"
+              class="play playbtn"
               href={`/track/${t.file_id}`}
               data-track-id={t.file_id}
               data-artist={t.display_artist ?? undefined}
@@ -155,17 +196,42 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               data-duration={t.duration_ms ?? undefined}
               data-bpm={t.bpm ?? undefined}
               data-key={t.key_camelot ?? undefined}
-            >▶ Play</a>
-            {' '}
-            <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
-          </p>
+            ><Icon name="play" size={16} /> Play</a>
+            {/* Download is not transport — it takes an ordinary secondary
+                tier, which is what gives it the 44px box it never had as a
+                bare `↓` link. */}
+            <a class="btn-secondary" href={`/api/track/${t.file_id}/download`}>
+              <Icon name="download" size={16} /> Download
+            </a>
+          </div>
           {/* M6a Task 3, owner decision 2026-07-29 ("all metadata"): the
               full signal set together — like toggle, play count, download
               count. pool_get already returns all three (migration 26);
               this is rendering only, no new fetch. Same `form.likeform`
               class and markup shape as TrackRow.astro's pool-table cell,
-              so site.ts's one document-level submit handler covers both. */}
-          <p class="signals">
+              so site.ts's one document-level submit handler covers both.
+
+              A <div>, AND THE <p> IT REPLACES IS THE WHOLE BUG. The owner
+              reported "♥ 0 1 play 0 downloads" running together, a
+              separator fix shipped for it (PR #41), and the owner reported
+              the SAME line again — because the fix was never reaching this
+              surface and nothing said so.
+
+              `form` is on the HTML5 list of elements that imply `</p>`.
+              The server sent `<p class="signals"><form …>`; the browser's
+              parser closed the paragraph before the form, so the DOM here
+              was an EMPTY `<p class="signals">` with the form and both
+              `<span class="signal">` as its SIBLINGS. `.signals > * + *`
+              then matched nothing: no dot, and not even the flex `gap`.
+              `.stats` below carries only spans, was never auto-closed, and
+              did show its dot — which is why one line on this page had
+              separators and the line above it did not.
+
+              A string assertion on the rendered HTML cannot see this: the
+              server markup and the browser DOM disagree. The guard is
+              src/lib/astro-html-nesting.test.ts, which parses the implied
+              end tags the way a browser does, repo-wide. */}
+          <div class="signals">
             <form method="post" action={`/api/track/${t.file_id}/like`} class="likeform" data-astro-reload>
               <button
                 type="submit"
@@ -177,7 +243,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
             </form>
             <span class="signal">{t.play_count} play{t.play_count === 1 ? '' : 's'}</span>
             <span class="signal">{t.download_count} download{t.download_count === 1 ? '' : 's'}</span>
-          </p>
+          </div>
         </>
       )}
       {/* Migration 15b: download_count is a real counter (track_stats),
@@ -188,11 +254,17 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           (.signals, .feedrow-meta, this one) gets its middle dot from one
           generated rule in global.css — see the "COUNT RUNS" block there
           for the owner report that caused it. Each count is its own
-          element so that rule has an adjacent sibling to hang the dot on. */}
-      <p class="stats">
+          element so that rule has an adjacent sibling to hang the dot on.
+
+          A <div> for the same reason `.signals` above is one. This run
+          carries only spans, was never auto-closed, and did render its dot
+          — which is exactly how one line on this page had separators while
+          the line above it did not. Both count runs are now the element
+          that cannot be closed out from under them. */}
+      <div class="stats">
         <span class="signal">downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}</span>
         <span class="signal">brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}</span>
-      </p>
+      </div>
     </header>
 
     {/* Migration 16 — owner's verbatim ask: "give the uploader an ability
@@ -214,7 +286,12 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               <form class="tagform" method="post" action={tagsAction} data-astro-reload>
                 <input type="hidden" name="intent" value="remove" />
                 <input type="hidden" name="tag_key" value={tag} />
-                <button type="submit" class="btn-danger" aria-label={`Remove tag ${tag}`}>×</button>
+                {/* The owner's icon directive: no text glyph on a control.
+                    `×` is U+00D7, which iOS is free to render as emoji;
+                    `close` is the same mark from the Phase 1 SVG set and
+                    cannot be. The aria-label was already carrying the
+                    accessible name, so nothing moves. */}
+                <button type="submit" class="btn-danger btn-icon" aria-label={`Remove tag ${tag}`}><Icon name="close" size={14} /></button>
               </form>
             )}
           </li>
