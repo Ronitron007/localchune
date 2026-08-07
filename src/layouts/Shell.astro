@@ -12,6 +12,7 @@
 // same property.
 import { ClientRouter } from 'astro:transitions'
 import AppNav from '../components/AppNav.astro'
+import Icon from '../components/Icon.astro'
 import SourceLink from '../components/SourceLink.astro'
 import StorageChip from '../components/StorageChip.astro'
 import UploadChip from '../components/UploadChip'
@@ -146,14 +147,20 @@ const { title, center = false } = Astro.props
       hidden
       aria-expanded="false"
       aria-controls="queue-drawer"
-    >☰ QUEUE</button>
-    <button id="player-toggle" type="button" class="playertoggle" aria-label="Play">▶</button>
+    ><Icon name="queue" size={16} /> QUEUE</button>
+    {/* OWNER, 2026-08-07: no text-glyph control anywhere. `⏸` and `⏭` carry
+        emoji presentation, so iOS painted the transport as colour emoji in
+        the middle of a monochrome bar. These are the set's own `play`,
+        `pause` and `next`; site.ts swaps the first between play and pause and
+        never touches the other. The accessible name stays on the button —
+        every glyph in the set is aria-hidden. */}
+    <button id="player-toggle" type="button" class="playertoggle" aria-label="Play"><Icon name="play" size={20} /></button>
     {/* The queue had no on-page skip control at all: the only way to reach the
         next track was the lock screen, which is unreachable on a desktop and
         was itself inert on a resumed session. Hidden until site.ts unhides it,
         for the same reason #queue-toggle is — without JS there is no queue to
         advance through, and a control that does nothing must not be visible. */}
-    <button id="player-next" type="button" class="playertoggle playernext" hidden aria-label="Next track">⏭︎</button>
+    <button id="player-next" type="button" class="playertoggle playernext" hidden aria-label="Next track"><Icon name="next" size={20} /></button>
     <input id="player-seek" type="range" class="playerseek" min="0" max="0" step="1" value="0" aria-label="Seek" />
     <span id="player-time" class="playertime num">0:00 / --:--</span>
     <audio id="player-audio" preload="none"></audio>

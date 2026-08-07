@@ -103,7 +103,7 @@ const HEADERS = [
             hidden
             data-crate-id={id}
             data-crate-name={meta.name}
-          >▶ PLAY</button>
+          ><Icon name="play" size={16} /> PLAY</button>
           <button
             type="button"
             class="queueadd btn-secondary"
@@ -207,7 +207,7 @@ const HEADERS = [
                       class="btn-secondary"
                       aria-label={`Move ${item.display_title} up`}
                       disabled={idx === 0}
-                    >↑</button>
+                    ><Icon name="move-up" size={16} /></button>
                   </form>
                   <form method="post" action={`/api/crate/${id}/move`} class="moveform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
@@ -217,7 +217,7 @@ const HEADERS = [
                       class="btn-secondary"
                       aria-label={`Move ${item.display_title} down`}
                       disabled={idx === items.length - 1}
-                    >↓</button>
+                    ><Icon name="move-down" size={16} /></button>
                   </form>
                   <form method="post" action={`/api/crate/${id}/remove`} class="removeform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
@@ -225,7 +225,7 @@ const HEADERS = [
                       type="submit"
                       class="btn-danger"
                       aria-label={`Remove ${item.display_title} from this crate`}
-                    >✕</button>
+                    ><Icon name="close" size={16} /></button>
                   </form>
                 </td>
               )}

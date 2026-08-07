@@ -229,10 +229,23 @@ function clearPlayerMemory() {
   }
 }
 
+/**
+ * OWNER, 2026-08-07: no text-glyph control anywhere. `⏸` (U+23F8) and `⏭`
+ * (U+23ED) carry EMOJI PRESENTATION by default, so iOS paints them as full
+ * colour emoji — a blue-and-white pill in the middle of a monochrome
+ * brutalist bar, which is what the owner screenshotted. A font choice cannot
+ * override it reliably and `text-rendering` does not touch it. The icon set
+ * exists precisely so a control's shape is ours rather than the platform's.
+ *
+ * `replaceChildren`, not `textContent`: the button holds an element now, and
+ * a stray `textContent =` would delete the glyph and leave an empty 44px box.
+ * The accessible name stays on the BUTTON — the <svg> is aria-hidden, so
+ * without this attribute the control would be silent to a screen reader.
+ */
 function updateToggle() {
   if (!toggle || !audio) return
   const playing = !audio.paused && !audio.ended
-  toggle.textContent = playing ? '⏸' : '▶'
+  toggle.replaceChildren(svgIcon(playing ? 'pause' : 'play', 20))
   toggle.setAttribute('aria-label', playing ? 'Pause' : 'Play')
 }
 
@@ -975,7 +988,8 @@ function renderDrawer(): void {
         if (row.removable) {
           const controls = document.createElement('span')
           controls.className = 'queuerow-controls'
-          const rm = button('btn-secondary queuerow-remove', '✕', `Remove ${entryTitle(row.entry)} from the queue`)
+          const rm = button('btn-secondary queuerow-remove', '', `Remove ${entryTitle(row.entry)} from the queue`)
+          rm.appendChild(svgIcon('close', 16))
           rm.dataset.index = String(row.index)
           controls.appendChild(rm)
           li.appendChild(controls)
@@ -1107,12 +1121,21 @@ function setDrawerOpen(open: boolean): void {
   drawer.hidden = !open
   drawerToggle.setAttribute('aria-expanded', String(open))
   // OWNER-APPROVED OPEN STATE, from a mock: the button inverts to solid
-  // ink and its glyph becomes a ✕, so the control that opened the drawer
-  // is visibly the one that closes it. The FILL is CSS off aria-expanded
-  // — this line only owns the glyph and the accessible name, because a
-  // button reading "☰ QUEUE" while it means "close" is a lie a screen
-  // reader would repeat.
-  drawerToggle.textContent = open ? '✕ QUEUE' : '☰ QUEUE'
+  // ink and its glyph becomes a close mark, so the control that opened the
+  // drawer is visibly the one that closes it. The FILL is CSS off
+  // aria-expanded — these two lines own the glyph and the accessible name,
+  // because a button reading "QUEUE" while it means "close" is a lie a
+  // screen reader would repeat.
+  //
+  // The glyphs are the ICON SET, not `☰` and `✕`. Shell.astro server-renders
+  // the closed state with the same two components, so the first paint and
+  // every state after it are one vocabulary. A text node beside an element
+  // means `textContent =` would delete the glyph, so this replaces children
+  // and re-adds the label as its own node.
+  drawerToggle.replaceChildren(
+    svgIcon(open ? 'close' : 'queue', 16),
+    document.createTextNode(' QUEUE'),
+  )
   drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
   document.body.classList.toggle('queueopen', open)
   syncDrawerHeight()

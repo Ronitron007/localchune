@@ -3,7 +3,7 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// Thirteen hand-written glyphs. No icon library, no icon font, no sprite
+// Fifteen hand-written glyphs. No icon library, no icon font, no sprite
 // request, no runtime dependency — each export is the INNER markup of an
 // SVG, and src/components/Icon.astro owns the wrapper. site.ts imports
 // only the names it needs, so rolldown drops the rest from the client
@@ -74,6 +74,19 @@ export const ICONS = {
     '<rect x="16" y="14" width="2" height="2" fill="currentColor" />',
 
   // --- stroked ------------------------------------------------------
+  /**
+   * Three lines. The queue itself, as opposed to `queue-add`'s three lines
+   * AND a plus — one glyph is the list, the other is putting something on it,
+   * and they read as a pair because they are drawn as one.
+   *
+   * It exists because the drawer's toggle was `☰` (U+2630) and the set had no
+   * list glyph at all. `kebab` was the only near miss and it means "more
+   * actions", which is a different promise.
+   */
+  queue:
+    '<path d="M4 7h16 M4 12h16 M4 17h16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" />',
+
   /** Three lines and a plus. Replaces the `+Q` text control. */
   'queue-add':
     '<path d="M4 7h13 M4 12h13 M4 17h8 M17 14v7 M13.5 17.5h7" fill="none" ' +
@@ -91,6 +104,21 @@ export const ICONS = {
 
   download:
     '<path d="M12 4v11 M7 11 l5 5 l5 -5 M4 20h16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" />',
+
+  /**
+   * The crate's one-step reorder pair, and NOT `upload`/`download` rotated.
+   * Those two carry a baseline — the line an object is lifted off or dropped
+   * onto — which is what makes them mean "transfer". A move up the list is a
+   * bare shaft and a head; borrowing the transfer glyphs for it would give a
+   * row two controls that read as "download this" and "upload this".
+   */
+  'move-up':
+    '<path d="M12 20V5 M5 12 l7 -7 l7 7" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" />',
+
+  'move-down':
+    '<path d="M12 4v15 M5 12 l7 7 l7 -7" fill="none" ' +
     'stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" />',
 
   upload:
