@@ -329,6 +329,41 @@ describe('renderQueueSections — the layer seam is visible', () => {
     expect(out[2].rows[0].removable).toBe(true)
   })
 
+  it('marks reorderable rows: ONLY a pin, which is the only layer with an order', () => {
+    // The drawer renders a drag handle off this flag, so it is the answer to
+    // "may MOVE_QUEUE_ENTRY act on this row?" and must agree with the engine
+    // exactly. Layer 2 is rebuilt from scratch on every regeneration and has
+    // no order anyone owns; `current` is in neither layer.
+    const s = state({ current: entry('a', { origin: 'current' }), intent: [entry('b')] })
+    const out = renderQueueSections(
+      [entry('a', { origin: 'current' }), entry('b'), entry('c', { origin: 'auto' })], s, {},
+    )
+    expect(out[0].rows[0].reorderable).toBe(false) // NOW PLAYING
+    expect(out[1].rows[0].reorderable).toBe(true) //  YOUR QUEUE
+    expect(out[2].rows[0].reorderable).toBe(false) // UP NEXT · AUTO
+  })
+
+  it('is not the same question as removable — an auto row can go but cannot move', () => {
+    // Rendering the handle off `removable` is how the drawer came to ship ↑/↓
+    // on auto rows that the engine then refused: a control drawn, looking
+    // enabled, and inert.
+    const s = state({ current: null, intent: [entry('b')] })
+    const out = renderQueueSections([entry('b'), entry('c', { origin: 'auto' })], s, {})
+    const autoRow = out[2].rows[0]
+    expect(autoRow.removable).toBe(true)
+    expect(autoRow.reorderable).toBe(false)
+  })
+
+  it('marks the first pin reorderable when nothing is playing', () => {
+    // Rendered index 0 is a PIN with no `current` above it, and it must be
+    // draggable like any other — the same off-by-one that made ✕ / ↑ / ↓ inert
+    // on that row once already.
+    const s = state({ current: null, intent: [entry('b'), entry('c')] })
+    const out = renderQueueSections([entry('b'), entry('c')], s, {})
+    expect(out[1].rows.map((r) => r.index)).toEqual([0, 1])
+    expect(out[1].rows.every((r) => r.reorderable)).toBe(true)
+  })
+
   it('carries each entry\'s own source label so layer 1 is legible', () => {
     const s = state({
       current: entry('a', { origin: 'current' }),

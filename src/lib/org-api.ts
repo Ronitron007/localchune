@@ -32,6 +32,7 @@
  */
 import { formatDuration } from './format'
 import type { PoolTrack } from './pool-api'
+import { moveItem } from './reorder'
 
 /**
  * Same-origin-validated Referer, or `fallback` when there is none, it
@@ -184,26 +185,27 @@ export function formatCrateMeta(card: Pick<CrateCard, 'track_count' | 'total_dur
 }
 
 /**
- * Pure, total, never mutates `items`. Swaps `items[index]` with its
- * neighbour in the given direction; a boundary move (first item "up", last
- * item "down") or an out-of-range `index` returns an unchanged COPY rather
- * than throwing — the caller decides whether "nothing moved" is worth
- * reporting. Shared by two callers that must never disagree on what
- * "moved" means: `/api/crate/[id]/move.ts` (server-side, backing the
- * always-present ↑/↓ button forms — the reorder path that needs no JS and
- * no mouse) and, client-side, the same array-swap the drag-to-reorder
- * enhancement in site.ts could use for a keyboard-driven equivalent move.
+ * The one-step move, in the vocabulary the no-JS ↑/↓ forms speak. Pure,
+ * total, never mutates `items`; a boundary move (first item "up", last item
+ * "down") or an out-of-range `index` returns an unchanged COPY rather than
+ * throwing — the caller decides whether "nothing moved" is worth reporting.
+ *
+ * ONE STEP IS A DESTINATION TOO, so this is now a NAME rather than an
+ * algorithm: it delegates to `moveItem`, which the queue engine's drag also
+ * calls. It used to carry its own swap, and a swap and a splice are the same
+ * permutation only while the move is exactly one step — so the day the crate
+ * page grew a drag that could move three rows at once, the app would have had
+ * two orderings for one gesture and no test that could tell. `moveItem`
+ * clamps its destination, which is precisely the boundary no-op this
+ * function's own tests already assert, so the delegation changes nothing
+ * observable and org-api.test.ts proves that unchanged.
+ *
+ * The one remaining caller of this shape is `/api/crate/[id]/move.ts`,
+ * server-side, backing the always-present ↑/↓ button forms — the reorder
+ * path that needs no JavaScript and no mouse.
  */
 export function moveInList<T>(items: T[], index: number, dir: 'up' | 'down'): T[] {
-  const next = items.slice()
-  const swapWith = dir === 'up' ? index - 1 : index + 1
-  if (index < 0 || index >= next.length || swapWith < 0 || swapWith >= next.length) {
-    return next
-  }
-  const tmp = next[index]
-  next[index] = next[swapWith]
-  next[swapWith] = tmp
-  return next
+  return moveItem(items, index, dir === 'up' ? index - 1 : index + 1)
 }
 
 /**

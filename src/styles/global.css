@@ -1200,6 +1200,50 @@ img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
 .queuerow-current .queuerow-play { font-weight: bold; cursor: default; }
 .queuerow-src { color: var(--mid); flex: none; }
 .queuerow-controls { flex: none; display: flex; gap: calc(var(--pad-1) / 2); }
+
+/* --- drag handles ---
+   The ONE affordance a reorder may start from, on both surfaces that
+   reorder. 44px square, because it is the smallest target a thumb can hit
+   reliably and because everything else in this app that a finger touches is
+   already 44 — a handle below the floor is a handle that catches the row's
+   play tap instead.
+
+   `touch-action: none` is not decoration and it is not optional: without it
+   the browser claims the gesture for a scroll before the library's
+   pointermove is heard, and a touch drag never starts at all. It is scoped to
+   the handle precisely so the REST of the row still scrolls the drawer. */
+.queuerow-drag,
+.cratedrag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--mid);
+  cursor: grab;
+  touch-action: none;
+}
+.queuerow-drag:hover,
+.queuerow-drag:focus-visible,
+.cratedrag:hover { color: var(--fg); }
+/* Pressed state pairs with hover per the motion menu's mobile-parity rule —
+   a handle that only responds to a mouse responds to nobody on a phone. */
+.queuerow-drag:active,
+.cratedrag:active { color: var(--fg); cursor: grabbing; }
+
+/* The row being dragged, and the gap it leaves. Opacity and an outline only:
+   the transport exception says a control a finger is on must not travel, and
+   the library is already moving the real node — a second movement here would
+   fight it. Nothing here animates, so the global prefers-reduced-motion block
+   has nothing to switch off. */
+.queuerow.is-dragging,
+tr.is-dragging { opacity: 0.4; }
+.queuerow.is-over,
+tr.is-over { outline: 1px solid var(--fg); outline-offset: -1px; }
 .queuetoggle { flex: none; }
 
 /* --- upload chip (UX.12) ---
@@ -1414,10 +1458,9 @@ body.queueopen .uploadchip-slot {
 }
 .cratecontrols form { display: inline-block; }
 .cratecontrols button { padding: 0 0.5em; }
-/* A draggable row gets a grab cursor as the only affordance — no drop
-   shadow or lift-on-drag effect (the brutalist monochrome rule again). */
-tr[draggable='true'] { cursor: grab; }
-tr[draggable='true']:active { cursor: grabbing; }
+/* The grab cursor used to live on the whole row. It belongs to the handle
+   now (see the drag-handle block above the upload chip): a row that was
+   draggable everywhere is a row a finger cannot scroll past. */
 
 /* --- TrackRow's `+` add-to-crate picker (M6a Task 8) — every row, pool
    table and crate page alike. `<details>` gets no extra chrome of its own
@@ -1838,6 +1881,20 @@ dd { margin: 0; }
   .tracktable td.likes    { grid-column: 2; grid-row: 3; }
   .tracktable td.download { grid-column: 3; grid-row: 3; }
   .tracktable td.addcrate { grid-column: 3; grid-row: 4; }
+
+  /* THE CRATE'S OWN CELL, which the pool does not have. It carries the drag
+     handle and the ↑/↓/✕ forms, and in the pool's three-column card it had
+     no slot — it auto-flowed off the side of a table that was 1,439px wide
+     at a 390px viewport, putting the handle ~1,290px out of reach. A full
+     row of its own is what makes the reorder touchable at all. It does NOT
+     hide under .has-rowmenu: the row sheet carries the pool's actions, not
+     these, so hiding them would take the crate's only reorder controls away
+     and give nothing back. */
+  .tracktable td.cratecontrols {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    justify-content: flex-start;
+  }
 
   /* The 44px thumb override that lived here is gone: the art is the play
      control at EVERY breakpoint now, so 44px is the global size and this

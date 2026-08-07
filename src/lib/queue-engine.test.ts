@@ -615,8 +615,8 @@ describe('index 0 is addressable when nothing is playing', () => {
     expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e2'])
   })
 
-  it('MOVE_QUEUE_ENTRY {0, down} moves the first pin', () => {
-    const { state: next } = reduce(idle, { type: 'MOVE_QUEUE_ENTRY', index: 0, dir: 'down', queue })
+  it('MOVE_QUEUE_ENTRY {0 -> 1} moves the first pin', () => {
+    const { state: next } = reduce(idle, { type: 'MOVE_QUEUE_ENTRY', index: 0, to: 1, queue })
     expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e0', 'e2'])
   })
 
@@ -627,7 +627,7 @@ describe('index 0 is addressable when nothing is playing', () => {
       .toHaveLength(3)
     expect(reduce(busy, { type: 'SELECT_QUEUE_ENTRY', index: 0, queue: q }).state.current?.file_id)
       .toBe('c')
-    expect(reduce(busy, { type: 'MOVE_QUEUE_ENTRY', index: 0, dir: 'down', queue: q })
+    expect(reduce(busy, { type: 'MOVE_QUEUE_ENTRY', index: 0, to: 1, queue: q })
       .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
   })
 
@@ -637,55 +637,281 @@ describe('index 0 is addressable when nothing is playing', () => {
   })
 })
 
-describe('MOVE_QUEUE_ENTRY — the drawer\'s ↑ / ↓', () => {
+// MOVE_QUEUE_ENTRY TAKES A DESTINATION, NOT A DIRECTION.
+//
+// It used to be `{index, dir: 'up' | 'down'}` — one step, one swap — because
+// the drawer's only reorder control was a pair of arrow buttons. A drag from
+// row 3 to row 9 through that verb is SIX dispatches, six reduces and six
+// regenerations, and the five intermediate states are orders the member never
+// asked for and briefly saw.
+//
+// `dir` is GONE rather than kept as a convenience. Two shapes for one verb is
+// the "two vocabularies for one feature" failure the Phase 3 report names, and
+// in this module it is worse than a rename: `dir` and `to` disagreeing about a
+// boundary is a wrong song with no exception and no failing test. The one-step
+// callers that remain (the arrow keys on the drag handle) compute `to`
+// themselves and land on exactly the permutation `dir` produced — asserted
+// below, because a migration that changes behaviour silently is the thing this
+// suite exists to catch.
+//
+// BOTH INDICES ARE RENDERED INDICES, like every other addressing event here:
+// the drawer reports the row the member grabbed and the row they dropped it
+// on, and this module converts to layer-1 space. That conversion is the whole
+// of the new logic, and clamping is what makes a drop into the auto tail mean
+// "last pin" instead of nothing.
+describe('MOVE_QUEUE_ENTRY — an arbitrary move inside layer 1', () => {
   const s = state({ current: entry('c'), intent: many(3) })
   const auto = [entry('a0', { origin: 'auto' }), entry('a1', { origin: 'auto' })]
   const queue = rendered(s, auto)
+  const ids = (st: QueueState): string[] => st.intent.map((e) => e.file_id)
+  const move = (st: QueueState, index: number, to: number, q = queue): QueueState =>
+    reduce(st, { type: 'MOVE_QUEUE_ENTRY', index, to, queue: q }).state
 
-  it('swaps a pin with the one above it', () => {
-    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue })
-    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e2', 'e1'])
+  // ---------------------------------------------------------- the property
+
+  it('lands the pin EXACTLY at the destination, for every from and every to', () => {
+    // Exhaustive over the whole rendered array, both ends included: five
+    // sources (three pins and two auto rows) x six destinations, which is
+    // every move the drawer can ever report. `current` is at 0 and the tail at
+    // 4-5, so this covers the two clamps and the auto refusal in one sweep.
+    for (let from = 1; from <= 3; from += 1) {
+      const target = queue[from].file_id
+      for (let to = 0; to < queue.length; to += 1) {
+        const next = move(s, from, to)
+        // Layer 1 begins at rendered index 1 while something plays.
+        const want = Math.max(0, Math.min(to - 1, s.intent.length - 1))
+        expect(ids(next)[want], `${from} -> ${to}`).toBe(target)
+        expect(next.intent, `${from} -> ${to} keeps every pin`).toHaveLength(3)
+      }
+    }
   })
 
-  it('swaps a pin with the one below it', () => {
-    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 1, dir: 'down', queue })
-    expect(next.intent.map((e) => e.file_id)).toEqual(['e1', 'e0', 'e2'])
+  it('preserves the relative order of every pin it did not move', () => {
+    for (let from = 1; from <= 3; from += 1) {
+      const target = queue[from].file_id
+      const others = ids(s).filter((id) => id !== target)
+      for (let to = 0; to < queue.length; to += 1) {
+        expect(ids(move(s, from, to)).filter((id) => id !== target), `${from} -> ${to}`)
+          .toEqual(others)
+      }
+    }
+  })
+
+  it('is deterministic — the same event twice gives the same order', () => {
+    for (let from = 1; from <= 3; from += 1) {
+      for (let to = 0; to < queue.length; to += 1) {
+        expect(ids(move(s, from, to))).toEqual(ids(move(s, from, to)))
+      }
+    }
+  })
+
+  // ------------------------------------------------------------- the edges
+
+  it('is a no-op when the destination IS the source', () => {
+    for (let i = 1; i <= 3; i += 1) expect(ids(move(s, i, i))).toEqual(['e0', 'e1', 'e2'])
+  })
+
+  it('CLAMPS a drop into the auto tail onto the last pin', () => {
+    // The tail regenerates from scratch on every event and has no order anyone
+    // owns, so a drop there cannot mean "between two auto entries". It means
+    // the furthest layer 1 can go, which is what a member dragging downward
+    // past the seam is asking for.
+    expect(ids(move(s, 1, 4))).toEqual(['e1', 'e2', 'e0'])
+    expect(ids(move(s, 1, 5))).toEqual(['e1', 'e2', 'e0'])
+    expect(ids(move(s, 1, 999))).toEqual(['e1', 'e2', 'e0'])
+    expect(ids(move(s, 1, 4))).toEqual(ids(move(s, 1, 3)))
+  })
+
+  it('CLAMPS a drop onto the playing track onto the first pin', () => {
+    // Rendered index 0 is `current`, which is in neither layer. Dragging a pin
+    // above it means "make this the next thing", not "replace what is playing".
+    expect(ids(move(s, 3, 0))).toEqual(['e2', 'e0', 'e1'])
+    expect(ids(move(s, 3, -99))).toEqual(['e2', 'e0', 'e1'])
+    expect(ids(move(s, 3, 0))).toEqual(ids(move(s, 3, 1)))
   })
 
   // Layer 2 has no identity across regenerations: an auto entry that "moved"
   // would be re-ranked into a different place by the very next strategy run,
-  // so the button would appear to work at random. Only layer 1 has an order
-  // the user owns.
+  // so the gesture would appear to work at random. Only layer 1 has an order
+  // the user owns — which is also why the drawer renders no handle there.
   it('refuses to move an AUTO entry — layer 2 has no order to own', () => {
-    const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 4, dir: 'up', queue })
-    expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+    for (let to = 0; to < queue.length; to += 1) {
+      expect(ids(move(s, 4, to)), `auto row -> ${to}`).toEqual(['e0', 'e1', 'e2'])
+      expect(ids(move(s, 5, to)), `auto row -> ${to}`).toEqual(['e0', 'e1', 'e2'])
+    }
   })
 
-  it('is a no-op at either boundary', () => {
-    expect(reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 1, dir: 'up', queue })
-      .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
-    expect(reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'down', queue })
-      .state.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
-  })
-
-  it('refuses to move what is playing, and any out-of-range index', () => {
+  it('refuses to move what is playing, and any out-of-range source', () => {
     for (const index of [0, -1, 99]) {
-      const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index, dir: 'up', queue })
-      expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+      const next = move(s, index, 2)
+      expect(ids(next)).toEqual(['e0', 'e1', 'e2'])
       expect(next.current?.file_id).toBe('c')
     }
   })
 
+  it('refuses a non-integer index rather than moving something arbitrary', () => {
+    // `Number(el.dataset.index)` is NaN for a row whose attribute went missing.
+    for (const bad of [Number.NaN, 1.5]) {
+      expect(ids(move(s, bad, 2))).toEqual(['e0', 'e1', 'e2'])
+      expect(ids(move(s, 2, bad))).toEqual(['e0', 'e1', 'e2'])
+    }
+  })
+
+  // ------------------------------------------- idle: layer 1 starts at zero
+
+  it('addresses layer 1 from index 0 when nothing is playing', () => {
+    // `current` is in neither layer, so with nothing playing the rendered
+    // array IS the intent layer followed by the tail and the offset is zero.
+    // Guarding on a bare `index <= 0` is the bug this whole case exists for.
+    const idle = state({ current: null, intent: many(4) })
+    const q = rendered(idle, auto)
+    for (let from = 0; from <= 3; from += 1) {
+      const target = q[from].file_id
+      for (let to = 0; to < q.length; to += 1) {
+        const want = Math.max(0, Math.min(to, 3))
+        expect(reduce(idle, { type: 'MOVE_QUEUE_ENTRY', index: from, to, queue: q })
+          .state.intent[want].file_id, `idle ${from} -> ${to}`).toBe(target)
+      }
+    }
+  })
+
+  it('moves the same pin to the same place whether or not a track is playing', () => {
+    // The offset is the ONLY difference between the two, and it is the one
+    // thing that is easy to get wrong twice in the same expression.
+    const idle = state({ current: null, intent: many(3) })
+    const busy = state({ current: entry('c'), intent: many(3) })
+    expect(ids(move(idle, 0, 2, rendered(idle))))
+      .toEqual(ids(move(busy, 1, 3, rendered(busy))))
+  })
+
+  // ------------------------------------------------ the migration from `dir`
+
+  it('reproduces the old ↑ / ↓ exactly, which is what the arrow keys still do', () => {
+    // One step up from rendered index i is `to: i - 1`; one step down is
+    // `to: i + 1`. These four expectations are the pre-migration suite's own,
+    // unchanged, so a behaviour change would have to fail them.
+    expect(ids(move(s, 3, 2))).toEqual(['e0', 'e2', 'e1']) // was {3, up}
+    expect(ids(move(s, 1, 2))).toEqual(['e1', 'e0', 'e2']) // was {1, down}
+    expect(ids(move(s, 1, 0))).toEqual(['e0', 'e1', 'e2']) // was {1, up}, a boundary no-op
+    expect(ids(move(s, 3, 4))).toEqual(['e0', 'e1', 'e2']) // was {3, down}, a boundary no-op
+  })
+
+  it('is a swap for one step and a slide for more than one', () => {
+    // A four-pin layer is the shortest one where the two differ.
+    const four = state({ current: entry('c'), intent: many(4) })
+    const q = rendered(four)
+    const at = (to: number) => reduce(four, { type: 'MOVE_QUEUE_ENTRY', index: 1, to, queue: q })
+      .state.intent.map((e) => e.file_id)
+    expect(at(2)).toEqual(['e1', 'e0', 'e2', 'e3']) // one step: swap and slide agree
+    expect(at(4)).toEqual(['e1', 'e2', 'e3', 'e0']) // three steps: a slide
+    expect(at(4)).not.toEqual(['e3', 'e1', 'e2', 'e0']) // …and NOT a swap
+  })
+
+  // ------------------------------------------------------ module discipline
+
   it('never mutates the input state', () => {
     const input = frozen(state({ current: entry('c'), intent: many(3) }))
-    const { state: next } = reduce(input, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue })
+    const next = move(input, 3, 1)
     expect(input.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
     expect(next.intent).not.toBe(input.intent)
   })
 
+  it('returns a new state object even on every no-op path', () => {
+    for (const [index, to] of [[0, 2], [-1, 2], [99, 2], [4, 0], [2, 2]]) {
+      expect(move(s, index, to)).not.toBe(s)
+      expect(move(s, index, to).intent).not.toBe(s.intent)
+    }
+  })
+
+  it('touches nothing but the intent layer', () => {
+    const next = move(s, 3, 1)
+    expect(next.current).toBe(s.current)
+    expect(next.history).toEqual(s.history)
+    expect(next.failed).toEqual(s.failed)
+    expect(next.suppressed).toEqual(s.suppressed)
+    expect(next.method).toBe(s.method)
+  })
+
+  it('reports no advance and no truncation — a reorder consumes nothing', () => {
+    const out = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, to: 1, queue })
+    expect(out.advance).toBeUndefined()
+    expect(out.added).toBeUndefined()
+    expect(out.offered).toBeUndefined()
+  })
+
   it('never prompts — reordering is not a replace', () => {
-    expect(requiresClearConfirm(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, dir: 'up', queue }))
+    expect(requiresClearConfirm(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, to: 1, queue }))
       .toBe(false)
+    expect(confirmMessage(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, to: 1, queue })).toBe('')
+  })
+})
+
+// FOUND BY THE MOVE PROPERTY TEST, FIXED FOR ALL THREE ADDRESSING EVENTS.
+//
+// `reduce` calls itself total — "an out-of-range index or an unknown track is
+// a no-op that still returns a new state object" — and it was not. The range
+// guard was a bare pair of comparisons, and two kinds of non-integer walk
+// straight through it: NaN, because EVERY comparison with NaN is false, so it
+// is neither `< firstAddressable` nor `>= length`; and a fraction, which
+// passes both comparisons honestly. Both then index the rendered array with a
+// key that is not there.
+//
+// The consequences differed by event, and the quiet one is the bad one:
+//
+//   REMOVE / MOVE  read `.file_id` off `undefined` -> TypeError, thrown from
+//                  inside the one reducer every surface routes through.
+//   SELECT         spreads `undefined` into `current`, producing an entry with
+//                  NO file_id and no exception at all. The transport then
+//                  holds a track that does not exist.
+//
+// `Number(el.dataset.index)` is NaN for a row whose attribute went missing,
+// which is one typo in a template away. site.ts does guard each dispatch site
+// with Number.isInteger and it should keep doing so — but the guard belongs
+// here as well, because this is the module that claims to be total.
+describe('a non-integer index is a no-op, not a throw and not a corrupt current', () => {
+  const s = state({ current: entry('c'), intent: many(3) })
+  const queue = rendered(s)
+
+  it.each([Number.NaN, 1.5, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'SELECT_QUEUE_ENTRY {%s} leaves the transport exactly as it was', (index) => {
+      const { state: next, advance } = reduce(s, { type: 'SELECT_QUEUE_ENTRY', index, queue })
+      expect(next.current?.file_id).toBe('c')
+      expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+      expect(next.history).toEqual([])
+      expect(advance).toBeUndefined()
+    },
+  )
+
+  it.each([Number.NaN, 1.5, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'REMOVE_QUEUE_ENTRY {%s} drops nothing and suppresses nothing', (index) => {
+      const { state: next } = reduce(s, { type: 'REMOVE_QUEUE_ENTRY', index, queue })
+      expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+      expect(next.suppressed).toEqual([])
+    },
+  )
+
+  it.each([Number.NaN, 1.5, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'MOVE_QUEUE_ENTRY {%s} reorders nothing', (index) => {
+      const { state: next } = reduce(s, { type: 'MOVE_QUEUE_ENTRY', index, to: 1, queue })
+      expect(next.intent.map((e) => e.file_id)).toEqual(['e0', 'e1', 'e2'])
+    },
+  )
+
+  it('never throws, whatever the index', () => {
+    for (const index of [Number.NaN, 1.5, -0.5, 1e308 * 10, -1e308 * 10]) {
+      expect(() => reduce(s, { type: 'SELECT_QUEUE_ENTRY', index, queue })).not.toThrow()
+      expect(() => reduce(s, { type: 'REMOVE_QUEUE_ENTRY', index, queue })).not.toThrow()
+      expect(() => reduce(s, { type: 'MOVE_QUEUE_ENTRY', index, to: 1, queue })).not.toThrow()
+    }
+  })
+
+  it('still accepts every honest integer index, so the guard is not too tight', () => {
+    expect(reduce(s, { type: 'SELECT_QUEUE_ENTRY', index: 2, queue }).state.current?.file_id)
+      .toBe('e1')
+    expect(reduce(s, { type: 'REMOVE_QUEUE_ENTRY', index: 2, queue }).state.intent)
+      .toHaveLength(2)
+    expect(reduce(s, { type: 'MOVE_QUEUE_ENTRY', index: 3, to: 1, queue })
+      .state.intent.map((e) => e.file_id)).toEqual(['e2', 'e0', 'e1'])
   })
 })
 

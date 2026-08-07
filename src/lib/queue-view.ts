@@ -284,6 +284,22 @@ export interface QueueRow {
   /** `current` is not removable — there is no REMOVE for what is playing;
    *  SKIP is that gesture. Everything behind it is. */
   removable: boolean
+  /**
+   * LAYER 1 ONLY. True for exactly the rows `MOVE_QUEUE_ENTRY` can act on, so
+   * the drawer renders a drag handle on those rows and on no others.
+   *
+   * It is not the same question as `removable`, and rendering one control off
+   * the other answer is how the drawer ended up shipping ↑/↓ buttons on auto
+   * rows that the engine then refused — a control that is drawn, enabled-
+   * looking and inert. `current` is neither removable nor reorderable; an
+   * auto row is removable but NOT reorderable, because layer 2 is rebuilt from
+   * scratch on every regeneration and has no order anyone owns; a pin is both.
+   *
+   * The three-line answer lives here rather than in site.ts for the reason
+   * every other decision does: site.ts cannot be imported under node, so a
+   * rule expressed there is a rule nothing can test.
+   */
+  reorderable: boolean
 }
 
 export interface QueueSection {
@@ -332,11 +348,11 @@ export function renderQueueSections(
 
   queue.forEach((entry, index) => {
     if (index === 0 && state.current !== null) {
-      now.push({ index, entry, removable: false })
+      now.push({ index, entry, removable: false, reorderable: false })
     } else if (pinned.has(entry.file_id)) {
-      yours.push({ index, entry, removable: true })
+      yours.push({ index, entry, removable: true, reorderable: true })
     } else {
-      auto.push({ index, entry, removable: true })
+      auto.push({ index, entry, removable: true, reorderable: false })
     }
   })
 

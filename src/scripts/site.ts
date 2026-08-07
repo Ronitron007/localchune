@@ -229,10 +229,23 @@ function clearPlayerMemory() {
   }
 }
 
+/**
+ * OWNER, 2026-08-07: no text-glyph control anywhere. `⏸` (U+23F8) and `⏭`
+ * (U+23ED) carry EMOJI PRESENTATION by default, so iOS paints them as full
+ * colour emoji — a blue-and-white pill in the middle of a monochrome
+ * brutalist bar, which is what the owner screenshotted. A font choice cannot
+ * override it reliably and `text-rendering` does not touch it. The icon set
+ * exists precisely so a control's shape is ours rather than the platform's.
+ *
+ * `replaceChildren`, not `textContent`: the button holds an element now, and
+ * a stray `textContent =` would delete the glyph and leave an empty 44px box.
+ * The accessible name stays on the BUTTON — the <svg> is aria-hidden, so
+ * without this attribute the control would be silent to a screen reader.
+ */
 function updateToggle() {
   if (!toggle || !audio) return
   const playing = !audio.paused && !audio.ended
-  toggle.textContent = playing ? '⏸' : '▶'
+  toggle.replaceChildren(svgIcon(playing ? 'pause' : 'play', 20))
   toggle.setAttribute('aria-label', playing ? 'Pause' : 'Play')
 }
 
@@ -938,6 +951,25 @@ function renderDrawer(): void {
       for (const row of section.rows) {
         const li = document.createElement('li')
         li.className = section.id === 'now' ? 'queuerow queuerow-current' : 'queuerow'
+        // The drag needs both on the ROW, not on a control inside it: the
+        // library sorts `li` elements and reports positions within the list,
+        // and turning one of those back into an engine index needs the row's
+        // own rendered index and its file id.
+        li.dataset.index = String(row.index)
+        li.dataset.fileId = row.entry.file_id
+
+        // A drag handle, not a pair of arrows. OWNER: drag-and-drop replaces
+        // the ↑/↓ buttons. It is a real <button> so it is tabbable and keeps
+        // a keyboard path — the arrow keys on a focused handle move one step,
+        // through the same MOVE_QUEUE_ENTRY the drag dispatches. A drag with
+        // no keyboard equivalent is not an enhancement, it is a regression,
+        // and the library has no keyboard sorting of its own.
+        if (row.reorderable) {
+          const grip = button('queuerow-drag', '', `Reorder ${entryTitle(row.entry)}`)
+          grip.appendChild(svgIcon('drag', 16))
+          grip.dataset.index = String(row.index)
+          li.appendChild(grip)
+        }
 
         // The row itself is the play control. `data-index` is the drawer's
         // whole contract with the reducer: row 3 means renderedQueue[3].
@@ -956,17 +988,8 @@ function renderDrawer(): void {
         if (row.removable) {
           const controls = document.createElement('span')
           controls.className = 'queuerow-controls'
-          // ↑/↓ move a PIN. They are rendered for auto rows too and the engine
-          // no-ops them there by design — layer 2 is re-ranked on every
-          // regeneration, so it has no order anyone owns.
-          for (const [dir, glyph] of [['up', '↑'], ['down', '↓']] as const) {
-            const b = button('btn-secondary queuerow-move', glyph, `Move ${entryTitle(row.entry)} ${dir}`)
-            b.dataset.index = String(row.index)
-            b.dataset.dir = dir
-            b.disabled = section.id === 'auto'
-            controls.appendChild(b)
-          }
-          const rm = button('btn-secondary queuerow-remove', '✕', `Remove ${entryTitle(row.entry)} from the queue`)
+          const rm = button('btn-secondary queuerow-remove', '', `Remove ${entryTitle(row.entry)} from the queue`)
+          rm.appendChild(svgIcon('close', 16))
           rm.dataset.index = String(row.index)
           controls.appendChild(rm)
           li.appendChild(controls)
@@ -979,8 +1002,101 @@ function renderDrawer(): void {
     drawerSections.appendChild(el)
   }
 
+  wireQueueDrag()
   syncDrawerHeight()
 }
+
+/* --------------------------------------------------- drag-to-reorder
+ *
+ * LOADED ON DEMAND, AND THE TRIGGER IS THE POINT. `#queue-sections` is in
+ * Shell.astro, so it exists on every signed-in page — keying the import off
+ * its presence would download the library everywhere and defeat the split.
+ * The honest triggers are the two moments a reorder becomes possible: the
+ * drawer being OPENED with more than one pin in it, and a page that actually
+ * carries `[data-reorder]` (the owner's own crate page, and nothing else).
+ *
+ * A failed import is not an error anyone needs to hear about. Reorder falls
+ * back to the arrow keys on the drag handle, and on the crate page to the
+ * ↑/↓ POST forms that are always there.
+ */
+type DragModule = typeof import('./drag-reorder')
+let dragModule: DragModule | null = null
+let dragLoading: Promise<void> | null = null
+
+function loadDragModule(): void {
+  if (dragLoading !== null) return
+  dragLoading = import('./drag-reorder')
+    .then((m) => {
+      dragModule = m
+      // The lists that were already on screen when the import landed.
+      wireQueueDrag()
+      wireCrateDrag()
+    })
+    .catch(() => {
+      // Keyboard and the no-JS forms remain. Nothing to say.
+    })
+}
+
+/**
+ * Make the YOUR QUEUE section sortable. Called at the end of every drawer
+ * render (the `<ul>` is rebuilt each time) and again when the import lands.
+ *
+ * ONE ENGINE EVENT PER DRAG. The library reports positions WITHIN the pin
+ * list; `MOVE_QUEUE_ENTRY` addresses the RENDERED array. The offset between
+ * them is the first row's own `data-index`, read off the DOM that was just
+ * rendered rather than recomputed from state — so the number the engine gets
+ * refers to the array the member was looking at, which is this whole
+ * milestone's one hard rule.
+ *
+ * A drag that ends where it started re-renders instead of dispatching. That
+ * is not an optimisation: the library has already moved the real DOM nodes,
+ * so something must put them back, and re-rendering from the engine's state
+ * is the only restore that cannot disagree with the engine. It also spends no
+ * regeneration and issues no request for a gesture that changed nothing.
+ */
+function wireQueueDrag(): void {
+  if (dragModule === null || drawerSections === null) return
+  const list = drawerSections.querySelector<HTMLElement>('[data-section="yours"] .queuelist')
+  if (list === null) return
+  const rows = [...list.querySelectorAll<HTMLElement>(':scope > li[data-index]')]
+  if (rows.length < 2) return
+  const base = Number(rows[0].dataset.index)
+  if (!Number.isInteger(base)) return
+
+  dragModule.wireDragList({
+    parent: list,
+    ids: rows.map((r) => r.dataset.fileId ?? ''),
+    handle: '.queuerow-drag',
+    onDrop: (from, to) => {
+      if (from === to) {
+        renderDrawer()
+        return
+      }
+      apply({ type: 'MOVE_QUEUE_ENTRY', index: base + from, to: base + to, queue: renderedQueue })
+    },
+  })
+}
+
+/** The handle's keyboard equivalent: one step per press, through the same
+ *  verb the drag uses. The library sorts by pointer only, so without this the
+ *  drawer would have no reorder path for a keyboard at all. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+  const grip = (e.target as Element).closest?.('button.queuerow-drag')
+  if (!(grip instanceof HTMLButtonElement)) return
+  const index = Number(grip.dataset.index)
+  if (!Number.isInteger(index)) return
+  e.preventDefault()
+  const to = e.key === 'ArrowUp' ? index - 1 : index + 1
+  apply({ type: 'MOVE_QUEUE_ENTRY', index, to, queue: renderedQueue })
+  // The drawer re-rendered under the press, so the button that had focus is
+  // gone. Follow the row: it is at `to` if the move happened and still at
+  // `index` if it was a boundary the engine clamped away. Without this, one
+  // press costs the keyboard user their place in the list.
+  const grip$ = (at: number) => drawerSections?.querySelector<HTMLButtonElement>(
+    `button.queuerow-drag[data-index="${at}"]`) ?? null;
+  (grip$(to) ?? grip$(index))?.focus()
+})
 
 /**
  * The upload chip is fixed above the player bar and knows nothing about the
@@ -1005,18 +1121,31 @@ function setDrawerOpen(open: boolean): void {
   drawer.hidden = !open
   drawerToggle.setAttribute('aria-expanded', String(open))
   // OWNER-APPROVED OPEN STATE, from a mock: the button inverts to solid
-  // ink and its glyph becomes a ✕, so the control that opened the drawer
-  // is visibly the one that closes it. The FILL is CSS off aria-expanded
-  // — this line only owns the glyph and the accessible name, because a
-  // button reading "☰ QUEUE" while it means "close" is a lie a screen
-  // reader would repeat.
-  drawerToggle.textContent = open ? '✕ QUEUE' : '☰ QUEUE'
+  // ink and its glyph becomes a close mark, so the control that opened the
+  // drawer is visibly the one that closes it. The FILL is CSS off
+  // aria-expanded — these two lines own the glyph and the accessible name,
+  // because a button reading "QUEUE" while it means "close" is a lie a
+  // screen reader would repeat.
+  //
+  // The glyphs are the ICON SET, not `☰` and `✕`. Shell.astro server-renders
+  // the closed state with the same two components, so the first paint and
+  // every state after it are one vocabulary. A text node beside an element
+  // means `textContent =` would delete the glyph, so this replaces children
+  // and re-adds the label as its own node.
+  drawerToggle.replaceChildren(
+    svgIcon(open ? 'close' : 'queue', 16),
+    document.createTextNode(' QUEUE'),
+  )
   drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
   document.body.classList.toggle('queueopen', open)
   syncDrawerHeight()
   // One of §5's two triggers for the deferred tail. The other is in
   // startCurrent — whichever happens first spends the flag.
   if (open) hydrateIfDeferred()
+  // …and the moment a reorder becomes possible. Opening the drawer is a
+  // deliberate act, and a member who never opens it never downloads the drag
+  // library. Two pins is the smallest queue that HAS an order to change.
+  if (open && getState().intent.length > 1) loadDragModule()
 }
 
 if (drawerToggle !== null) {
@@ -1074,15 +1203,6 @@ document.addEventListener('click', (e) => {
   const index = Number(btn.dataset.index)
   if (!Number.isInteger(index)) return
   apply({ type: 'REMOVE_QUEUE_ENTRY', index, queue: renderedQueue })
-})
-
-document.addEventListener('click', (e) => {
-  const btn = (e.target as Element).closest?.('button.queuerow-move')
-  if (!(btn instanceof HTMLButtonElement) || btn.disabled) return
-  const index = Number(btn.dataset.index)
-  const dir = btn.dataset.dir
-  if (!Number.isInteger(index) || (dir !== 'up' && dir !== 'down')) return
-  apply({ type: 'MOVE_QUEUE_ENTRY', index, dir, queue: renderedQueue })
 })
 
 /** A strategy switch writes ONE field. The pins survive in place and in
@@ -1557,94 +1677,59 @@ document.addEventListener('submit', (e) => {
 }, true)
 
 /**
- * M6a Task 7 — crate drag-to-reorder. TrackRow.astro's rows render
- * `draggable`/`data-file-id` only when the page passes `reorderable`
- * (crate/[id].astro's owner view), inside a `[data-reorder]` container
- * that carries the crate id itself. No such container exists on the pool
- * table or the track page, so every listener below is a silent no-op
- * there — the same "degrade to nothing" contract every other document-
- * level delegation in this file already has.
+ * Crate drag-to-reorder. TrackRow.astro's rows render `draggable`/
+ * `data-file-id` only when the page passes `reorderable` (crate/[id].astro's
+ * owner view), inside a `[data-reorder]` container that carries the crate id
+ * itself. No such container exists on the pool table or the track page, so
+ * this is a silent no-op there — the same "degrade to nothing" contract every
+ * other document-level delegation in this file has.
  *
- * Native HTML5 drag-and-drop, not a pointer-capture reimplementation:
- * `dragover` moves the dragged row's actual DOM node — before or after
- * the row under the cursor, chosen by which half of it the pointer is
- * over — so the visible order IS the pending order, with no separate
- * "ghost" state to keep in sync. `drop` reads that same DOM order straight
- * back out via each row's `data-file-id` and POSTs it to `.../reorder`.
- * The server (`crate_reorder`, migration 27) is the only authority on
- * whether the result is legal — on any failure the page reloads, so the
- * visible order snaps back to whatever the database actually has rather
- * than leaving a client-side order the server never accepted.
+ * IT WAS NATIVE HTML5 DRAG, AND NATIVE HTML5 DRAG DOES NOT FIRE ON TOUCH.
+ * `dragstart`/`dragover`/`drop` exist on a desktop and simply never happen on
+ * a phone, so this feature — a hundred lines of it — was invisible on the
+ * device most of this app is used on. That is the audit's offender #3 and the
+ * reason a library is here at all. The pointer path is drag-reorder.ts's; the
+ * rest of the contract below is unchanged.
  *
- * Keyboard users are covered by a separate mechanism, not an afterthought:
- * the always-present ↑/↓ button forms next to each row (real
- * `<button type="submit">`s, tabbable and Enter/Space-activatable with
- * zero JS) POST to `/api/crate/[id]/move`, which reorders with the same
- * `moveInList()` `org-api.ts` exports. Native drag-and-drop has no
- * keyboard path of its own — that pair of buttons is it.
+ * THE DOM ORDER IS STILL THE PENDING ORDER. The library moves the real row
+ * rather than painting a ghost, so `submitCrateOrder` reads the result out of
+ * `data-file-id` exactly as it always did, and there is no second copy of the
+ * order to keep in sync. The server (`crate_reorder`, migration 27) is the
+ * only authority on whether the result is legal — on any failure the page
+ * reloads, so the visible order snaps back to what the database actually has
+ * rather than leaving an order the server never accepted.
+ *
+ * THE ↑/↓ POST FORMS STAY, FOREVER. They are the only reorder path with no
+ * JavaScript at all, and they are the keyboard path too: real
+ * `<button type="submit">`s, tabbable and Enter/Space-activatable, POSTing to
+ * `/api/crate/[id]/move`, which reorders through the same `moveItem` the drag
+ * ends up in. The library has no keyboard sorting of its own, so removing
+ * them would have traded a touch gap for a keyboard one.
  */
-let draggingRow: HTMLTableRowElement | null = null
-let dragContainer: HTMLElement | null = null
-let dragOrderSnapshot: string[] | null = null
-let dropHandled = false
-
-document.addEventListener('dragstart', (e) => {
-  const row = (e.target as Element).closest?.('tr[draggable="true"][data-file-id]')
-  if (!(row instanceof HTMLTableRowElement) || !row.closest('[data-reorder]')) return
-  draggingRow = row
-  const container = row.closest('[data-reorder]')
-  dragContainer = container instanceof HTMLElement ? container : null
-  dragOrderSnapshot = dragContainer === null ? null : Array.from(
-    dragContainer.querySelectorAll<HTMLElement>('tr[data-file-id]'),
-  ).map((r) => r.dataset.fileId ?? '')
-  dropHandled = false
-  e.dataTransfer?.setData('text/plain', row.dataset.fileId ?? '')
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
-})
-
-document.addEventListener('dragover', (e) => {
-  if (draggingRow === null) return
-  const container = (e.target as Element).closest?.('[data-reorder]')
-  if (!container || !container.contains(draggingRow)) return
-  e.preventDefault() // allow drop
-  const overRow = (e.target as Element).closest?.('tr[data-file-id]')
-  if (!(overRow instanceof HTMLTableRowElement) || overRow === draggingRow) return
-  const rect = overRow.getBoundingClientRect()
-  const before = e.clientY < rect.top + rect.height / 2
-  overRow.parentElement?.insertBefore(draggingRow, before ? overRow : overRow.nextSibling)
-})
-
-document.addEventListener('drop', (e) => {
-  if (draggingRow === null) return
-  e.preventDefault()
-  const container = draggingRow.closest('[data-reorder]')
-  draggingRow = null
-  if (container instanceof HTMLElement) {
-    dropHandled = true
-    void submitCrateOrder(container)
+function wireCrateDrag(): void {
+  if (dragModule === null) return
+  for (const container of document.querySelectorAll<HTMLElement>('[data-reorder]')) {
+    const rows = [...container.querySelectorAll<HTMLElement>('tr[data-file-id]')]
+    if (rows.length < 2) continue
+    dragModule.wireDragList({
+      parent: container,
+      ids: rows.map((r) => r.dataset.fileId ?? ''),
+      handle: '.cratedrag',
+      onDrop: (from, to) => {
+        // A cancelled drag reports from === to and the library has already put
+        // the row back, so there is nothing to persist and nothing to undo —
+        // which is the old dragend/reload branch, obsolete rather than
+        // dropped. Only a real move POSTs, one POST per drop.
+        if (from !== to) void submitCrateOrder(container)
+      },
+    })
   }
-})
+}
 
-document.addEventListener('dragend', () => {
-  // A drop released outside [data-reorder] (past the table, over thead,
-  // off-page, or cancelled via Escape) fires dragend with no drop — dragover
-  // already live-mutated the DOM with nothing left to persist that order.
-  // Restore this file's stated invariant (server order wins on any failure)
-  // by reloading whenever the DOM order no longer matches the drag's start.
-  if (!dropHandled && dragContainer) {
-    const currentOrder = Array.from(
-      dragContainer.querySelectorAll<HTMLElement>('tr[data-file-id]'),
-    ).map((r) => r.dataset.fileId ?? '')
-    const unchanged = dragOrderSnapshot !== null
-      && dragOrderSnapshot.length === currentOrder.length
-      && dragOrderSnapshot.every((id, i) => id === currentOrder[i])
-    if (!unchanged) window.location.reload()
-  }
-  draggingRow = null
-  dragContainer = null
-  dragOrderSnapshot = null
-  dropHandled = false
-})
+/** The owner's crate page is the one surface that exists to be reordered, so
+ *  the library loads with it rather than on first touch — a drag that has to
+ *  wait for a network round trip is a drag that misses its first gesture. */
+if (document.querySelector('[data-reorder]') !== null) loadDragModule()
 
 async function submitCrateOrder(container: HTMLElement) {
   const crateId = container.dataset.reorder
