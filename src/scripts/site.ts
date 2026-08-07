@@ -2627,3 +2627,36 @@ document.addEventListener('click', (e) => {
   e.preventDefault()
   openRowSheet(btn)
 }, true)
+
+/* ============================================================
+   THE NAV'S SEARCH ICON — THE ONE LAZY CHUNK
+   ============================================================
+   `await import()`, and the await is the entire point. Shell.astro mounts
+   on every page, so a STATIC import of search-overlay here would ship the
+   overlay, its renderer and its fetch client to /login and to every page a
+   member never searches from — the same regression shell-bundle.test.ts
+   already guards for the queue engine, arriving by a different door.
+   Rollup emits a dynamic import as its own chunk, so the cost is paid on
+   the first tap of the icon and never again.
+   src/lib/search-bundle.test.ts fails the build if this becomes static.
+
+   THE TRIGGER IS AN <a href="/pool">, AND CANCELLING IT IS THE POINT —
+   the same shape as the nav's ⋮. With JS this opens the overlay; without
+   it, the anchor navigates to /pool's server-rendered filter, which is
+   still a working search. Nothing here is a control that does nothing.
+
+   A modified click is left alone: cmd/ctrl/shift/middle-click on a link
+   means "open /pool in a new tab", and hijacking that is the rudest thing
+   a single-page script can do to a link. */
+document.addEventListener('click', (e) => {
+  const icon = (e.target as Element).closest?.('a.navsearch')
+  if (!(icon instanceof HTMLAnchorElement)) return
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+  e.preventDefault()
+  void import('../lib/search-overlay')
+    .then((m) => { if (!m.isSearchOpen()) m.openSearchOverlay(icon) })
+    // The chunk failing to load is a network fault, not a bug to swallow:
+    // fall back to the destination the anchor already names, which is the
+    // no-JS path and a real search page.
+    .catch(() => { window.location.href = icon.href })
+}, true)

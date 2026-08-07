@@ -108,8 +108,18 @@ const credits = `${creditsRemaining(m.access_expires_at)} credits`
     <form id="signout" method="post" action="/auth/signout" data-astro-reload><button type="submit" class="btn-secondary">Sign out</button></form>
   </div>
 
-  {/* Search lives on /pool (the `q` filter). The icon is a shortcut to it,
-      not a second search implementation. */}
+  {/* THE SEARCH ICON IS REAL NOW — and it stays an anchor, deliberately.
+
+      It used to be a shortcut to /pool's `q` box and nothing else. With
+      JS, site.ts cancels this click and opens the search overlay
+      (src/lib/search-overlay.ts, loaded lazily on that first click).
+      Without JS the click is not cancelled and it navigates to /pool,
+      where the server-rendered filter form still works — the same
+      no-JS story the nav's ⋮ tells with its <details>.
+
+      A <button> here would have been a control that does nothing for a
+      member with no JavaScript, which is the one thing this codebase
+      refuses to ship (see `hidden` on every queue control). */}
   <a class="navsearch" href="/pool" aria-label="Search the pool"><Icon name="search" size={20} /></a>
 
   <details class="navmenu">
