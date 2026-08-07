@@ -1385,11 +1385,11 @@ img.art {
      and fires `pointercancel` — so the drag ends with dy≈11 and nothing
      dismisses. `.queuerow-drag` already carries this line for exactly the
      same reason on exactly the same axis.
-     The action sheet needs no such declaration and that is not an
-     inconsistency: it locks body scroll while it is up, so there is
-     nothing behind it for the browser to pan and no scroll to steal the
-     gesture. This drawer's whole point is that the page behind it is still
-     live. The list below opts back in. */
+     `.sheet-panel` carries it too, and finding out why is what this drawer
+     paid for: the sheet's own swipe-down had never run either, for this
+     exact reason, since the day it shipped. Two panels, one pair of
+     declarations — `none` here, `pan-y` on the scroller inside. The list
+     below opts back in. */
   touch-action: none;
 }
 /* THE `[hidden]` DEFEAT, FOR THE SIXTH TIME IN THIS FILE — and this one was
