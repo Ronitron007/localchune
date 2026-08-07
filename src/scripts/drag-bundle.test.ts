@@ -201,6 +201,58 @@ describe('a drag starts from a handle, and only from a handle', () => {
     expect(block.slice(0, block.indexOf('}'))).toContain('touch-action: none')
   })
 
+  /**
+   * THE OWNER'S SCREENSHOT, MADE UNREPEATABLE.
+   *
+   * Mid-drag on a real iPhone the row rendered as two transparent copies
+   * lying over each other. Cause: both of the library's dragging hooks
+   * pointed at one class (`is-dragging`, `opacity: 0.4`), that class ends
+   * up PERMANENTLY on the clone that follows the finger, and the clone's
+   * background is copied from a row that paints none.
+   *
+   * These assertions are deliberately about the WIRING and the CSS
+   * PRESENCE rather than about pixels: the failure was invisible to every
+   * unit test precisely because it lived in the gap between a library's
+   * internals and a stylesheet. Screenshots are in the branch report.
+   */
+  it('separates the tile under the finger from the slot it left', () => {
+    const drag = read('scripts/drag-reorder.ts')
+    // Four hooks, two meanings. One class for both was the defect.
+    expect(drag).toContain("draggingClass: 'is-draglift'")
+    expect(drag).toContain("synthDraggingClass: 'is-draglift'")
+    expect(drag).toContain("dragPlaceholderClass: 'is-dragorigin'")
+    expect(drag).toContain("synthDragPlaceholderClass: 'is-dragorigin'")
+    // The touch path had no drop-target feedback at all while native did.
+    expect(drag).toContain("synthDropZoneClass: 'is-over'")
+    // Quoted: the file still NAMES the old class in the note that explains
+    // why it went, and a bare substring match would read that as the bug.
+    expect(drag).not.toContain("'is-dragging'")
+  })
+
+  it('gives the dragged tile an opaque fill — the defect was see-through', () => {
+    const css = read('styles/global.css')
+    for (const sel of ['.is-draglift', '#dnd-dragged-node-clone', '.is-dragorigin']) {
+      expect(css, `${sel} must be styled or the drag has no visual state`).toContain(sel)
+    }
+    // The clone carries the library's own INLINE background, copied off
+    // the row, and an inline declaration beats a class rule. Without
+    // !important a future reordering inside the library silently restores
+    // the transparent tile.
+    const clone = css.slice(css.indexOf('#dnd-dragged-node-clone'))
+    const body = clone.slice(0, clone.indexOf('}'))
+    expect(body).toMatch(/background:[^;]*!important/)
+    expect(body).toMatch(/opacity:\s*1\s*!important/)
+  })
+
+  it('the origin row is declared after .is-over, or it wears the wrong outline', () => {
+    // The library adds its drop-zone class to the dragged node too, so the
+    // origin carries both. Equal specificity means source order is the
+    // whole decision — and a target and an origin that look alike is the
+    // bug being fixed here.
+    const css = read('styles/global.css')
+    expect(css.indexOf('tr.is-dragorigin')).toBeGreaterThan(css.indexOf('tr.is-over'))
+  })
+
   it('the drawer renders a handle instead of the ↑/↓ pair it replaced', () => {
     const site = read('scripts/site.ts')
     expect(site).toContain('queuerow-drag')

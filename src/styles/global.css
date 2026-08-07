@@ -1323,15 +1323,81 @@ img.art {
 .queuerow-drag:active,
 .cratedrag:active { color: var(--fg); cursor: grabbing; }
 
-/* The row being dragged, and the gap it leaves. Opacity and an outline only:
-   the transport exception says a control a finger is on must not travel, and
-   the library is already moving the real node — a second movement here would
-   fight it. Nothing here animates, so the global prefers-reduced-motion block
+/* ═══ THE DRAGGED TILE, AND THE SLOT IT LEFT ═══════════════════════════
+   OWNER, 2026-08-07, with a screenshot: mid-drag on a real iPhone the
+   queue row showed as TWO TRANSPARENT COPIES lying over each other. The
+   drag worked; you could not see what you were holding.
+
+   Both of the library's hooks pointed at one class, `is-dragging`, which
+   was `opacity: 0.4`. On the touch path that class lands on the clone
+   that follows the finger and STAYS there (see the long note in
+   drag-reorder.ts for the exact sequence), and the clone's background is
+   copied from the row — which paints none, so the page shows through.
+   Hence: a 40%-opaque, fully transparent tile over an unchanged list.
+
+   INTERACTION IS WHAT EARNS FULL INK (§1.2 rule 3, §4.3 ration 2). A drag
+   is the most deliberate gesture in the app, so the tile takes the whole
+   ration — opaque fill, full-ink border, a hard offset shadow — and the
+   row it came from drops to the quiet dashed idiom the app already uses
+   for "nothing here yet". They must not look alike; that was the defect.
+
+   Still no transform on either. The transport exception says a control
+   under a finger must not travel, and the library already moves the real
+   node. Nothing here animates, so the global prefers-reduced-motion block
    has nothing to switch off. */
-.queuerow.is-dragging,
-tr.is-dragging { opacity: 0.4; }
+.queuerow.is-draglift,
+tr.is-draglift {
+  background: var(--bg);
+  border: var(--line-full);
+  box-shadow: var(--lift-2);
+  opacity: 1;
+}
+
+/* THE CLONE ITSELF. `#dnd-dragged-node-clone` is the id @formkit puts on
+   the node it clones for the touch path — a stable, documented-by-source
+   hook, and the only one that reaches the clone specifically.
+
+   `!important` IS LOAD-BEARING HERE and is not a shortcut. The library
+   writes `background`, `boxShadow` and `border` onto this element as
+   INLINE styles, copied from the row at clone time, and an inline
+   declaration beats any class rule. Today those copied values are already
+   the opaque ones, because `is-draglift` is on the row at the moment the
+   copy is taken. That ordering is the library's, not ours, and it is
+   exactly the kind of undocumented internal that changed under this
+   project once already (`onDragstart` never firing on touch). If it ever
+   flips, the copied background is transparent again and the owner's bug
+   returns silently. This line makes the tile opaque either way.
+
+   The clone is in the top layer (the library gives it `popover=manual`),
+   so it needs no z-index of ours to clear the player bar. */
+#dnd-dragged-node-clone {
+  background: var(--bg) !important;
+  opacity: 1 !important;
+  box-shadow: var(--lift-2) !important;
+  border: var(--line-full) !important;
+}
+
+/* The row a drag is hovering over — the target. */
 .queuerow.is-over,
 tr.is-over { outline: 1px solid var(--fg); outline-offset: -1px; }
+
+/* The slot you left. Dashed and faded — the same "absence" idiom as
+   `.empty`, which is what it is: the space this row falls back into if
+   the drag is cancelled.
+
+   DECLARED AFTER `.is-over` ON PURPOSE. The library adds its drop-zone
+   class to the dragged node as well as to the hovered one, so the origin
+   row carries BOTH classes for the whole drag. The two rules have equal
+   specificity (0,2,0), so source order is the only thing that decides
+   which outline wins, and the origin must not wear the solid ring — a
+   target and an origin reading alike is the defect this block fixes. */
+.queuerow.is-dragorigin,
+tr.is-dragorigin {
+  opacity: 0.35;
+  outline: var(--line-dash);
+  outline-offset: -1px;
+  background: var(--surface-1);
+}
 .queuetoggle { flex: none; }
 
 /* --- upload chip (UX.12) ---

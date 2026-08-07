@@ -154,14 +154,57 @@ export function wireDragList({ parent, ids, handle, onDrop }: DragList): void {
     },
     config: {
       dragHandle: handle,
-      // Two classes, one for the native path and one for the touch path, and
-      // the same rule behind both: opacity and an outline, never a transform.
-      // The transport exception says a control under a finger must not travel,
-      // and the library is already moving the real node — a lift or a shadow
-      // here would be a second motion fighting the first.
-      draggingClass: 'is-dragging',
-      synthDraggingClass: 'is-dragging',
+      /**
+       * FOUR CLASSES, BECAUSE THE TOUCH PATH HAS TWO OBJECTS AND THE ROW
+       * HAD NO BACKGROUND — the owner's screenshot: a finger dragging a
+       * queue row showed two transparent copies of it lying over each
+       * other, one following the finger and one still in the list.
+       *
+       * Both hooks used to be the same class, `is-dragging`, styled
+       * `opacity: 0.4`. Read against what the library actually does, that
+       * produces exactly the reported picture. On the synthetic (touch)
+       * path, in this order:
+       *
+       *   1. `dragstartClasses` puts synthDraggingClass on the REAL row.
+       *   2. `initSynthDrag` does `node.el.cloneNode(true)` — so the clone
+       *      inherits that class — and `copyCriticalStyles` copies the
+       *      row's COMPUTED background, boxShadow, border and colour onto
+       *      the clone as INLINE styles.
+       *   3. A `setTimeout(0)` removes synthDraggingClass from the real
+       *      row only. The CLONE keeps it for the life of the drag.
+       *
+       * So the clone was permanently at `opacity: 0.4`, and step 2 had
+       * copied `background-color: rgba(0,0,0,0)` onto it, because a row in
+       * this app paints no background of its own — the page shows through.
+       * A 40%-opaque transparent box over an untouched list is two ghosts,
+       * which is what the owner saw. Meanwhile the row left behind got
+       * synthDragPlaceholderClass, which was NEVER SET, so it looked
+       * completely normal: nothing on screen said which row was moving.
+       *
+       * The split follows the library's own two objects:
+       *
+       *   is-draglift    the thing under the finger. One tick on the real
+       *                  row, then permanent on the clone — and because
+       *                  step 2 reads the computed style while this class
+       *                  is on, the clone's copied inline background is
+       *                  the OPAQUE one. Spec §4's lifted treatment.
+       *   is-dragorigin  the slot you left. Quiet, and the whole point is
+       *                  that it is now visibly different from the tile.
+       *
+       * synthDropZoneClass was also unset, so the touch path had no
+       * drop-target feedback at all while the native path did.
+       *
+       * The transport exception still holds: neither class animates a
+       * transform. The library moves the real node, and a lift on top of
+       * that would be a second motion fighting the first. The elevation
+       * here is a shadow and a border, not travel.
+       */
+      draggingClass: 'is-draglift',
+      synthDraggingClass: 'is-draglift',
+      dragPlaceholderClass: 'is-dragorigin',
+      synthDragPlaceholderClass: 'is-dragorigin',
       dropZoneClass: 'is-over',
+      synthDropZoneClass: 'is-over',
       // No animation plugin. The library moves the real node, which IS the
       // feedback; the FLIP tween on top of it is bytes for motion that the
       // global prefers-reduced-motion block would then have to take away
