@@ -323,18 +323,27 @@ describe('handleMessage', () => {
     expect(d.dedup).toHaveBeenCalledWith(FILE_ID, null)
   })
 
-  it('acks and warns when dedup fails, and never retries the analysis', async () => {
+  it('acks and shouts when dedup fails, and never retries the analysis', async () => {
     // THE decision this task turns on. A retry would call analysis_begin(),
     // get 'stored', ack as "not claimable" — so the dedup would never run
     // anyway — and would have burned ~45 vCPU-s of container time to
     // recompute a fingerprint already stored. dedup_pending() and the :47
     // cron are what actually recover this file.
+    //
+    // AND IT MUST BE console.error, not warn. This catch is how a broken
+    // matcher runs for a day unnoticed: the message still acks, the file is
+    // still 'stored', the pool still grows, and a warn line among a
+    // thousand is not a signal. The 2026-08-07 incident was diagnosed from
+    // the database because the logs said nothing.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const d = deps({ dedup: vi.fn().mockRejectedValue(new Error('boom')) })
     const out = await handleMessage(BODY, 1, d)
 
     expect(out.action).toBe('ack')
-    expect(out.reason).toMatch(/dedup deferred to cron/)
+    expect(out.reason).toMatch(/DEDUP FAILED/)
+    expect(errorSpy.mock.calls.flat().join(' ')).toMatch(/DEDUP FAILED/)
     expect(d.analyse).toHaveBeenCalledTimes(1)
+    errorSpy.mockRestore()
   })
 
   it('does not run the matcher when persist itself failed', async () => {

@@ -263,8 +263,14 @@ export async function handleMessage(
     for (const w of d.warnings ?? []) console.warn(w)
     dedupLine = summariseDedup(msg.file_id, d)
   } catch (e) {
-    dedupLine = `${msg.file_id}: dedup deferred to cron: ${describe(e)}`
-    console.warn(dedupLine)
+    // console.ERROR, not warn. This catch is the whole reason a dead
+    // matcher can run for a day without anyone noticing: the message still
+    // acks, the file is still 'stored', the pool still grows, and the only
+    // trace was a warn line among a thousand. If this fires the cron is now
+    // the only thing that will ever match this file, which is worth an
+    // error even though it is not a failure of THIS message.
+    dedupLine = `${msg.file_id}: DEDUP FAILED, deferred to the :47 cron: ${describe(e)}`
+    console.error(dedupLine)
   }
 
   return ack(`${summarise(result)} | ${dedupLine}`)

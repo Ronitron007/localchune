@@ -6,7 +6,7 @@
 -- fallback, the pending backstop, and the two SQL ports of
 -- worker/app/forensics.py.
 begin;
-select plan(54);
+select plan(59);
 
 -- allowlist BEFORE auth.users: the on_auth_user_created trigger aborts
 -- otherwise, and it provisions public.members itself.
@@ -309,7 +309,14 @@ select is(
 update public.fingerprints set query_items = array[1,2,3,4,5,6,7,8,9,10]::bigint[]
  where file_id = '00000000-0000-0000-0000-00000000f001';
 
--- ---------- dedup_pending ----------
+-- ---------- dedup_pending / dedup_seed_tracks (migration 34) ----------
+-- THE ORDER OF THESE ASSERTIONS IS THE BUG THEY EXIST TO CATCH. Before
+-- migration 34, dedup_pending() keyed off `track_id is null` and
+-- dedup_seed_tracks() minted a track for EVERY trackless stored file. So
+-- the seeder — which the backstop runs immediately after the matcher, and
+-- which has no per-run cap while the matcher has one of 300 — silently
+-- emptied the matcher's own work list. 690 production files were stranded
+-- unexamined that way on 2026-07-29 and nothing anywhere counted them.
 select is((select count(*)::int from public.dedup_pending(10)), 0,
   'a file that reached stored a moment ago is not pending yet — the 5 minute grace');
 
@@ -318,12 +325,23 @@ update public.files set state_changed_at = now() - interval '1 hour'
 select is(
   (select count(*)::int from public.dedup_pending(10) p
     where p.file_id = '00000000-0000-0000-0000-00000000f001'),
-  1, 'an hour later, a stored file with no track is pending');
+  1, 'an hour later, a stored file the matcher has never examined is pending');
 
-select is(public.dedup_seed_tracks(100), 6,
-  'seeding mints one identity per stored file — six files, six tracks, no merge');
-select is((select count(*)::int from public.dedup_pending(10)), 0,
-  'nothing is pending once every stored file has a track');
+select is(public.dedup_seed_tracks(100), 1,
+  'seeding mints an identity ONLY for the file the matcher can never match — f006, which has no fingerprint');
+select is(
+  (select count(*)::int from public.dedup_pending(10) p
+    where p.file_id = '00000000-0000-0000-0000-00000000f001'),
+  1, 'and a matchable file is STILL pending after a seed — the seeder can no longer run ahead of the matcher');
+
+select is(public.dedup_mark_probed(array['00000000-0000-0000-0000-00000000f001']::uuid[]), 1,
+  'the matcher stamps the file it examined');
+select is((select count(*)::int from public.dedup_pending(10) p
+            where p.file_id = '00000000-0000-0000-0000-00000000f001'), 0,
+  'a stamped file leaves the queue — this, not track_id, is what makes the backstop terminate');
+select is(public.dedup_mark_probed('{}'::uuid[]), 0,
+  'an empty page of ids is not an error');
+
 select is((select count(*)::int from public.track_merges), 0,
   'and retrieval has still merged nothing — it decides nothing by design');
 
@@ -440,6 +458,17 @@ select throws_ok(
   $$ select public.dedup_is_upgrade('{"tier":1}'::jsonb, '{"tier":5}'::jsonb) $$,
   '42501', 'permission denied for function dedup_is_upgrade',
   'and neither is the upgrade rule');
+-- Migration 34's two new functions, same rule. dedup_mark_probed writes
+-- files, so a member holding it could hide any upload from the matcher
+-- for ever; track_face_file leaks nothing but has no member-facing use.
+select throws_ok(
+  $$ select public.dedup_mark_probed(array['00000000-0000-0000-0000-00000000f001']::uuid[]) $$,
+  '42501', 'permission denied for function dedup_mark_probed',
+  'a member cannot mark a file examined — that would hide it from the backstop for ever');
+select throws_ok(
+  $$ select public.track_face_file('00000000-0000-0000-0000-0000000000a1') $$,
+  '42501', 'permission denied for function track_face_file',
+  'the face rule is called inside definer bodies, never by a member');
 reset role;
 
 select * from finish();

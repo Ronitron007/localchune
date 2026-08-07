@@ -18,7 +18,7 @@
 
 import { Container } from '@cloudflare/containers'
 import { runDedup } from '../../../src/lib/dedup'
-import { makeDedupDeps } from '../../../src/lib/dedup-rpc'
+import { dedupMarkProbed, makeDedupDeps } from '../../../src/lib/dedup-rpc'
 import {
   handleDeadLetter, handleMessage, R2MissingError, type AnalyzeMessage,
 } from './consumer'
@@ -311,8 +311,35 @@ export default {
 
     // One per invocation, not one per message: max_batch_size is 1, and the
     // deps close over nothing but `env`.
-    const dedupDeps = makeDedupDeps(
-      <T,>(fn: string, args: Record<string, unknown>) => rpc<T>(env, fn, args))
+    const call = <T,>(fn: string, args: Record<string, unknown>) => rpc<T>(env, fn, args)
+    const dedupDeps = makeDedupDeps(call)
+
+    /**
+     * The inline probe, plus its stamp.
+     *
+     * The stamp is what tells the :47 backstop this file has been examined.
+     * Without it every file analysed here would be handed to the backstop
+     * an hour later and probed a second time — the same ~25 candidate
+     * sweep, for an answer already in match_decisions.
+     *
+     * The stamp failing is NOT a dedup failure: the matching happened and
+     * its decisions are committed. It costs one redundant probe next hour,
+     * so it is logged and swallowed rather than turned into a thrown
+     * effect that would make handleMessage() report a dedup that in fact
+     * succeeded.
+     */
+    const dedupAndMark = async (fileId: string, sha: string | null) => {
+      const out = await runDedup(fileId, dedupDeps, sha)
+      try {
+        await dedupMarkProbed(call, [fileId])
+      } catch (e) {
+        console.error(
+          `${fileId}: dedup ran but could not be stamped — the cron will ` +
+          `re-probe it: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
+      return out
+    }
 
     for (const m of batch.messages) {
       const outcome = await handleMessage(m.body, m.attempts, {
@@ -321,7 +348,7 @@ export default {
           containerFor(env, msg.file_id).analyse(msg.file_id, msg.r2_key, msg.analysis_version),
         persist: (result) => analysisPersist(env, result),
         fail: (fileId, reason) => analysisFail(env, fileId, reason),
-        dedup: (fileId, sha) => runDedup(fileId, dedupDeps, sha),
+        dedup: dedupAndMark,
         fileState: (fileId) => analysisFileState(env, fileId),
       })
 

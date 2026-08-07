@@ -12,7 +12,7 @@
 -- by comparing THIS fixture's ids to each other, never by index.
 
 begin;
-select plan(44);
+select plan(48);
 
 insert into public.allowlist (email) values
   ('se1@gmail.com'), ('se2@gmail.com'), ('sex@gmail.com');
@@ -359,6 +359,80 @@ select is( (select count(*)::int from public.search_tracks('100%', 50)), 0,
            'a percent sign is a literal, not a wildcard' );
 select is( (select count(*)::int from public.search_tracks('mocha', 1)), 1,
            'the limit is honoured' );
+
+-- ====================================================================
+-- ONE ROW PER RECORDING (migration 34)
+--
+-- THE BUG THIS FILE SHIPPED WITH. Migration 32 projected pool_tracks,
+-- which is one row per FILE despite its name, so a pair the matcher had
+-- already merged came back as two results with the same title, key and
+-- BPM. The owner hit it the day search shipped, searching "four tet" and
+-- getting three recordings twice each. Nothing was wrong with the matcher
+-- and nothing was wrong with the data — the projection was wrong.
+--
+-- Every assertion above this line runs on TRACKLESS files, which is the
+-- other half of the predicate and the half that must not regress: a file
+-- the backstop has not reached yet is still a real, searchable upload.
+-- ====================================================================
+-- The fixture is written as the owner of the tables. Line 175 left this
+-- session as `authenticated` and every assertion below needs it back, so
+-- each write in this section is bracketed rather than the role being reset
+-- once at the top.
+reset role;
+insert into public.files
+  (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state,
+   created_at)
+values
+  -- The FLAC the merge preferred, and the m4a re-encode of it. Same name
+  -- on purpose: this is the shape the owner reported.
+  ('00000000-0000-0000-0000-00000000aed7','00000000-0000-0000-0000-00000000aeba',
+   '00000000-0000-0000-0000-00000000ae01','audio/ae01/d7.flac',
+   'Twinsville - Echo Chamber.flac', 40000000, 'flac', 'stored',
+   now() - interval '2 days'),
+  ('00000000-0000-0000-0000-00000000aed8','00000000-0000-0000-0000-00000000aeba',
+   '00000000-0000-0000-0000-00000000ae01','audio/ae01/d8.m4a',
+   'Twinsville - Echo Chamber.m4a', 9000000, 'm4a', 'stored',
+   now() - interval '1 day');
+
+insert into public.audio_analysis
+  (file_id, analysis_version, duration_ms, bpm, key_camelot, quality_tier, raw_tags)
+values
+  ('00000000-0000-0000-0000-00000000aed7','v1',300000,124.0,'4A',5,
+   '{"artist":"Twinsville","title":"Echo Chamber"}'::jsonb),
+  ('00000000-0000-0000-0000-00000000aed8','v1',300000,124.0,'4A',3,
+   '{"artist":"Twinsville","title":"Echo Chamber"}'::jsonb);
+
+insert into public.tracks (id, preferred_file_id)
+values ('00000000-0000-0000-0000-00000000ad01',
+        '00000000-0000-0000-0000-00000000aed7');
+update public.files set track_id = '00000000-0000-0000-0000-00000000ad01'
+ where id in ('00000000-0000-0000-0000-00000000aed7',
+              '00000000-0000-0000-0000-00000000aed8');
+set local role authenticated;
+
+select is( (select count(*)::int from public.search_tracks('twinsville', 50)), 1,
+           'a merged pair is ONE search result, not two — the defect the owner reported' );
+select is( (select s.file_id from public.search_tracks('twinsville', 50) s),
+           '00000000-0000-0000-0000-00000000aed7'::uuid,
+           '...and the row is the track''s preferred file, not whichever sorted first' );
+
+-- The preferred file is tombstoned (migration 33 re-elects, but a search
+-- must never depend on that having run). The recording still has a live
+-- encode and must still be findable, through the newest-stored fallback.
+reset role;
+update public.files set state = 'deleted'
+ where id = '00000000-0000-0000-0000-00000000aed7';
+set local role authenticated;
+select is( (select s.file_id from public.search_tracks('twinsville', 50) s),
+           '00000000-0000-0000-0000-00000000aed8'::uuid,
+           'when the preferred file is no longer stored the newest stored one is the face' );
+
+reset role;
+update public.files set track_id = null
+ where id = '00000000-0000-0000-0000-00000000aed8';
+set local role authenticated;
+select is( (select count(*)::int from public.search_tracks('twinsville', 50)), 1,
+           'a stored file with no track yet is still searchable — the backstop may be an hour behind it' );
 
 select * from finish();
 rollback;

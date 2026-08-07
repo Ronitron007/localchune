@@ -1,5 +1,5 @@
 begin;
-select plan(40);
+select plan(41);
 
 -- allowlist BEFORE auth.users: the on_auth_user_created trigger aborts
 -- otherwise, and it provisions public.members itself.
@@ -78,8 +78,22 @@ select has_table('public','track_merges','track_merges exists');
 select has_table('public','dedup_config','dedup_config exists');
 
 -- ---------- the backfill, and the pair that must not collapse ----------
+-- MIGRATION 34 NARROWED THIS FUNCTION and the first assertion is the whole
+-- reason. The seeder used to mint a track for every trackless stored file,
+-- which quietly removed it from dedup_pending() — so on any backlog past
+-- the backstop Worker's 300-file cap the seeder erased the matcher's work
+-- list and those files were never examined by anything. 690 production
+-- files were lost to it on 2026-07-29. It may now only touch a file the
+-- matcher can NEVER match.
+select is(public.dedup_seed_tracks(100), 0,
+          'seeding refuses a stored file that still has a fingerprint — that file belongs to the matcher');
+
+delete from public.fingerprints
+ where file_id in ('00000000-0000-0000-0000-00000000f001',
+                   '00000000-0000-0000-0000-00000000f002');
+
 select is(public.dedup_seed_tracks(100), 2,
-          'seeding mints one track for each of the two stored files, and none for the received one');
+          'without a fingerprint they are unmatchable, and seeding is what gives them an identity — none for the received one');
 
 select is((select f.track_id is null from public.files f
             where f.id = '00000000-0000-0000-0000-00000000f003'), true,

@@ -196,20 +196,64 @@ describe('dedupSweep', () => {
     expect(seen.filter((f) => f === 'dedup_resolve')).toHaveLength(2)
   })
 
-  it('stops when a page makes no progress instead of re-reading it forever', async () => {
-    // A file with no fingerprint can never be assigned a track, so
-    // dedup_pending returns it again on the next call — and again, and
-    // again. The seed below is what finally gives those rows an identity.
+  it('stamps a file it cannot match, so the page drains instead of repeating', async () => {
+    // A file with no fingerprint can never be matched. Before migration 34
+    // it also stayed trackless, so dedup_pending returned it again on the
+    // next call — and again — and the only thing that stopped the re-read
+    // was the "no progress" break. It is now STAMPED like any other
+    // completed probe, which is what actually takes it out of the queue.
+    const pages = [[{ file_id: 'f1', algo_version: 'v' }], []]
+    const marked: string[][] = []
     const { seen } = router({
-      dedup_pending: () => [{ file_id: 'f1', algo_version: 'v' }],
+      dedup_pending: () => pages.shift() ?? [],
       dedup_probe: () => [],
+      dedup_mark_probed: (b) => { marked.push(b.p_file_ids as string[]); return 1 },
       dedup_seed_tracks: () => 1,
     })
 
     await dedupSweep(fakeEnv())
 
-    expect(seen.filter((f) => f === 'dedup_pending')).toHaveLength(1)
+    expect(marked).toEqual([['f1']])
     expect(seen).toContain('dedup_seed_tracks')
+  })
+
+  it('stops when every file in a page throws', async () => {
+    // The only remaining meaning of "no progress": nothing in this page
+    // got an answer, so nothing is stamped and re-reading it would spend
+    // the whole run rediscovering the same outage.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { seen } = router({
+      dedup_pending: () => [{ file_id: 'f1', algo_version: 'v' }],
+      dedup_probe: () => { throw new Error('db down') },
+      dedup_seed_tracks: () => 0,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(seen.filter((f) => f === 'dedup_pending')).toHaveLength(2) // the page, then the backlog probe
+    expect(seen).not.toContain('dedup_mark_probed')
+    errorSpy.mockRestore()
+  })
+
+  it('stops when the stamp itself fails — an unadvanceable page is not worth re-sweeping', async () => {
+    // The stamp is the only thing that moves the work list. If it fails,
+    // continuing re-reads the identical page and re-runs the same offset
+    // sweeps until the per-run cap, for an answer already computed.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { seen } = router({
+      dedup_pending: () => [{ file_id: 'f1', algo_version: 'v' }],
+      dedup_probe: () => [FP],
+      dedup_candidates: () => [],
+      dedup_resolve: () => ({ ok: true, action: 'no_match', track_id: 't1' }),
+      dedup_mark_probed: () => { throw new Error('stamp down') },
+      dedup_seed_tracks: () => 0,
+    })
+
+    await dedupSweep(fakeEnv())
+
+    expect(seen.filter((f) => f === 'dedup_resolve')).toHaveLength(1)
+    expect(errorSpy.mock.calls.flat().join(' ')).toMatch(/ALARM/)
+    errorSpy.mockRestore()
   })
 
   it('keeps going when one file throws — the rest of the page still runs', async () => {
