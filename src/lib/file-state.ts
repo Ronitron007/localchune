@@ -27,7 +27,15 @@ export const TERMINAL_FAILED_STATES = new Set([
   'failed', 'abandoned', 'quarantined', 'rejected_duration', 'rejected_redundant',
 ])
 
-/** A failure this uploader can fix by dropping the file again. */
+/**
+ * A failure this uploader can fix by dropping the file again.
+ *
+ * 'deleted' is deliberately NOT here. It is not a failure and there is
+ * nothing to retry — the member asked for it, and offering "try again"
+ * beside it would read as an invitation to undo something that cannot be
+ * undone. Dropping the same file again is an ordinary new upload, which
+ * the dropzone already handles.
+ */
 export const RETRYABLE_STATES = new Set(['failed', 'abandoned'])
 
 export const FAILURE_EXPLAIN: Record<string, string> = {
@@ -36,6 +44,12 @@ export const FAILURE_EXPLAIN: Record<string, string> = {
   rejected_duration: 'Longer than the 15-minute limit.',
   rejected_redundant: 'The pool already has this recording at equal or better quality.',
   quarantined: 'Held back: the file is not what its container claims to be.',
+  // Migration 33. NOT a failure, and the wording says so: this is the one
+  // terminal state the member chose. my_files() keeps returning the row on
+  // purpose (it is the only surface that still shows it) so /uploads can
+  // account for a file that used to be in the pool and no longer is —
+  // silently dropping it would look like data loss.
+  deleted: 'You deleted this upload. The file is gone for everyone.',
 }
 
 /** The short label for any state this app can show — terminal or not. */

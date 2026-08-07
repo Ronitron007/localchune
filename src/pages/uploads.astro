@@ -59,12 +59,21 @@ const added = (iso: string) => new Date(iso).toISOString().slice(0, 10)
               return (
                 <tr class={`filerow ${f.state}`}>
                   <td class="name">
-                    {/* Every row links, regardless of state -- pool_get's
+                    {/* Every row links EXCEPT a tombstone -- pool_get's
                         own-uploader-any-state path (migration 16b) means
                         /track/[id] always has something to render for the
                         uploader, even a bare state chip and last_error for
-                        a file that never finished analysis. */}
-                    <a href={`/track/${f.file_id}`}>{f.original_filename}</a>
+                        a file that never finished analysis.
+
+                        Migration 33 carved the one exception out of that
+                        clause on purpose: pool_get excludes 'deleted'
+                        OUTSIDE the own-uploader group, so /track/<id> now
+                        404s for the person who deleted it too. Linking
+                        anyway would send them from the only page that
+                        still remembers the file straight into a 404. */}
+                    {f.state === 'deleted'
+                      ? <span class="gonename">{f.original_filename}</span>
+                      : <a href={`/track/${f.file_id}`}>{f.original_filename}</a>}
                   </td>
                   <td>
                     <span class="statechip">{stateLabel(f.state)}</span>

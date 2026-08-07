@@ -5,8 +5,34 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-  POOL_VISIBLE_STATES, NON_TERMINAL_LABEL, TERMINAL_FAILED_STATES, explainLastError,
+  POOL_VISIBLE_STATES, NON_TERMINAL_LABEL, TERMINAL_FAILED_STATES, FAILURE_EXPLAIN,
+  RETRYABLE_STATES, explainLastError, stateLabel,
 } from './file-state'
+
+// Migration 33's terminal state. The two properties that matter here are
+// both about what 'deleted' must NOT be mistaken for.
+describe("the 'deleted' state", () => {
+  it('is never pool-visible — the object is gone, so no route may presign it', () => {
+    expect(POOL_VISIBLE_STATES.has('deleted')).toBe(false)
+  })
+
+  it('is not a FAILURE — it is the one terminal state the member chose', () => {
+    expect(TERMINAL_FAILED_STATES.has('deleted')).toBe(false)
+  })
+
+  it('is not retryable — "try again" beside it would invite an undo that cannot happen', () => {
+    expect(RETRYABLE_STATES.has('deleted')).toBe(false)
+  })
+
+  it('has copy that says who did it, for /uploads', () => {
+    expect(FAILURE_EXPLAIN.deleted).toBe('You deleted this upload. The file is gone for everyone.')
+    expect(stateLabel('deleted')).toBe(FAILURE_EXPLAIN.deleted)
+  })
+
+  it('never falls through to the raw state name', () => {
+    expect(stateLabel('deleted')).not.toBe('deleted')
+  })
+})
 
 describe('POOL_VISIBLE_STATES', () => {
   // Final-review finding F1: src/pages/api/track/[id]/download.ts and

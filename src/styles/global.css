@@ -1382,6 +1382,12 @@ body.queueopen .uploadchip-slot {
 .myfiles-batch h2 { font-weight: normal; color: var(--mid); }
 .statechip { border: 1px solid var(--line); padding: 0 0.35em; display: inline-block; }
 .statebanner { margin: var(--pad-1) 0 var(--pad-2); }
+/* /uploads only: the filename of a file the member deleted. It is the one
+   row that does NOT link — /track/<id> 404s for a tombstone, uploader
+   included (migration 33) — so it must not look like a link either.
+   Struck through and dimmed says "this was yours and it is gone" without
+   needing a second line of copy. */
+.gonename { color: var(--mid); text-decoration: line-through; }
 .tags { margin-left: 0.5em; }
 .tagchip {
   border: 1px solid var(--faint);
