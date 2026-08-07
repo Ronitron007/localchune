@@ -1349,20 +1349,99 @@ img.art {
    full-width fixed element, and anchoring the drawer to it keeps ONE layout
    to reason about instead of a phone reflow and a desktop side panel.
 
-   60vh so a 25-row queue never eats a phone screen. */
+   60vh so a 25-row queue never eats a phone screen.
+
+   A COLUMN, AND THE SECTIONS ARE THE SCROLLER — not the drawer. This was
+   `overflow-y: auto` on the drawer itself until the grab handle landed,
+   and a panel that scrolls takes its own handle out of reach with it: at
+   row 20 of a queue the handle would be twenty rows above the top of the
+   screen. Same argument, same fix, same shape as `.sheet-list` (see the
+   note above it). It is also what makes the swipe-down honest — the
+   gesture asks the scroller "are you at your top", and the answer has to
+   come from the thing that actually scrolls.
+
+   THE TRANSFORM IS THE DISMISS GESTURE'S. `--drag-y` is written by
+   src/scripts/drag-dismiss.ts, exactly as it is on `.sheet-panel`, and the
+   default of 0px is the resting open state. */
 .queuedrawer {
   position: absolute;
   bottom: 100%;
   left: 0;
   right: 0;
+  display: flex;
+  flex-direction: column;
   max-height: 60vh;
-  overflow-y: auto;
   background: var(--bg);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: var(--pad-1) var(--pad-2);
+  --drag-y: 0px;
+  transform: translate3d(0, var(--drag-y), 0);
+  transition: transform var(--dur-panel) var(--ease-panel);
+  /* `touch-action: none` IS THE GESTURE, not a polish pass, and it was
+     measured: without it a downward drag on the handle moved the drawer
+     eleven pixels and then stopped dead. The browser decides a vertical
+     touch is a SCROLL before our pointermove is heard, takes the gesture,
+     and fires `pointercancel` — so the drag ends with dy≈11 and nothing
+     dismisses. `.queuerow-drag` already carries this line for exactly the
+     same reason on exactly the same axis.
+     The action sheet needs no such declaration and that is not an
+     inconsistency: it locks body scroll while it is up, so there is
+     nothing behind it for the browser to pan and no scroll to steal the
+     gesture. This drawer's whole point is that the page behind it is still
+     live. The list below opts back in. */
+  touch-action: none;
+}
+/* THE `[hidden]` DEFEAT, FOR THE SIXTH TIME IN THIS FILE — and this one was
+   caught by a frame-by-frame measurement rather than by reading, which is
+   the only reason it is not shipping. `display: flex` above is an AUTHOR
+   rule and it beats the UA sheet's `[hidden] { display: none }`, so the
+   drawer that had just been dismissed stayed on screen and animated
+   smoothly back UP to its open position while `drawer.hidden` was true —
+   every assertion about `hidden` passing, the drawer visibly still there.
+   `.queuedrawer[hidden]` (0,2,0) out-specifies `.queuedrawer` (0,1,0) and
+   is declared on the CLASS, once, exactly as `.likeform[hidden]` and
+   `.queueadd[hidden]` are. */
+.queuedrawer[hidden] { display: none; }
+
+/* THE TWO OFF-SCREEN STATES, and they are the same offset written from two
+   directions: `entering` is where the drawer comes FROM on open, `closing`
+   is where it goes TO on dismiss. 100% is the drawer's own height, which
+   only clears its own box — the player bar is still below it — so the bar's
+   height and the home-indicator inset are added, and the drawer ends fully
+   off the bottom of the viewport either way.
+
+   site.ts removes `entering` on the second animation frame and drops
+   `closing` when the exit timer fires; under prefers-reduced-motion the
+   global block flattens the transition and site.ts short-circuits the same
+   timer to 0ms, so neither state is ever visible for longer than a frame. */
+.queuedrawer[data-entering='true'],
+.queuedrawer[data-closing='true'] {
+  --drag-y: calc(100% + var(--bar-h) + env(safe-area-inset-bottom));
+}
+/* The drawer's own scroller. `overscroll-behavior: contain` for the reason
+   `.sheet-list` carries it: a drag that reaches the end of this list must
+   not hand the rest of the gesture to the page behind the player bar. */
+.queuesections {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* THE LIST SCROLLS AND NEVER DISMISSES, and that is the deliberate half
+     of the drawer's `touch-action: none` above. `pan-y` hands vertical
+     touches back to the browser inside this box, so a finger on a queue row
+     scrolls the queue — including at scrollTop 0, where the gesture is
+     contained rather than turned into a dismissal.
+     It is the safer of the two readings the brief allowed. A member
+     scrolling a 25-row queue makes that gesture constantly; a member
+     dismissing makes it once, from a handle that exists to be dragged. A
+     list that sometimes throws the queue away is the worse trade even when
+     it is only "sometimes". */
+  touch-action: pan-y;
 }
 .queuedrawer-head {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2304,15 +2383,36 @@ dd { margin: 0; overflow-wrap: anywhere; }
   --drag-y: 100%;
   transform: translate3d(0, var(--drag-y), 0);
   transition: transform var(--dur-panel) var(--ease-panel);
+  /* THE SWIPE-DOWN WAS DEAD, AND HAD BEEN SINCE IT SHIPPED. Measured on
+     unmodified main with real touch events: `pointerdown`, ONE
+     `pointermove`, then `pointercancel` — the browser decided the vertical
+     touch was a scroll and took the gesture before the second sample. The
+     panel never moved and the sheet never closed; the drag code was
+     correct and simply never got to run.
+     Found while giving the queue drawer the same gesture, which failed
+     the same way for the same reason. It is one line on each panel, and
+     it is the line the UI study's drawer recipe names. */
+  touch-action: none;
 }
 .sheet.is-open .sheet-panel { --drag-y: 0px; }
 /* While a finger drives it, the transform is the finger's — a transition
-   here would fight the drag and lag behind it. */
-.sheet-panel[data-dragging='true'] { transition: none; }
+   here would fight the drag and lag behind it.
+   BOTH PANELS, ONE RULE: src/scripts/drag-dismiss.ts writes this attribute
+   and `--drag-y` on whatever panel it was given, so the queue drawer needs
+   no declaration of its own beyond joining this selector list. */
+.sheet-panel[data-dragging='true'],
+.queuedrawer[data-dragging='true'] { transition: none; }
 
 /* 36x4, centred, with a 44px hit box from the ::after. The bar is the
-   affordance; the target is the whole strip above the header. */
-.sheet-handle {
+   affordance; the target is the whole strip above the header.
+
+   ONE CLASS, TWO PANELS. The queue drawer wears this exact bar — the owner
+   asked for the drawer to behave "like the drawer component of add to
+   crate", and a handle that is 36x4 on one panel and 32x3 on the other is
+   the same divergence in miniature. site.ts writes `grabhandle` onto the
+   sheet's button and Shell.astro types it on the drawer's; nothing
+   declares a second recipe. */
+.grabhandle {
   position: relative;
   align-self: center;
   flex: none;
@@ -2333,7 +2433,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   background: var(--ink-35);
   cursor: pointer;
 }
-.sheet-handle::after {
+.grabhandle::after {
   content: '';
   position: absolute;
   top: 50%;
@@ -2365,6 +2465,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  /* Opts back in to what the panel above turned off, so a long menu and a
+     modal's form still scroll under a finger. Identical to
+     `.queuesections` — the two panels answer this question once. */
+  touch-action: pan-y;
 }
 
 /* THE MODAL VARIANT — the same panel with a form in it instead of a list

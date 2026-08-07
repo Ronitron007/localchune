@@ -107,7 +107,19 @@ describe('the drag library is in a chunk of its own', () => {
     // regression it catches is enormous by comparison: a static import puts
     // the library's 30,171 B back in this chunk, which no plausible amount of
     // ordinary growth reaches first.
-    expect(entry.length).toBeLessThan(92_000)
+    //
+    // RAISED FROM 92,000 TO 96,000 ON 2026-08-07, and the honest reason is
+    // that this measures esbuild's UNMINIFIED output, where a comment is a
+    // byte. The queue drawer's swipe-down added src/scripts/drag-dismiss.ts
+    // (+2,851 B here: 89,183 -> 92,034) and almost all of that is prose —
+    // the module is ~60 lines of code under a header explaining why the
+    // gesture has one implementation instead of two. The production bundle
+    // is minified and comments cost nothing in it.
+    //
+    // The tripwire still trips: 92,034 + the library's 30,171 = 122,205,
+    // which clears 96,000 by 26 KB. If this ever needs raising a THIRD
+    // time, measure the minified size instead of moving the line again.
+    expect(entry.length).toBeLessThan(96_000)
   })
 
   it('the lazy chunk really is the whole library, not a stub', () => {
