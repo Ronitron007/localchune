@@ -9,9 +9,14 @@ import {
   type FileSystemEntryLike, type FileEntryLike,
 } from '../lib/dir-walk'
 import {
-  batchStarted, cancel, configureEngine, enqueue, retryAllFailed, retryRow,
-  startBatch, startFresh,
+  batchStarted, cancel, configureEngine, enqueue, removable, removeRow,
+  retryAllFailed, retryRow, startBatch, startFresh,
 } from '../lib/upload-engine'
+// The ✕ is drawn, not typed. src/lib/icons.ts is the Phase-1 set and the one
+// place a glyph's geometry lives; a `✕` character here would render as emoji
+// on iOS (the defect control-glyphs.test.ts was written for) and could not be
+// given a 44px hit box or a colour independent of its row.
+import { renderGlyph } from '../lib/icons'
 import {
   setUploadLabel, setUploadNotice, uploadLabel, uploadNotice, uploadRows, uploadRunning,
 } from '../lib/upload-store'
@@ -296,6 +301,50 @@ export default function UploadDropzone(props: { userId: string }) {
               {' '}
               <button type="button" class="btn-secondary" disabled={uploadRunning()} onClick={() => void retryRow(row.key)}>
                 Retry
+              </button>
+            </Show>
+            {/* THE ✕, AND THE THREE DECISIONS IN IT.
+                1. `removable(row.status)` is the SAME predicate removeRow
+                   enforces, imported rather than restated — a control that
+                   renders in a state the engine would refuse is a button
+                   that does nothing when pressed.
+                2. NOT disabled by `uploadRunning()`, unlike Retry beside it.
+                   Mid-batch eviction of a file that has not started yet is
+                   half the feature; the in-flight row is protected by
+                   `removable` returning false for 'uploading', not by
+                   switching the whole column off.
+                3. The name is on the BUTTON. <Icon> is always
+                   aria-hidden, so an icon-only control with no aria-label
+                   is announced as "button" and nothing else — and with 551
+                   rows on screen, "which one" is the entire question.
+                The <svg> is written out rather than reusing Icon.astro,
+                which cannot be called from a Solid component; `renderGlyph`
+                keeps the GEOMETRY single-sourced, which is the part that
+                matters. It carries no `focusable="false"` where Icon.astro
+                does, and that is Solid's typings rather than a decision:
+                `focusable` is an SVG 1.1 attribute SvgSVGAttributes never
+                adopted, and `attr:focusable` is not typed for SVG elements
+                either. It costs nothing — the attribute only ever mattered
+                to IE11 and legacy Edge, which put an inline <svg> in the tab
+                order, and neither runs an app built on ClientRouter, Solid
+                and IndexedDB. */}
+            <Show when={removable(row.status)}>
+              <button
+                type="button"
+                class="rowremove"
+                title="Remove from the queue"
+                aria-label={`Remove ${row.name} from the queue`}
+                onClick={() => void removeRow(row.key)}
+              >
+                <svg
+                  class="icon"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                  innerHTML={renderGlyph('close')}
+                />
               </button>
             </Show>
           </li>

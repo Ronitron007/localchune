@@ -1618,6 +1618,54 @@ body.queueopen .uploadchip-slot {
   gap: var(--pad-1) var(--pad-2);
   padding: calc(var(--pad-1) / 2) 0;
 }
+/* The ✕ that takes ONE file out of the queue. Icon-only, ghost, 44px —
+   the same recipe as .navsearch/.navmenu-btn, which is deliberate: this is
+   the app's second icon-only control and it should not invent a third
+   shape.
+
+   `align-self: center` because the row is `align-items: baseline`. A button
+   whose only child is an <svg> has no text baseline, so a baseline-aligned
+   flex item falls back to its bottom margin edge — the 44px box would hang
+   below the name it belongs to and drag the row's height with it.
+
+   `margin-left: auto` puts it at the trailing edge whatever else the row is
+   showing, so the target does not move as a message grows from "queued" to
+   "reading header…" to a 60-character R2 error. NOTE for the /upload
+   restyle (plan 3.7, not yet run): the row still wraps at 375px, so on a
+   long filename this lands at the bottom-right of a three-line block. That
+   is the row's existing wrap behaviour (ui-audit item 15), not something
+   this control introduced, and it is the restyle's to fix.
+
+   The 44px is a real change to this page: rows that had no control were as
+   short as their text, and now every removable row is --tap tall. That is
+   the floor doing its job — the Retry button beside it has computed to 44px
+   since the token landed. */
+.rows li.row .rowremove {
+  margin-left: auto;
+  align-self: center;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-55);
+  cursor: pointer;
+  /* Colour only. Nothing moves, so the global prefers-reduced-motion block
+     has nothing here it needs to switch off — it switches it off anyway,
+     which is correct and costs nothing. */
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.rows li.row .rowremove:hover,
+.rows li.row .rowremove:active {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
 .ticker > * + * { margin-top: var(--pad-2); }
 .ticker li.filerow {
   display: flex;
