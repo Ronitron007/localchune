@@ -49,18 +49,19 @@
  * which is why the icon set exists. Every control here draws an SVG from
  * icons.ts. The one apparent exception is the play triangle, which is drawn
  * by `a.play`'s CSS pseudo-elements (global.css) and is not a character
- * either. The ♥ inside the hidden like form is never painted — it exists
+ * either. The like heart inside the hidden like form is never painted — it exists
  * only so site.ts's delegation has the node it expects to update.
  */
 
 import { debounce } from './debounce'
-import { renderGlyph, type IconName } from './icons'
+import { iconEl } from './icons'
 import { nextFocusIndex } from './sheet'
 import { SessionExpiredError } from './org-api'
 import {
   fetchSearch, isAbortError, isSearchable, type SearchResult,
 } from './search-api'
-import { artThumb2xUrl, artThumbUrl, formatBpm, keyTooltip } from './track-format'
+import { artistHref } from './pool-api'
+import { artThumb2xUrl, artThumbUrl, formatBpm, keyTooltip, LIKE_ICON } from './track-format'
 import { formatDuration } from './format'
 
 /**
@@ -72,21 +73,6 @@ import { formatDuration } from './format'
 export const DEBOUNCE_MS = 150
 
 const ART_BASE = import.meta.env.PUBLIC_ART_BASE_URL
-
-function svgIcon(name: IconName, size = 20): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 24 24')
-  svg.setAttribute('width', String(size))
-  svg.setAttribute('height', String(size))
-  svg.setAttribute('fill', 'none')
-  // aria-hidden always: the accessible name belongs to the CONTROL, never
-  // to the glyph — the same rule site.ts's sheet rows follow.
-  svg.setAttribute('aria-hidden', 'true')
-  svg.setAttribute('focusable', 'false')
-  svg.classList.add('icon')
-  svg.innerHTML = renderGlyph(name, { small: size <= 14 })
-  return svg
-}
 
 const el = <K extends keyof HTMLElementTagNameMap>(
   tag: K, className?: string, text?: string,
@@ -152,7 +138,17 @@ function rowEl(r: SearchResult): HTMLElement {
   const titleLink = el('a', 'searchrow-title', r.display_title)
   titleLink.href = `/track/${r.file_id}`
   text.appendChild(titleLink)
-  text.appendChild(el('span', 'searchrow-artist', artist))
+  // The artist line links to the act's page, exactly as the pool row's
+  // artist cell and the player bar's second line do. `artistHref` is the
+  // one place that knows how an artist page is addressed — see pool-api.
+  // Plain text when there is no artist: "Unknown artist" has no page.
+  if (r.display_artist === null) {
+    text.appendChild(el('span', 'searchrow-artist', artist))
+  } else {
+    const artistLink = el('a', 'searchrow-artist', artist)
+    artistLink.href = artistHref(r.display_artist)
+    text.appendChild(artistLink)
+  }
   row.appendChild(text)
 
   // ---- the chips a DJ scans. These class names are ALSO what
@@ -183,7 +179,7 @@ function rowEl(r: SearchResult): HTMLElement {
   menu.type = 'button'
   menu.setAttribute('aria-haspopup', 'dialog')
   menu.setAttribute('aria-label', `More actions for ${r.display_title}`)
-  menu.appendChild(svgIcon('kebab', 20))
+  menu.appendChild(iconEl('kebab', { size: 20 }))
   row.appendChild(menu)
 
   // ---- the controls the sheet clicks. Hidden, never removed. --------
@@ -213,8 +209,13 @@ function rowEl(r: SearchResult): HTMLElement {
   // on an already-liked track gets the toggle's real answer back.
   likebtn.setAttribute('aria-pressed', 'false')
   likebtn.setAttribute('aria-label', `Like ${r.display_title}`)
-  const glyph = el('span', 'likeglyph', '♡')
-  glyph.setAttribute('aria-hidden', 'true')
+  // The same icon the four rendered surfaces use, not a character. This
+  // form is hidden — it exists so site.ts's like delegation has the nodes
+  // it expects — but site.ts REPAINTS this glyph on every toggle, so
+  // seeding it with anything else would put a stale character in the DOM
+  // waiting for a stylesheet change to reveal it.
+  const glyph = el('span', 'likeglyph')
+  glyph.appendChild(iconEl(LIKE_ICON.name, { size: LIKE_ICON.size }))
   likebtn.appendChild(glyph)
   likebtn.appendChild(el('span', 'likecount', ''))
   likeform.appendChild(likebtn)
@@ -257,7 +258,7 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
 
   // ---- the input bar ------------------------------------------------
   const bar = el('div', 'searchoverlay-bar')
-  const leading = svgIcon('search', 20)
+  const leading = iconEl('search', { size: 20 })
   leading.classList.add('searchoverlay-leading')
   bar.appendChild(leading)
 
@@ -277,7 +278,7 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
   const closeBtn = el('button', 'searchoverlay-close')
   closeBtn.type = 'button'
   closeBtn.setAttribute('aria-label', 'Close search')
-  closeBtn.appendChild(svgIcon('close', 20))
+  closeBtn.appendChild(iconEl('close', { size: 20 }))
   bar.appendChild(closeBtn)
   panel.appendChild(bar)
 

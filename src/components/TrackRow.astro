@@ -22,11 +22,13 @@
 // `controls` slot lets the crate page append one trailing <td> (↑ ↓ ✕)
 // without this component knowing anything about crates — it renders
 // nothing when the caller passes no slotted content.
+import Icon from './Icon.astro'
 import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
-import { artThumb2xUrl, artThumbUrl, formatBpm } from '../lib/track-format'
+import RowMenu from './RowMenu.astro'
+import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
-import type { PoolTrack } from '../lib/pool-api'
+import { artistHref, type PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack; reorderable?: boolean }
 const { track, reorderable = false } = Astro.props
@@ -105,31 +107,59 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       control it always did, because the CSS that hides them is scoped to
       the JS-only case (see .rowmenu in global.css).
 
-      A text glyph, not the icon set. `⋮` is three bytes; the kebab SVG is
-      ~300, which is 30 KB on a hundred-row page for a shape the character
-      already draws. The icons in the SHEET are free by comparison —
-      site.ts builds those once, at open. */}
+      THE BYTE BUDGET THAT KEPT THESE AS CHARACTERS WAS MEASURED ON THE
+      WRONG AXIS. The note this replaces said `⋮` is three bytes against
+      the kebab SVG's ~300, so a hundred rows cost 30 KB. The arithmetic
+      was right and the axis was wrong: a hundred rows serialise a hundred
+      BYTE-IDENTICAL copies, and DEFLATE emits the second through the
+      hundredth as back-references.
+
+      MEASURED, both states, real container renders of track-row.test.ts's
+      own "realistic strings" fixture:
+
+                          raw/row   100 rows raw   100 rows GZIPPED
+        before (glyphs)     2,742        274 KB           2,585 B
+        after  (icons)      4,155        416 KB           3,968 B
+                          -------   ------------      -----------
+                          +1,413        +142 KB          +1,383 B
+
+      142 KB of raw growth costs 1.4 KB on the wire — ONE PERCENT of it.
+      The old note predicted 30 KB and was out by a factor of twenty, for
+      the single reason that it counted a byte a hundred times that the
+      compressor sends once.
+
+      1.4 KB is a real cost and it is worth paying here: the owner's
+      directive is that no control draws itself with a character, and
+      `queue-add` was written for this button — icons.ts says so in as
+      many words ("Replaces the `+Q` text control"). track-row.test.ts
+      guards the GZIPPED number as well as the raw one now, so the next
+      person to weigh markup against bytes weighs the right ones. */}
   <td class="controls">
     <button
       type="button"
-      class="queueadd btn-secondary"
+      class="queueadd btn-secondary btn-icon"
       hidden
       data-file-id={track.file_id}
       aria-label={`Add ${track.display_title} to the queue`}
-    >+Q</button>
-    <button
-      type="button"
-      class="rowmenu"
-      hidden
-      aria-haspopup="dialog"
-      aria-label={`More actions for ${track.display_title}`}
-    >⋮</button>
+    ><Icon name="queue-add" size={16} /></button>
+    <RowMenu title={track.display_title} />
   </td>
   {/* Task 8: artist and title are now independent columns — each still
       links to the track page, and the tag chips move to the title cell
       (they describe the track, not the artist). */}
+  {/* THE ARTIST CELL POINTS AT THE ARTIST. It linked to the TRACK page —
+      the same destination as the title cell beside it, so the row had two
+      adjacent links that did the same thing and no way to reach an act's
+      other tracks at all.
+
+      Only when there IS one: `display_artist` is null for a file whose
+      tags failed and whose filename would not split, and TrackRow shows
+      "Unknown artist" for that. There is no page for it — it is not one
+      artist, it is every failure — so the fallback stays plain text. */}
   <td class="artist">
-    <a href={`/track/${track.file_id}`}>{artist}</a>
+    {track.display_artist === null
+      ? artist
+      : <a href={artistHref(track.display_artist)}>{artist}</a>}
   </td>
   <td class="title">
     <a href={`/track/${track.file_id}`}>{track.display_title}</a>
@@ -173,12 +203,12 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
         data-file-id={track.file_id}
         aria-pressed={track.liked_by_me ? 'true' : 'false'}
         aria-label={`${track.liked_by_me ? 'Unlike' : 'Like'} ${track.display_title}`}
-      ><span class="likeglyph" aria-hidden="true">{track.liked_by_me ? '♥' : '♡'}</span> <span class="likecount">{track.like_count}</span></button>
+      ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} filled={track.liked_by_me} /></span> <span class="likecount">{track.like_count}</span></button>
     </form>
   </td>
   <td class="plays num">{track.play_count}</td>
   <td class="download">
-    <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}>↓</a>
+    <a href={`/api/track/${track.file_id}/download`} aria-label={`Download ${track.display_title}`}><Icon name="download" size={20} /></a>
   </td>
   {/* Task 8: add-to-crate picker, every row, pool table and crate page
       alike — you can only add to a crate you OWN (crate_add's 42501
@@ -196,9 +226,9 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
       also `reorderable`. */}
   <td class="addcrate">
     <details class="cratepick" data-file-id={track.file_id}>
-      <summary class="btn-secondary" aria-label={`Add ${track.display_title} to a crate`}>+</summary>
+      <summary class="btn-secondary btn-icon" aria-label={`Add ${track.display_title} to a crate`}><Icon name="crate" size={16} /></summary>
       <div class="cratepick-menu">
-        <a href={`/track/${track.file_id}`}>manage on track page →</a>
+        <a href={`/track/${track.file_id}`}>manage on track page</a>
       </div>
     </details>
   </td>

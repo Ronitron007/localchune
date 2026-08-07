@@ -89,8 +89,13 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
   it('keeps both name lines inside the one aria-live region', () => {
     // survive-list #12. Not "near" it — INSIDE it, so one synchronous
     // write of both lines announces once.
+    // Sliced to the FIRST `</span>` after the region opens, which closes
+    // the region itself: both children are anchors now, so there is no
+    // nested <span> in between. It used to search for `</span></span>`,
+    // which stopped matching the moment the artist line became a link to
+    // the act's page — a false red about markup that was still correct.
     const region = shell.slice(shell.indexOf('id="player-label"'))
-    const closed = region.slice(0, region.indexOf('</span></span>') + 14)
+    const closed = region.slice(0, region.indexOf('</span>') + 7)
     expect(closed).toContain('id="player-link"')
     expect(closed).toContain('id="player-artist"')
     expect(closed).toContain('aria-live="polite"')
@@ -188,7 +193,16 @@ describe('the like button reuses the row contract rather than inventing one', ()
   )
 
   it('starts hollow at zero, the state of a bar with nothing playing', () => {
-    expect(form).toContain('♡')
+    // It used to assert the two characters ♡ and ♥. Both are gone: iOS
+    // gives U+2665 emoji presentation on its own, so the bar painted a red
+    // heart in a monochrome interface. The state is the SAME path, stroked
+    // or filled — so "hollow" is the ABSENCE of `filled`, and this file
+    // reads Shell.astro's source rather than a render, so that is what it
+    // can honestly check.
+    expect(form).toContain('likeglyph')
+    expect(form).toContain('<Icon name={LIKE_ICON.name}')
+    expect(form).not.toContain('filled')
+    expect(form).not.toContain('♡')
     expect(form).not.toContain('♥')
   })
 })

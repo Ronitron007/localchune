@@ -20,14 +20,15 @@
 // server fallback, and — since perf task 2.2 — carrying `data-file-id`
 // alone. No like toggle here on purpose — the feed is read-only; toggling
 // lives on the track page and the pool table.
+import Icon from './Icon.astro'
 import KeyChip from './KeyChip.astro'
-import { artThumb2xUrl, artThumbUrl, formatBpm } from '../lib/track-format'
-import type { PoolTrack } from '../lib/pool-api'
+import RowMenu from './RowMenu.astro'
+import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
+import { artistHref, type PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack }
 const { track } = Astro.props
 const artist = track.display_artist ?? 'Unknown artist'
-const label = `${artist} — ${track.display_title}`
 ---
 {/* data-play-row and the artwork-as-play-link: TrackRow.astro's exact
     rework, for the same owner directive and by the same mechanism. The
@@ -52,27 +53,83 @@ const label = `${artist} — ${track.display_title}`
       metadata rather than a second copy of it on the button. */}
   <button
     type="button"
-    class="queueadd btn-secondary"
+    class="queueadd btn-secondary btn-icon"
     hidden
     data-file-id={track.file_id}
     aria-label={`Add ${track.display_title} to the queue`}
-  >+Q</button>
+  ><Icon name="queue-add" size={16} /></button>
   <span class="feedrow-body">
-    <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
+    {/* TWO LINKS ON ONE LINE, not one link over a joined string. The label
+        was `${artist} — ${title}` in a single anchor pointing at the track,
+        so the artist half of every feed row was unreachable — the one
+        place a member is most likely to want an act's other tracks.
+
+        Still one visual line: `.feedrow-title` keeps the ellipsis and the
+        nowrap, and the two anchors inside it carry the underline. The
+        artist is plain text when `display_artist` is null, for the same
+        reason as TrackRow's cell — "Unknown artist" is not an artist. */}
+    <span class="feedrow-title">
+      {track.display_artist === null
+        ? artist
+        : <a href={artistHref(track.display_artist)}>{artist}</a>}
+      {' — '}
+      <a href={`/track/${track.file_id}`}>{track.display_title}</a>
+    </span>
+    {/* `key` and `bpm` ALONGSIDE the presentational classes: those are the
+        names `ROW_META` in site.ts reads to build the sheet's metadata
+        half, and they cost nothing here because both elements already
+        existed. The pool row's other six values (length, quality,
+        uploader, added, plays, downloads) are columns the feed genuinely
+        never rendered — the sheet shows what the row has, and adding
+        hidden cells purely to feed a menu would be the one thing the
+        sheet was built to avoid: bytes on every row for a panel most
+        members never open. */}
     <span class="feedrow-meta">
-      <KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} />
-      <span class="num">{formatBpm(track.bpm, track.ibi_std_ms)}</span>
-      <span class="feedrow-likes">♥ {track.like_count}</span>
+      <span class="key"><KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} /></span>
+      <span class="num bpm">{formatBpm(track.bpm, track.ibi_std_ms)}</span>
+      {/* A REAL LIKE TOGGLE where a dead ♥ and a number used to sit. The
+          count still shows, and now the control under it works — the feed
+          was the one surface that displayed a like it would not let you
+          cast. `.has-rowmenu` hides it below 640px exactly as it hides
+          `.queueadd`, because down there the ⋮ sheet is the row's whole
+          control set and the sheet shows this same count as its meta. */}
+      <form method="post" action={`/api/track/${track.file_id}/like`} class="likeform" data-astro-reload>
+        <button
+          type="submit"
+          class="likebtn"
+          data-file-id={track.file_id}
+          aria-pressed={track.liked_by_me ? 'true' : 'false'}
+          aria-label={`${track.liked_by_me ? 'Unlike' : 'Like'} ${track.display_title}`}
+        ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} filled={track.liked_by_me} /></span> <span class="likecount">{track.like_count}</span></button>
+      </form>
     </span>
   </span>
-  {/* The row menu, exactly as TrackRow.astro's — see the long note there.
-      A feed row has no metadata cells to unpack, so its sheet is the
-      action half only. Last in the DOM because it is last in the row. */}
-  <button
-    type="button"
-    class="rowmenu"
-    hidden
-    aria-haspopup="dialog"
-    aria-label={`More actions for ${track.display_title}`}
-  >⋮</button>
+  {/* ═══ THE SAME CONTROLS THE POOL ROW CARRIES ═══
+      The feed used to render a DISPLAY-ONLY like count — a ♥ character
+      and a number, no button — so its ⋮ sheet offered four rows where the
+      pool's offered six. Same component, different sheet, because the
+      sheet is built from what the row carries.
+
+      site.ts's `openRowSheet` looks for `form.likeform` and
+      `details.cratepick` on the row and adds a Like or a crate step only
+      when it finds them. Rendering them here is the whole of "the feed
+      loses its divergent variant": no branch in the sheet, no second
+      component, no feed-specific code path anywhere.
+
+      The like form is up in the meta run, visible, because the feed
+      already showed a count there. The crate picker is `hidden`: it is
+      the sheet's HANDLE rather than a control of its own — a feed row has
+      no column to put a disclosure in — and `hidden` costs it nothing,
+      because site.ts's `populateCratePickers` finds it by selector and
+      the sheet clicks its option buttons directly. Both are the REAL
+      controls, not copies, so each action keeps the one delegation that
+      already owns it. */}
+  <details class="cratepick" data-file-id={track.file_id} hidden>
+    <summary class="btn-secondary btn-icon" aria-label={`Add ${track.display_title} to a crate`}><Icon name="crate" size={16} /></summary>
+    <div class="cratepick-menu">
+      <a href={`/track/${track.file_id}`}>manage on track page</a>
+    </div>
+  </details>
+  {/* Last in the DOM because it is last in the row. */}
+  <RowMenu title={track.display_title} />
 </li>

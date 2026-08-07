@@ -27,7 +27,7 @@
 //   2. Content inserted with `set:html` is never processed by Astro's
 //      style scoper, so a scoped `.icon path { … }` rule silently matches
 //      nothing.
-import { renderGlyph, type IconName } from '../lib/icons'
+import { renderIcon, type IconName } from '../lib/icons'
 
 interface Props {
   name: IconName
@@ -44,29 +44,17 @@ interface Props {
 
 const { name, size = 16, class: className, filled = false } = Astro.props
 
-// A 2px stroke scaled to 12px is a hairline, and the set stops reading as
-// one family. `check` already declares 2.5 because a tick is mostly
-// diagonal and thins optically; renderGlyph leaves it there.
-const markup = renderGlyph(name, { small: size <= 14, filled })
+// ONE WRAPPER FOR BOTH RENDER PATHS. `renderIcon` also builds the heart
+// site.ts repaints at runtime, so emitting the <svg> from that one table
+// — rather than hand-writing the element here — is what stops a
+// server-rendered glyph and its runtime replacement from disagreeing by an
+// attribute. A 2px stroke scaled to 12px is a hairline, so renderIcon
+// thickens it under 14px; `check` already declares 2.5 and is left alone.
+const markup = renderIcon(name, { size, filled, class: className })
 ---
-<svg
-  class:list={['icon', className]}
-  width={size}
-  height={size}
-  viewBox="0 0 24 24"
-  fill="none"
-  aria-hidden="true"
-  focusable="false"
-  set:html={markup}
-/>
-<style>
-  /* vertical-align keeps a glyph on the text baseline when it sits inline
-     beside a label; a flex parent ignores it. currentColor is inherited
-     by every path in icons.ts, so an icon needs no colour rule of its own
-     — it is white in a .btn and --ink-55 in a meta run for free. */
-  .icon {
-    display: inline-block;
-    vertical-align: -0.125em;
-    flex: none;
-  }
-</style>
+<Fragment set:html={markup} />
+{/* `.icon` is a GLOBAL rule (see global.css), not a scoped style. A scoped
+    style is stamped onto elements this template renders, and the runtime
+    icons — the action sheet's rows, the search overlay, the like heart —
+    are built by icons.ts's `iconEl` instead. They carried `class="icon"`
+    with no rule behind it. One global rule serves both. */}

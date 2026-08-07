@@ -16,6 +16,7 @@ import Icon from '../components/Icon.astro'
 import SourceLink from '../components/SourceLink.astro'
 import StorageChip from '../components/StorageChip.astro'
 import UploadChip from '../components/UploadChip'
+import { LIKE_ICON } from '../lib/track-format'
 import '../styles/global.css'
 
 // Task 8: `center` is for the app's "single card" pages (currently just
@@ -115,7 +116,7 @@ const { title, center = false } = Astro.props
 
         aria-live stays on this SPAN and both lines are written inside one
         synchronous call, so a change announces once. */}
-    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><span id="player-artist" class="nowplayingartist" hidden></span></span>
+    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><a id="player-artist" class="nowplayingartist" hidden></a></span>
     {/* THE ♥, for whatever is playing.
         A REAL POST FORM in the exact shape TrackRow.astro's pool cell and
         track/[id].astro's .signals block already use — form.likeform >
@@ -136,7 +137,7 @@ const { title, center = false } = Astro.props
         clears both only once it has a real track id to point at. */}
     <form id="player-like" method="post" class="likeform playerlike" hidden data-astro-reload>
       <button type="submit" class="likebtn" data-file-id="" aria-pressed="false" aria-label="Like" disabled
-      ><span class="likeglyph" aria-hidden="true">♡</span> <span class="likecount">0</span></button>
+      ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} /></span> <span class="likecount">0</span></button>
     </form>
     {/* Hidden until site.ts unhides it: with no JS there is no queue for it
         to open, and a control that does nothing must not be visible. */}

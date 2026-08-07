@@ -5,7 +5,7 @@
 
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
-import { renderGlyph, type IconName } from '../lib/icons'
+import { iconEl } from '../lib/icons'
 import {
   classifyGesture, exitDelayMs, nextFocusIndex, normalizeRows, shouldDismiss,
   velocityPxPerMs, type SheetRow, type SheetRowInput,
@@ -14,8 +14,9 @@ import {
   addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
 import { createPlayMeter } from '../lib/play-meter'
-import { artFallback, artMediumUrl, artThumbUrl, likeActionLabel, likeGlyph, trackHref } from '../lib/track-format'
+import { artFallback, artMediumUrl, artThumbUrl, LIKE_ICON, likeActionLabel, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
+import { artistHref } from '../lib/pool-api'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
   confirmMessage, reduce, regenerate, requiresClearConfirm,
@@ -121,6 +122,12 @@ function setNowPlaying(title: string, artistName: string | null, fileId: string 
   if (artistEl === null) return
   const named = artistName !== null && artistName !== ''
   artistEl.textContent = named ? artistName : ''
+  // The artist line is a LINK now, so the bar can reach an act's page from
+  // whatever is playing. Same "no dead link" rule the title above obeys:
+  // an anchor with no href resolves to the current page, so the attribute
+  // is REMOVED between tracks rather than set to an empty string.
+  if (named) artistEl.setAttribute('href', artistHref(artistName))
+  else artistEl.removeAttribute('href')
   artistEl.hidden = !named
   if (named) label.appendChild(artistEl)
 }
@@ -160,7 +167,7 @@ function setPlayerLike(fileId: string | null, liked: boolean, count: number, tit
   btn.dataset.fileId = fileId
   btn.setAttribute('aria-pressed', String(liked))
   btn.setAttribute('aria-label', likeActionLabel(liked, title))
-  glyph.textContent = likeGlyph(liked)
+  glyph.replaceChildren(iconEl(LIKE_ICON.name, { size: LIKE_ICON.size, filled: liked }))
   countEl.textContent = String(count)
   btn.disabled = false
   likeForm.hidden = false
@@ -245,7 +252,7 @@ function clearPlayerMemory() {
 function updateToggle() {
   if (!toggle || !audio) return
   const playing = !audio.paused && !audio.ended
-  toggle.replaceChildren(svgIcon(playing ? 'pause' : 'play', 20))
+  toggle.replaceChildren(iconEl(playing ? 'pause' : 'play', { size: 20 }))
   toggle.setAttribute('aria-label', playing ? 'Pause' : 'Play')
 }
 
@@ -966,7 +973,7 @@ function renderDrawer(): void {
         // and the library has no keyboard sorting of its own.
         if (row.reorderable) {
           const grip = button('queuerow-drag', '', `Reorder ${entryTitle(row.entry)}`)
-          grip.appendChild(svgIcon('drag', 16))
+          grip.appendChild(iconEl('drag', { size: 16 }))
           grip.dataset.index = String(row.index)
           li.appendChild(grip)
         }
@@ -989,7 +996,7 @@ function renderDrawer(): void {
           const controls = document.createElement('span')
           controls.className = 'queuerow-controls'
           const rm = button('btn-secondary queuerow-remove', '', `Remove ${entryTitle(row.entry)} from the queue`)
-          rm.appendChild(svgIcon('close', 16))
+          rm.appendChild(iconEl('close', { size: 16 }))
           rm.dataset.index = String(row.index)
           controls.appendChild(rm)
           li.appendChild(controls)
@@ -1133,7 +1140,7 @@ function setDrawerOpen(open: boolean): void {
   // means `textContent =` would delete the glyph, so this replaces children
   // and re-adds the label as its own node.
   drawerToggle.replaceChildren(
-    svgIcon(open ? 'close' : 'queue', 16),
+    iconEl(open ? 'close' : 'queue', { size: 16 }),
     document.createTextNode(' QUEUE'),
   )
   drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
@@ -1654,7 +1661,9 @@ document.addEventListener('submit', (e) => {
       // glyph does — the glyph is aria-hidden and cannot carry it.
       const name = (b.getAttribute('aria-label') ?? '').replace(/^(Un)?[Ll]ike\s*/, '')
       b.setAttribute('aria-label', likeActionLabel(liked, name))
-      if (g) g.textContent = likeGlyph(liked)
+      // replaceChildren, not textContent: the heart is an <svg> now, and
+      // the state is the SAME path filled rather than a second character.
+      if (g) g.replaceChildren(iconEl(LIKE_ICON.name, { size: LIKE_ICON.size, filled: liked }))
       if (c) c.textContent = String(count)
     }
   }
@@ -2214,22 +2223,6 @@ const prefersReducedMotion = (): boolean =>
 
 let openSheet: { close: (immediate?: boolean) => void } | null = null
 
-function svgIcon(name: IconName, size = 20): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('viewBox', '0 0 24 24')
-  svg.setAttribute('width', String(size))
-  svg.setAttribute('height', String(size))
-  svg.setAttribute('fill', 'none')
-  // aria-hidden always: the accessible name belongs to the ROW, not to
-  // the glyph. The text controls this replaces are announced today, and
-  // an <svg aria-hidden> is silent.
-  svg.setAttribute('aria-hidden', 'true')
-  svg.setAttribute('focusable', 'false')
-  svg.classList.add('icon')
-  svg.innerHTML = renderGlyph(name, { small: size <= 14 })
-  return svg
-}
-
 function sheetRowEl(row: SheetRow): HTMLElement {
   const el = document.createElement(row.href ? 'a' : 'button')
   el.className = 'sheet-row'
@@ -2244,7 +2237,7 @@ function sheetRowEl(row: SheetRow): HTMLElement {
   if (row.pressed !== undefined) el.setAttribute('aria-pressed', String(row.pressed))
   el.dataset.sheetRow = row.id
 
-  if (row.icon) el.appendChild(svgIcon(row.icon))
+  if (row.icon) el.appendChild(iconEl(row.icon, { size: 20 }))
   // `labelEl`, not `label`: #player-label is the app's one aria-live
   // region and queue-wiring.test.ts guards it with a blunt text match on
   // `label.textContent =`. A local named `label` here would defeat that
@@ -2590,6 +2583,15 @@ function openRowSheet(btn: HTMLElement): void {
   const liked = likeBtn?.getAttribute('aria-pressed') === 'true'
   const queueadd = row.querySelector<HTMLButtonElement>('button.queueadd')
   const hasCrates = row.querySelector('details.cratepick') !== null
+  /**
+   * THE ONE CONTEXTUAL ENTRY, and it is contextual by DATA rather than by
+   * a page check. `form.removeform` is rendered only by /crate/[id], and
+   * only for the crate's owner — so asking the row whether it has one is
+   * the same question as "may this member remove this from this crate",
+   * already answered by the server. The sheet never learns what a crate
+   * is, and there is no `if (page === 'crate')` anywhere.
+   */
+  const removeForm = row.querySelector<HTMLFormElement>('form.removeform')
 
   openActionSheet({
     title: play.dataset.title ?? 'Track',
@@ -2604,6 +2606,10 @@ function openRowSheet(btn: HTMLElement): void {
       hasCrates && { id: 'crate', label: 'Add to a crate…', icon: 'crate' },
       { id: 'download', label: 'Download', icon: 'download', href: `/api/track/${fileId}/download` },
       { id: 'open', label: 'Open track page', href: `/track/${fileId}` },
+      // `danger` only — `isLast` is derived by normalizeRows(), not given.
+      removeForm !== null && {
+        id: 'remove', label: 'Remove from crate', icon: 'close' as const, danger: true,
+      },
       ...ROW_META.map(([cls, label]) => {
         const value = cellText(row, cls)
         return value === undefined ? null : { id: cls, label, meta: value, disabled: true }
@@ -2617,6 +2623,10 @@ function openRowSheet(btn: HTMLElement): void {
       // would POST as a full navigation instead.
       if (id === 'like') like?.requestSubmit()
       if (id === 'crate') openCrateSheet(row, btn)
+      // requestSubmit for the same reason the ♥ uses it: submit() fires no
+      // submit event, so the delegated confirm() that guards this form
+      // would never run and the POST would go unguarded.
+      if (id === 'remove') removeForm?.requestSubmit()
     },
   })
 }

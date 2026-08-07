@@ -19,6 +19,7 @@
 // page, drops their own private crates too (crate_list() would otherwise
 // still include those, tagged is_mine).
 import Shell from '../../layouts/Shell.astro'
+import TrackHead from '../../components/TrackHead.astro'
 import TrackRow from '../../components/TrackRow.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../../lib/org-api'
 import { EMPTY_QUERY, PAGE_SIZE, poolListArgs, type PoolTrack } from '../../lib/pool-api'
@@ -67,32 +68,20 @@ const tracks = (tracksData ?? []) as PoolTrack[]
  * /crates.astro's "updated" line. */
 const joined = new Date(member.joined_at).toISOString().slice(0, 10)
 
-// Same HEADERS array crate/[id].astro uses (including the Task 8
-// add-to-crate sr header, which TrackRow always renders a cell for
-// regardless of context) — minus that page's owner-only trailing
-// "Manage" <th>, since this table is never reorderable and never gets a
-// controls slot.
-const HEADERS = [
-  { label: '', sr: 'Play' },
-  { label: '', sr: 'Artwork' },
-  { label: 'Artist' },
-  { label: 'Title' },
-  { label: 'BPM' },
-  { label: 'Key' },
-  { label: 'Length' },
-  { label: 'Quality' },
-  { label: 'Uploader' },
-  { label: 'Added' },
-  { label: 'Downloads' },
-  { label: '♥' },
-  { label: 'Plays' },
-  { label: '', sr: 'Download' },
-  { label: '', sr: 'Add to crate' },
-]
+// The fifteen <th> live in TrackHead.astro now. They had been copied here
+// from crate/[id].astro, and the artist page would have made a third copy
+// — three places to edit whenever TrackRow gains a cell, with a silent
+// one-column shear as the failure mode.
 ---
 <Shell title={`localchune — ${member.username}`}>
   <article class="memberdetail">
-    <header class="cratehead">
+    {/* THE PAGE'S ONE HERO, and the ration says one (§4.3). A member page
+        is two lists of the same card rows, so without a hero every band
+        on it weighs the same and the identity — whose page this is — reads
+        as another list heading. `--rest-1` is the faint resting shadow
+        that exists for exactly this: the single object per view that is
+        allowed to sit above the page without being interacted with. */}
+    <header class="memberhero">
       <h1>{member.username}</h1>
       <p class="explain">
         Joined {joined} · {member.track_count} {member.track_count === 1 ? 'track' : 'tracks'} contributed
@@ -125,19 +114,28 @@ const HEADERS = [
         <p class="explain">No tracks contributed.</p>
       ) : (
         <>
-          <table>
-            <thead>
-              <tr>
-                {HEADERS.map((h) => (
-                  <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody data-queue-list={`${member.username} uploads`}>
-              {tracks.map((t) => <TrackRow track={t} />)}
-            </tbody>
-          </table>
-          <p class="explain"><a href={`/pool?uploader=${member.user_id}`}>see all in pool →</a></p>
+          {/* THE WRAPPER IS THE WHOLE MOBILE STORY, and this page did not
+              have it. Every rule that turns the 15-column table into
+              cards below 640px — the `display: block` grammar, the eight
+              hidden columns, the 44px rows — is scoped to `.tracktable`
+              in global.css, and so is the `overflow-x: auto` that keeps a
+              wide table from widening the page itself.
+
+              Without it this table rendered at its natural ~1,440px
+              inside a 375px viewport with no scroll container: the pool's
+              offender #1, on a page the pool's own fix never reached.
+              /pool gets the wrapper from TrackTable.astro and
+              /crate/[id] was retrofitted with the same one line; this is
+              the third and last table in the app to be brought in. */}
+          <div class="tracktable">
+            <table>
+              <TrackHead />
+              <tbody data-queue-list={`${member.username} uploads`}>
+                {tracks.map((t) => <TrackRow track={t} />)}
+              </tbody>
+            </table>
+          </div>
+          <p class="explain"><a href={`/pool?uploader=${member.user_id}`}>see all in pool</a></p>
         </>
       )}
     </section>

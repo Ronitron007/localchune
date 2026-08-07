@@ -77,8 +77,16 @@ describe('the overlay stays a lazy chunk', () => {
         if (e.isDirectory()) return astroFiles(full)
         return e.name.endsWith('.astro') || e.name.endsWith('.tsx') ? [full] : []
       })
+    // MATCHED AS AN IMPORT, not as a substring. The bare-name version of
+    // this flagged RowMenu.astro for a frontmatter COMMENT explaining that
+    // search-overlay.ts builds its own copy of the ⋮ — a file documenting
+    // the module it must stay in step with, which is the opposite of the
+    // defect. The rule is "no .astro pulls the overlay into its graph", so
+    // it is `from '…'` and `import('…')` that matter. Both forms are
+    // covered; a bare `import '…'` for side effects is too.
+    const IMPORTS_OVERLAY = /(?:from|import)\s*\(?\s*['"][^'"]*(?:search-overlay|search-api)['"]/
     const offenders = astroFiles(SRC)
-      .filter((f) => /search-overlay|search-api/.test(frontmatter(readFileSync(f, 'utf8'))))
+      .filter((f) => IMPORTS_OVERLAY.test(frontmatter(readFileSync(f, 'utf8'))))
       .map((f) => f.slice(SRC.length))
     // /api/search.ts is a server route, not an .astro file, so it is not
     // in this sweep — it may import search-api freely.
@@ -172,19 +180,32 @@ describe('no text-glyph controls — the standing owner directive', () => {
     expect(overlayCode).not.toContain(glyph)
   })
 
-  it('the one ♡ present is inside the hidden like form and is never painted', () => {
-    // site.ts's like delegation expects a .likeglyph node to update. It
-    // lives in a `hidden` form, so no member ever sees the character.
-    const at = overlay.indexOf('♡')
-    expect(at).toBeGreaterThan(-1)
-    const context = overlay.slice(at - 700, at)
-    expect(context).toContain('likeform.hidden = true')
+  it('paints no ♡ either — the like glyph is the icon set now', () => {
+    // This used to assert that the ONE ♡ in the file sat inside the hidden
+    // like form. There is no ♡ at all any more: the heart is `iconEl` from
+    // icons.ts, filled or stroked, on this surface and the four rendered
+    // ones together. The node still exists and is still hidden — site.ts's
+    // like delegation queries `.likeglyph` by name and repaints it.
+    expect(overlay).not.toContain('♡')
+    expect(overlay).toContain('likeglyph')
+    expect(overlay).toContain('likeform.hidden = true')
   })
 
   it('builds its controls from the icon set', () => {
+    // `iconEl`, not the local `svgIcon` this file used to assert: that
+    // helper was one of two byte-identical copies (the other in site.ts)
+    // and both are gone. One builder in icons.ts serves the sheet rows,
+    // these results and the like heart, from one attribute table.
     for (const icon of ['search', 'close', 'kebab']) {
-      expect(overlay).toMatch(new RegExp(`svgIcon\\('${icon}'`))
+      expect(overlay).toMatch(new RegExp(`iconEl\\('${icon}'`))
     }
+  })
+
+  it('takes the like heart from the shared constant, not a fourth opinion', () => {
+    // Five surfaces render this control and site.ts repaints whichever is
+    // on screen. Naming the glyph here instead of importing LIKE_ICON is
+    // how the overlay's heart would come to differ in size from the row's.
+    expect(overlay).toContain('iconEl(LIKE_ICON.name')
   })
 })
 

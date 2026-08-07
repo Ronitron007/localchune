@@ -8,7 +8,8 @@ import Icon from '../../components/Icon.astro'
 import KeyChip from '../../components/KeyChip.astro'
 import QualityBadge from '../../components/QualityBadge.astro'
 import { formatBytes, formatDuration } from '../../lib/format'
-import { artMediumUrl, formatBpm } from '../../lib/track-format'
+import { artMediumUrl, formatBpm, LIKE_ICON } from '../../lib/track-format'
+import { artistHref } from '../../lib/pool-api'
 import { isUuid } from '../../lib/upload-api'
 import { TERMINAL_FAILED_STATES, FAILURE_EXPLAIN, stateLabel, explainLastError } from '../../lib/file-state'
 import type { CrateCard } from '../../lib/org-api'
@@ -243,7 +244,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
                 data-file-id={t.file_id}
                 aria-pressed={t.liked_by_me ? 'true' : 'false'}
                 aria-label={`${t.liked_by_me ? 'Unlike' : 'Like'} ${title}`}
-              ><span class="likeglyph" aria-hidden="true">{t.liked_by_me ? '♥' : '♡'}</span> <span class="likecount">{t.like_count}</span></button>
+              ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} filled={t.liked_by_me} /></span> <span class="likecount">{t.like_count}</span></button>
             </form>
             <span class="signal">{t.play_count} play{t.play_count === 1 ? '' : 's'}</span>
             <span class="signal">{t.download_count} download{t.download_count === 1 ? '' : 's'}</span>
@@ -346,7 +347,13 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
     <section class="identity">
       <h2>Identity</h2>
       <dl>
-        <dt>Artist</dt><dd>{artist}</dd>
+        {/* The one place on this page the artist is its own field rather
+            than half of the <h1>, so it is the one that can be a link
+            without splitting a heading. Plain text when there is no
+            artist — "Unknown artist" has no page. */}
+        <dt>Artist</dt><dd>{t.display_artist === null
+          ? artist
+          : <a href={artistHref(t.display_artist)}>{artist}</a>}</dd>
         <dt>Title</dt><dd>{t.display_title}</dd>
         <dt>Filename</dt><dd>{t.original_filename}</dd>
       </dl>

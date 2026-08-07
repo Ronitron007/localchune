@@ -82,25 +82,32 @@ const GLYPHS = [
  * would leave the same heart rendering two ways on one screen.
  */
 const ALLOWED = new Map<string, string[]>([
-  // Only the heart is left. The transport (▶ ⏭) and the drawer toggle (☰)
-  // became SVG in PR #41, and site.ts still writes the heart at runtime, so
-  // this one is not template-only — which is exactly why the list is
-  // per-glyph and pruned rather than per-file.
-  ['layouts/Shell.astro', ['♡']],
-  ['components/TrackRow.astro', ['♥', '♡', '↓', '⋮', '→']],
-  ['components/FeedRow.astro', ['⋮']],
-  // Task 3.6 converted this page's play, download and tag-remove controls
-  // to the SVG set. The like heart is the shared-glyph case above.
-  ['pages/track/[id].astro', ['♥', '♡']],
-  // Other agents' surfaces, untouched by this task and listed so their
-  // current state is recorded rather than silently permitted.
-  ['components/ComparePanel.astro', ['▶']],
-  // pages/crate/[id].astro had ['▶','↑','↓','✕'] and now has NO glyph
-  // control at all: PR #42 (drag-to-reorder) converted the play button and
-  // the ↑ ↓ ✕ row controls to the SVG set. The entry is gone rather than
-  // emptied — a file with nothing to exempt does not belong on an
-  // exemption list.
-  ['pages/member/[username].astro', ['→']],
+  // EMPTY, AND THAT IS THE POINT. Every entry that was here has been
+  // converted rather than re-justified:
+  //
+  //   layouts/Shell.astro          ♡        -> Icon heart, and site.ts
+  //   components/TrackRow.astro    ♥ ♡ ↓ ⋮ →   repaints it as an <svg>
+  //   components/FeedRow.astro     ⋮           rather than a character
+  //   pages/track/[id].astro       ♥ ♡
+  //   components/ComparePanel.astro  ▶      -> Icon play + .playbtn
+  //   pages/member/[username].astro  →      -> deleted; the label already
+  //                                            says where the link goes
+  //
+  // The ♥ was the one that could not be done file by file: `likeGlyph()`
+  // in track-format.ts fed `.likeglyph` on five surfaces at once, so it
+  // moved as a single change — the constant is `LIKE_ICON` now and
+  // site.ts writes a node instead of a string.
+  //
+  // The two ARROWS and the ⋮ were never emoji-presentable, so they were
+  // safe under the narrow reading of the rule. They went anyway, because
+  // the rule this file is named for is the broader one: a control does not
+  // draw itself with a character. The byte budget that had defended ⋮ was
+  // measured on raw bytes and was wrong by twenty times — see the gzipped
+  // budget in track-row.test.ts.
+  //
+  // ADDING AN ENTRY HERE IS A REGRESSION, not a workflow. If a surface
+  // genuinely needs a character, it must be decorative rather than a
+  // control, and it must say why on the line above.
 ])
 
 /** Comments are stripped: this repo documents the glyphs it removed, and
@@ -144,13 +151,20 @@ describe('no control draws itself with a text glyph', () => {
     expect(all, 'use <Icon name="…" /> from src/lib/icons.ts').toEqual([])
   })
 
-  it('the track page carries the shared ♥ and nothing else', () => {
-    // The owner reported this page by name. Play, download and tag-remove
-    // are SVG; this asserts the page cannot quietly grow a fourth glyph
-    // while the heart waits for its own cross-surface change.
+  it('the allowlist is empty, and staying empty is the contract', () => {
+    // The sweep finished. This is deliberately a separate assertion from
+    // the scan above: the scan would still pass if someone re-added an
+    // entry here, and "no exemptions exist" is the property worth pinning.
+    expect([...ALLOWED.keys()]).toEqual([])
+  })
+
+  it('the track page carries no glyph at all', () => {
+    // The owner reported this page by name — first for `►▯ay`, then for
+    // the heart. Play, download and tag-remove became SVG in task 3.6;
+    // the heart followed with the cross-surface change.
     const source = readFileSync(join(SRC, 'pages/track/[id].astro'), 'utf8')
     const used = new Set(controlText(source).flatMap(({ text }) => GLYPHS.filter((g) => text.includes(g))))
-    expect([...used].sort()).toEqual(['♡', '♥'])
+    expect([...used].sort()).toEqual([])
   })
 
   it('every allowlisted glyph is still really there — no stale exemptions', () => {
@@ -161,6 +175,115 @@ describe('no control draws itself with a text glyph', () => {
       return glyphs.filter((g) => !text.includes(g)).map((g) => `${rel} no longer uses ${g}`)
     })
     expect(stale, 'delete the converted glyph from ALLOWED').toEqual([])
+  })
+})
+
+/**
+ * THE GAP THE CONTROL SCANNER HAD, AND HOW IT WAS FOUND.
+ *
+ * `controlText` only reads the bodies of <button>, <a> and <summary>. That
+ * is the right shape for "a control draws itself with a character", and it
+ * is why FeedRow.astro could carry
+ *
+ *     <span class="feedrow-likes">♥ {track.like_count}</span>
+ *
+ * for as long as it did: a DISPLAY heart, in a <span>, invisible to every
+ * assertion in this file while the identical character three lines away in
+ * a <button> was on the allowlist.
+ *
+ * A font does not care which element a character is in. iOS emoji-renders
+ * U+2665 in a <span> exactly as it does in a <button>, so the monochrome
+ * interface got its red heart either way — which is the owner's actual
+ * complaint, and it was never about controls specifically.
+ *
+ * So this scans ALL rendered text. It is a second describe rather than a
+ * widening of the first because the two rules are genuinely different: a
+ * control must not draw itself with a character (a hit-box and
+ * accessibility argument), and no text anywhere may use a glyph a platform
+ * will colour in (a rendering argument). Attributes are excluded — an
+ * aria-label or a title is read aloud, never painted.
+ */
+function renderedText(source: string): string {
+  const end = source.indexOf('---', 3)
+  const body = source.startsWith('---') && end > 0 ? source.slice(end + 3) : source
+  return body
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<svg[\s\S]*?<\/svg>/g, '')
+    // Tags go last, so an attribute value can never be mistaken for text.
+    .replace(/<[^>]*>/g, '')
+}
+
+describe('no glyph a platform will colour in appears in rendered text', () => {
+  it('holds on every template', () => {
+    const offences = astroFiles(SRC).flatMap((file) => {
+      const hits = GLYPHS.filter((g) => renderedText(readFileSync(file, 'utf8')).includes(g))
+      return hits.length === 0 ? [] : [`${file.slice(SRC.length)} renders ${hits.join(' ')}`]
+    })
+    expect(offences, 'use <Icon name="…" /> — a font decides how a character is painted').toEqual([])
+  })
+
+  it('catches a display glyph a <button> scan would miss', () => {
+    // The FeedRow case, reduced. `offences` returns nothing for this.
+    const feedish = '---\n---\n<span class="likes">♥ 12</span>'
+    expect(offences('/x/a.astro', feedish)).toEqual([])
+    expect(GLYPHS.filter((g) => renderedText(feedish).includes(g))).toEqual(['♥'])
+  })
+
+  it('still leaves an aria-label alone — it is spoken, never painted', () => {
+    expect(renderedText('---\n---\n<button aria-label="Play ▶ now">Play</button>')).not.toContain('▶')
+  })
+})
+
+/**
+ * THE THIRD HIDING PLACE: THE FRONTMATTER.
+ *
+ * Both scans above drop everything before the closing `---`, because
+ * frontmatter is script and a comment there discussing `▶` must not read
+ * as a violation. That is right for comments and wrong for DATA — and
+ * three files were quietly rendering a heart out of it:
+ *
+ *     const HEADERS = [ …, { label: '♥' }, … ]
+ *
+ * in TrackTable.astro, crate/[id].astro and member/[username].astro, each
+ * emitted as `<th>♥</th>`. A column header, in a table where every other
+ * header is a word, painted red by iOS. Neither scan could see it: it is
+ * not in a control, and it is not in the template body at all.
+ *
+ * So this one reads the frontmatter with its COMMENTS STRIPPED and looks
+ * at what is left. String literals are the only thing that can reach the
+ * page from there, and the comment stripping is what keeps the many
+ * legitimate mentions ("the `▶` used to be a bare glyph") legal.
+ */
+function frontmatterCode(source: string): string {
+  if (!source.startsWith('---')) return ''
+  const end = source.indexOf('---', 3)
+  if (end < 0) return ''
+  return source
+    .slice(3, end)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+}
+
+describe('no glyph reaches the page from the frontmatter', () => {
+  it('holds on every template', () => {
+    const offences = astroFiles(SRC).flatMap((file) => {
+      const hits = GLYPHS.filter((g) => frontmatterCode(readFileSync(file, 'utf8')).includes(g))
+      return hits.length === 0 ? [] : [`${file.slice(SRC.length)} frontmatter carries ${hits.join(' ')}`]
+    })
+    expect(offences, 'a label is data — put the word, or render an <Icon>').toEqual([])
+  })
+
+  it('catches a glyph in a data array', () => {
+    const bad = "---\nconst H = [{ label: '♥' }]\n---\n<p>x</p>"
+    expect(GLYPHS.filter((g) => frontmatterCode(bad).includes(g))).toEqual(['♥'])
+  })
+
+  it('leaves a frontmatter comment discussing a glyph alone', () => {
+    // TrackRow.astro's header genuinely says "(↑ ↓ ✕)" while explaining
+    // what it removed. Documenting a removal must not read as the bug.
+    const good = '---\n// the `▶` used to be a bare glyph — see icons.ts\nconst x = 1\n---\n<p>x</p>'
+    expect(GLYPHS.filter((g) => frontmatterCode(good).includes(g))).toEqual([])
   })
 })
 

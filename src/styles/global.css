@@ -606,6 +606,26 @@ button + button { margin-left: var(--pad-1); }
   color: inherit;
 }
 
+/* EVERY GLYPH FROM icons.ts, however it got here.
+
+   This was a SCOPED style inside Icon.astro, which meant it applied only
+   to icons Astro rendered. The icons built at runtime — the action
+   sheet's rows, the search overlay's results, and the like heart site.ts
+   repaints on every toggle — all carried `class="icon"` with no rule
+   behind it, so they were laid out as bare inline SVG. One global rule
+   covers both paths, which is also what lets a server-rendered heart be
+   replaced by a runtime one without moving a pixel.
+
+   vertical-align keeps a glyph on the text baseline beside a label; a
+   flex parent ignores it. currentColor is inherited by every path in
+   icons.ts, so an icon needs no colour rule of its own — it is white in a
+   .btn, red in a .btn-danger and --ink-55 in a meta run for free. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: none;
+}
+
 /* :active DUPLICATES :hover before overriding it — touch has no hover,
    and a button that only responds to a cursor is dead on the target
    device. The sink is declared second, and must stay second: equal
@@ -909,11 +929,17 @@ td.download > a {
   text-decoration: none;
 }
 
-/* THE ROW'S ⋮. A 44px ghost button carrying a text glyph — see the note
-   in TrackRow.astro for why the character and not the icon set. It is the
-   mobile grammar only: above 640px the table shows every column and every
-   control, which is owner decision Q3, so a menu there would offer what
-   is already on screen. */
+/* THE ROW'S ⋮ — a 44px ghost button holding the icon set's `kebab`.
+
+   It carried the CHARACTER U+22EE until the glyph sweep, defended by a
+   byte budget that turned out to be measured on the wrong axis: a hundred
+   identical SVGs cost 1% of what their raw byte count predicts, because
+   the compressor sends the markup once. track-row.test.ts has the
+   measurement.
+
+   Mobile grammar only: above 640px the table shows every column and every
+   control (owner decision Q3), so a menu there would offer what is
+   already on screen. */
 .rowmenu {
   display: none;
   align-items: center;
@@ -925,7 +951,6 @@ td.download > a {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
   transition: background var(--dur-fast) ease;
@@ -1076,7 +1101,13 @@ img.art {
 .playerbar .nowplayingartist {
   font-size: var(--text-xs);
   color: var(--ink-55);
+  /* An <a> since the artist line became a link to the act's page. It keeps
+     the muted colour it had as a span — it is the second line of a name,
+     not a call to action, and the underline on hover is the whole
+     affordance it needs at this size. */
+  text-decoration: none;
 }
+.playerbar .nowplayingartist:hover { text-decoration: underline; }
 /* Play/pause and skip take no .btn tier (survive-list #8's transport
    exemption) so they never inherited the tier's geometry either. The floor
    applies to them as a control, not as a tier. */
@@ -1298,15 +1329,81 @@ img.art {
 .queuerow-drag:active,
 .cratedrag:active { color: var(--fg); cursor: grabbing; }
 
-/* The row being dragged, and the gap it leaves. Opacity and an outline only:
-   the transport exception says a control a finger is on must not travel, and
-   the library is already moving the real node — a second movement here would
-   fight it. Nothing here animates, so the global prefers-reduced-motion block
+/* ═══ THE DRAGGED TILE, AND THE SLOT IT LEFT ═══════════════════════════
+   OWNER, 2026-08-07, with a screenshot: mid-drag on a real iPhone the
+   queue row showed as TWO TRANSPARENT COPIES lying over each other. The
+   drag worked; you could not see what you were holding.
+
+   Both of the library's hooks pointed at one class, `is-dragging`, which
+   was `opacity: 0.4`. On the touch path that class lands on the clone
+   that follows the finger and STAYS there (see the long note in
+   drag-reorder.ts for the exact sequence), and the clone's background is
+   copied from the row — which paints none, so the page shows through.
+   Hence: a 40%-opaque, fully transparent tile over an unchanged list.
+
+   INTERACTION IS WHAT EARNS FULL INK (§1.2 rule 3, §4.3 ration 2). A drag
+   is the most deliberate gesture in the app, so the tile takes the whole
+   ration — opaque fill, full-ink border, a hard offset shadow — and the
+   row it came from drops to the quiet dashed idiom the app already uses
+   for "nothing here yet". They must not look alike; that was the defect.
+
+   Still no transform on either. The transport exception says a control
+   under a finger must not travel, and the library already moves the real
+   node. Nothing here animates, so the global prefers-reduced-motion block
    has nothing to switch off. */
-.queuerow.is-dragging,
-tr.is-dragging { opacity: 0.4; }
+.queuerow.is-draglift,
+tr.is-draglift {
+  background: var(--bg);
+  border: var(--line-full);
+  box-shadow: var(--lift-2);
+  opacity: 1;
+}
+
+/* THE CLONE ITSELF. `#dnd-dragged-node-clone` is the id @formkit puts on
+   the node it clones for the touch path — a stable, documented-by-source
+   hook, and the only one that reaches the clone specifically.
+
+   `!important` IS LOAD-BEARING HERE and is not a shortcut. The library
+   writes `background`, `boxShadow` and `border` onto this element as
+   INLINE styles, copied from the row at clone time, and an inline
+   declaration beats any class rule. Today those copied values are already
+   the opaque ones, because `is-draglift` is on the row at the moment the
+   copy is taken. That ordering is the library's, not ours, and it is
+   exactly the kind of undocumented internal that changed under this
+   project once already (`onDragstart` never firing on touch). If it ever
+   flips, the copied background is transparent again and the owner's bug
+   returns silently. This line makes the tile opaque either way.
+
+   The clone is in the top layer (the library gives it `popover=manual`),
+   so it needs no z-index of ours to clear the player bar. */
+#dnd-dragged-node-clone {
+  background: var(--bg) !important;
+  opacity: 1 !important;
+  box-shadow: var(--lift-2) !important;
+  border: var(--line-full) !important;
+}
+
+/* The row a drag is hovering over — the target. */
 .queuerow.is-over,
 tr.is-over { outline: 1px solid var(--fg); outline-offset: -1px; }
+
+/* The slot you left. Dashed and faded — the same "absence" idiom as
+   `.empty`, which is what it is: the space this row falls back into if
+   the drag is cancelled.
+
+   DECLARED AFTER `.is-over` ON PURPOSE. The library adds its drop-zone
+   class to the dragged node as well as to the hovered one, so the origin
+   row carries BOTH classes for the whole drag. The two rules have equal
+   specificity (0,2,0), so source order is the only thing that decides
+   which outline wins, and the origin must not wear the solid ring — a
+   target and an origin reading alike is the defect this block fixes. */
+.queuerow.is-dragorigin,
+tr.is-dragorigin {
+  opacity: 0.35;
+  outline: var(--line-dash);
+  outline-offset: -1px;
+  background: var(--surface-1);
+}
 .queuetoggle { flex: none; }
 
 /* --- upload chip (UX.12) ---
@@ -1470,6 +1567,41 @@ body.queueopen .uploadchip-slot {
 .cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
 .cratecard .explain { margin-top: 0.15em; }
 
+/* ═══ /member/[username] and /artist/[name] ════════════════════════════
+   `.memberdetail` had NO RULE ANYWHERE — its single occurrence in the
+   repo was the class attribute itself. The page was two card lists and a
+   bare <header>, so on a phone the member's own name read as one more
+   section heading among three.
+
+   THE HERO, AND THE RATION. §4.3 allows at most ONE resting shadow per
+   view, on the page's hero object, and on a profile the hero is the
+   identity block — there is nothing else here that is not a list. It
+   takes `--rest-1`, the faint 0.10 one, which is the same treatment
+   /track/[id]'s artwork gets and for the same stated reason. No page in
+   the app has two.
+
+   Both routes share it: an artist page is the same shape with a
+   string-keyed subject instead of a member. One recipe, two surfaces. */
+.memberdetail > * + *,
+.artistdetail > * + * { margin-top: var(--pad-3); }
+
+.memberhero {
+  border: var(--line-full);
+  box-shadow: var(--rest-1);
+  padding: var(--pad-2);
+  background: var(--bg);
+}
+.memberhero > * + * { margin-top: var(--pad-0); }
+.memberhero h1 {
+  margin: 0;
+  /* The subject is user-generated and can be long — a 40-character
+     display_artist is real. It wraps rather than widening the page, which
+     is the failure `overflow-wrap` exists for on the one page in this app
+     whose title a member chose. */
+  overflow-wrap: anywhere;
+}
+.memberhero .explain { margin: 0; }
+
 /* --- / (home feed, M6c Task 2): Fresh/Hot/Top track cards. Same
    border/pad card idiom as .cratecard — the feed section it sits in
    reuses .cratelist's own list for its "New public crates" section, so
@@ -1500,15 +1632,24 @@ body.queueopen .uploadchip-slot {
 .feedrow .play { flex: none; }
 .feedrow .feedrow-body { flex: 1 1 auto; }
 .feedrow-body { min-width: 0; display: flex; flex-direction: column; gap: 0.15em; }
+/* One line, TWO links: the artist and the title go to different places.
+   The ellipsis and the nowrap stay on the wrapper, because they have to
+   apply to the whole line rather than to either half — an anchor that
+   truncated itself would leave the em dash and the other anchor hanging
+   past it. The underline moves to the anchors, which is where a hover
+   target now is. */
 .feedrow-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-decoration: none;
 }
-.feedrow-title:hover { text-decoration: underline; }
+.feedrow-title a { text-decoration: none; color: inherit; }
+.feedrow-title a:hover { text-decoration: underline; }
 .feedrow-meta { display: flex; align-items: center; gap: var(--pad-1); color: var(--mid); }
-.feedrow-likes { color: var(--mid); }
+/* `.feedrow-likes` is gone: it styled a DISPLAY-ONLY ♥ and a number, and
+   the feed row carries a real `form.likeform` there now — the same one
+   the pool row and the track page use, so it inherits their rules and
+   needs none of its own. */
 .privatechip {
   border: 1px solid var(--line);
   padding: 0 0.35em;
@@ -1551,6 +1692,15 @@ body.queueopen .uploadchip-slot {
    height around when it opens. --- */
 .addcrate { white-space: nowrap; }
 .cratepick { position: relative; display: inline-block; }
+/* A `display` on the element BEATS the UA sheet's `[hidden] { display:
+   none }`, because an author rule always does — the same trap the player
+   bar's ♥ hit (`.likeform[hidden]` above) and the same one the search
+   overlay hit at 375px, where a `hidden` picker drew a visible empty box.
+   That fix was scoped to `.searchrow`; the feed row now ships a `hidden`
+   picker too — it is the action sheet's handle rather than a control of
+   its own — so the rule belongs with the class it corrects, not with one
+   of its callers. Nothing that never sets the attribute pays anything. */
+.cratepick[hidden] { display: none; }
 .cratepick > summary {
   list-style: none;
   /* Was width: 1.6em (~26px). The summary carries .btn-secondary, so the
@@ -2020,7 +2170,11 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .has-rowmenu .tracktable td.download,
   .has-rowmenu .tracktable td.addcrate,
   .has-rowmenu .tracktable td.controls .queueadd,
-  .has-rowmenu .feedrow .queueadd { display: none; }
+  .has-rowmenu .feedrow .queueadd,
+  /* The feed's like toggle goes the same way as its `+Q`: below 640px the
+     ⋮ sheet is the row's whole control set, and the sheet shows this
+     track's like state and count as one of its 44px rows. */
+  .has-rowmenu .feedrow .likeform { display: none; }
   /* Without JS the ⋮ never unhides, so these keep their grid slots. */
   .tracktable td.likes    { grid-column: 2; grid-row: 3; }
   .tracktable td.download { grid-column: 3; grid-row: 3; }
