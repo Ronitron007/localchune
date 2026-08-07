@@ -16,6 +16,7 @@ import Icon from '../components/Icon.astro'
 import SourceLink from '../components/SourceLink.astro'
 import StorageChip from '../components/StorageChip.astro'
 import UploadChip from '../components/UploadChip'
+import { LIKE_ICON } from '../lib/track-format'
 import '../styles/global.css'
 
 // Task 8: `center` is for the app's "single card" pages (currently just
@@ -136,7 +137,7 @@ const { title, center = false } = Astro.props
         clears both only once it has a real track id to point at. */}
     <form id="player-like" method="post" class="likeform playerlike" hidden data-astro-reload>
       <button type="submit" class="likebtn" data-file-id="" aria-pressed="false" aria-label="Like" disabled
-      ><span class="likeglyph" aria-hidden="true">♡</span> <span class="likecount">0</span></button>
+      ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} /></span> <span class="likecount">0</span></button>
     </form>
     {/* Hidden until site.ts unhides it: with no JS there is no queue for it
         to open, and a control that does nothing must not be visible. */}

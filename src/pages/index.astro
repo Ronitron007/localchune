@@ -119,12 +119,16 @@ const publicDate = (c: FeedCrate): string | null =>
     )}
   </section>
 
+  {/* The empty message below read "No likes yet — ♥ something" until the
+      glyph sweep: a U+2665 used as a VERB, in prose, which iOS paints red
+      in the middle of a sentence. The word says the same thing, and says
+      it to a screen reader too. */}
   <section class="feedsection">
     <h2>Most liked</h2>
     {top.error ? (
       <p class="explain">Could not load — try again.</p>
     ) : topTracks.length === 0 ? (
-      <p class="explain">No likes yet — ♥ something.</p>
+      <p class="explain">No likes yet — like a track.</p>
     ) : (
       <ul class="feedlist" data-queue-list="Most liked">
         {topTracks.map((t) => <FeedRow track={t} />)}

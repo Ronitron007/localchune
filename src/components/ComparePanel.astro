@@ -21,6 +21,7 @@
 // data-start, which only /review renders: the audition opens at the point
 // of maximum divergence rather than at 0:00.
 import DivergenceStrip from './DivergenceStrip.astro'
+import Icon from './Icon.astro'
 import QualityBadge from './QualityBadge.astro'
 import {
   divergencePeakSecond,
@@ -89,8 +90,16 @@ const sides = [
               reads dataset.artist and dataset.title and has never read
               dataset.label, so auditioning a review pair queued an entry
               with an empty title and the bar announced nothing. */}
+          {/* `playbtn` ALONGSIDE `play`, never instead of it — site.ts
+              scrapes `a.play` and survive-list #7 forbids the rename.
+              This link wraps a LABEL, not artwork, so without the extra
+              class global.css's two pseudo-elements paint their scrim
+              square and border-triangle straight over the text: the
+              `►▯ay` defect the owner reported on /track/[id], which is
+              the same rule landing on the same shape. `.playbtn` sets
+              `content: none` on both. */}
           <a
-            class="play"
+            class="play playbtn"
             href={`/track/${s.fileId}`}
             data-track-id={s.fileId}
             data-artist={s.artist}
@@ -98,7 +107,7 @@ const sides = [
             data-duration={s.duration ?? undefined}
             data-start={startAt > 0 ? String(startAt) : undefined}
             aria-label={`Play ${s.title}`}
-          >▶</a>
+          ><Icon name="play" size={16} /> Play</a>
           {' '}
           <a href={`/track/${s.fileId}`}>{s.artist} — {s.title}</a>
         </h3>

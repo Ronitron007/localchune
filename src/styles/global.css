@@ -606,6 +606,26 @@ button + button { margin-left: var(--pad-1); }
   color: inherit;
 }
 
+/* EVERY GLYPH FROM icons.ts, however it got here.
+
+   This was a SCOPED style inside Icon.astro, which meant it applied only
+   to icons Astro rendered. The icons built at runtime — the action
+   sheet's rows, the search overlay's results, and the like heart site.ts
+   repaints on every toggle — all carried `class="icon"` with no rule
+   behind it, so they were laid out as bare inline SVG. One global rule
+   covers both paths, which is also what lets a server-rendered heart be
+   replaced by a runtime one without moving a pixel.
+
+   vertical-align keeps a glyph on the text baseline beside a label; a
+   flex parent ignores it. currentColor is inherited by every path in
+   icons.ts, so an icon needs no colour rule of its own — it is white in a
+   .btn, red in a .btn-danger and --ink-55 in a meta run for free. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: none;
+}
+
 /* :active DUPLICATES :hover before overriding it — touch has no hover,
    and a button that only responds to a cursor is dead on the target
    device. The sink is declared second, and must stay second: equal
@@ -909,11 +929,17 @@ td.download > a {
   text-decoration: none;
 }
 
-/* THE ROW'S ⋮. A 44px ghost button carrying a text glyph — see the note
-   in TrackRow.astro for why the character and not the icon set. It is the
-   mobile grammar only: above 640px the table shows every column and every
-   control, which is owner decision Q3, so a menu there would offer what
-   is already on screen. */
+/* THE ROW'S ⋮ — a 44px ghost button holding the icon set's `kebab`.
+
+   It carried the CHARACTER U+22EE until the glyph sweep, defended by a
+   byte budget that turned out to be measured on the wrong axis: a hundred
+   identical SVGs cost 1% of what their raw byte count predicts, because
+   the compressor sends the markup once. track-row.test.ts has the
+   measurement.
+
+   Mobile grammar only: above 640px the table shows every column and every
+   control (owner decision Q3), so a menu there would offer what is
+   already on screen. */
 .rowmenu {
   display: none;
   align-items: center;
@@ -925,7 +951,6 @@ td.download > a {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
   transition: background var(--dur-fast) ease;

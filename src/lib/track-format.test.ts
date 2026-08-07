@@ -173,7 +173,8 @@ describe('artFallback', () => {
   })
 })
 
-import { likeActionLabel, likeGlyph, trackHref } from './track-format'
+import { LIKE_ICON, likeActionLabel, trackHref } from './track-format'
+import { ICONS, renderIcon } from './icons'
 
 /* The player bar's ♥ and its title link. site.ts writes these into the DOM
  * and cannot be imported here (it touches `document` at module scope), so
@@ -193,13 +194,32 @@ describe('trackHref', () => {
   })
 })
 
-describe('likeGlyph', () => {
-  // The exact pair TrackRow.astro's pool cell and track/[id].astro's
-  // .signals block already render. The bar has to agree with both, or one
-  // track reads two ways on a single screen.
-  it('is filled when liked and hollow when not', () => {
-    expect(likeGlyph(true)).toBe('♥')
-    expect(likeGlyph(false)).toBe('♡')
+describe('LIKE_ICON', () => {
+  /* It used to be `likeGlyph(liked)` returning '♥' or '♡'. Both are gone:
+   * iOS gives U+2665 emoji presentation on its own, so the owner saw a red
+   * heart in a monochrome bar — the same font decision that made the
+   * transport emoji. The state is no longer a CHOICE OF CHARACTER; it is
+   * one path, stroked at rest and filled when liked. */
+  it('names a glyph that really exists in the set', () => {
+    expect(Object.keys(ICONS)).toContain(LIKE_ICON.name)
+  })
+
+  it('is the one glyph whose paint carries the state', () => {
+    // `heart` must be STROKED at rest, or "filled when liked" has nothing
+    // to say. Every transport glyph is a solid primitive and could not do
+    // this — which is why the set draws this one differently.
+    expect(ICONS[LIKE_ICON.name]).toContain('fill="none"')
+    expect(renderIcon(LIKE_ICON.name, { filled: true })).toContain('fill="currentColor"')
+    expect(renderIcon(LIKE_ICON.name, { filled: false })).toContain('fill="none"')
+  })
+
+  it('pins the size, because five surfaces render it', () => {
+    // TrackRow's pool cell, FeedRow's meta run, track/[id]'s signals block,
+    // the player bar and the search overlay. site.ts repaints whichever is
+    // on screen the instant a like is toggled, so a surface that picked its
+    // own size would visibly resize on first click.
+    expect(renderIcon(LIKE_ICON.name, { size: LIKE_ICON.size }))
+      .toContain(`width="${LIKE_ICON.size}"`)
   })
 })
 

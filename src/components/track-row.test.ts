@@ -22,7 +22,10 @@
 //    Then 2,797 / 1,345 when the retina `srcset` landed. Then re-baselined
 //    to a NORMALISED number — see `normalize` below — because the art URLs
 //    made the count depend on a deployment setting rather than on the row.
-//    The figures the budgets now hold are 2,742 and 1,290.
+//    That held 2,742 and 1,290 until the icon sweep, which took them to
+//    4,155 and 2,174 — and which is why there is a GZIPPED budget below
+//    as well. Raw bytes are the wrong axis for markup repeated a hundred
+//    times identically; see that block for the measured proof.
 //
 //    `data-label` WAS dead weight — site.ts derives the same string from
 //    artist and title in `entryLabel()` and never read the attribute. It is
@@ -45,6 +48,7 @@
 // template source would count the template, not the page.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container'
 import { readFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import FeedRow from './FeedRow.astro'
 import TrackRow from './TrackRow.astro'
@@ -123,10 +127,59 @@ async function render(Component: unknown, props: Record<string, unknown>): Promi
   return normalize(await renderRaw(Component, props))
 }
 
+/**
+ * THE GZIPPED BUDGET, AND WHY IT WAS ADDED.
+ *
+ * The raw per-row count below is a real number that answers the wrong
+ * question. A pool page is a hundred rows, and those hundred rows are a
+ * hundred BYTE-IDENTICAL copies of everything that is not a title — so
+ * DEFLATE emits the second through the hundredth as back-references and
+ * the marginal cost of repeated markup is nearly nothing.
+ *
+ * That mattered the moment the icon sweep landed. Judged on raw bytes the
+ * sweep looked catastrophic — a hundred rows of the fixture below went
+ * 274 KB -> 416 KB, and the note in TrackRow.astro had refused the kebab
+ * SVG on exactly that arithmetic. Gzipped, the same hundred rows went
+ * 2,585 B -> 3,968 B: +1.4 KB, ONE PERCENT of the raw delta. The old note
+ * predicted 30 KB and was out by a factor of twenty.
+ *
+ * So both are asserted. The raw number still catches a row that grew a
+ * per-track string (a second copy of the title, a duplicated data-*),
+ * because those DO NOT compress away — that is the regression perf task
+ * 2.2 fixed and it must stay fixed. The gzipped number is what a member
+ * actually downloads, and it is the one to weigh a design decision
+ * against.
+ */
+const GZIP_ROWS = 100
+const gzippedPage = (rowHtml: string): number =>
+  gzipSync(Buffer.from(rowHtml.repeat(GZIP_ROWS))).length
+
 describe('TrackRow — the per-row budget', () => {
-  it('stays at or under 2,742 bytes with realistic strings (was 2,957)', async () => {
+  it('stays at or under 4,155 bytes with realistic strings (was 2,742)', async () => {
+    // Re-baselined by the icon sweep: five controls that were text
+    // characters (+Q, ⋮, ♥, ↓, +) are inline SVG from icons.ts now,
+    // because iOS emoji-renders several of them and a font is not
+    // something this app gets a vote in. The number that decided it is
+    // the gzipped one below, not this one.
     const html = await render(TrackRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_742)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(4_155)
+  })
+
+  it('costs at most 4.0 KB gzipped across a hundred-row page', async () => {
+    const html = await render(TrackRow, { track })
+    expect(gzippedPage(html)).toBeLessThanOrEqual(4_000)
+  })
+
+  it('compresses like repeated markup — the icons are nearly free at scale', async () => {
+    /* THE ASSERTION THAT RETIRES THE OLD OBJECTION, stated as a ratio so
+       it cannot rot into a magic number. If a future change makes a row
+       carry per-track strings instead of shared markup, this ratio
+       collapses and the test says so — which is a stronger guard than
+       either absolute number, and the one that would have caught the
+       duplicated data-* attributes perf task 2.2 removed. */
+    const html = await render(TrackRow, { track })
+    const raw = Buffer.byteLength(html) * GZIP_ROWS
+    expect(gzippedPage(html) / raw).toBeLessThan(0.02)
   })
 
   /* SURVIVE-LIST #15, AND THE TWO DERIVATIVE KEYS.
@@ -159,9 +212,13 @@ describe('TrackRow — the per-row budget', () => {
     expect(img).toContain('loading="lazy"')
   })
 
-  it('stays at or under 38 elements — the 15-column floor plus its cells', async () => {
+  it('stays at or under 50 elements — the 15-column floor plus its cells', async () => {
+    // 38 -> 50: twelve of the additions are the <svg> and <path>/<rect>
+    // nodes of the five icons that replaced text characters. An element
+    // budget counts DOM nodes, which is the right axis for layout and
+    // parse cost and the wrong one for transfer — see the gzipped budget.
     const html = await render(TrackRow, { track })
-    expect(elementCount(html)).toBeLessThanOrEqual(38)
+    expect(elementCount(html)).toBeLessThanOrEqual(50)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
@@ -212,9 +269,14 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-  it('stays at or under 1,290 bytes (was 1,505)', async () => {
+  it('stays at or under 2,174 bytes (was 1,290)', async () => {
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_290)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_174)
+  })
+
+  it('costs at most 2.2 KB gzipped across a hundred-row feed', async () => {
+    const html = await render(FeedRow, { track })
+    expect(gzippedPage(html)).toBeLessThanOrEqual(2_200)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {

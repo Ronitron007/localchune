@@ -188,7 +188,16 @@ describe('the like button reuses the row contract rather than inventing one', ()
   )
 
   it('starts hollow at zero, the state of a bar with nothing playing', () => {
-    expect(form).toContain('♡')
+    // It used to assert the two characters ♡ and ♥. Both are gone: iOS
+    // gives U+2665 emoji presentation on its own, so the bar painted a red
+    // heart in a monochrome interface. The state is the SAME path, stroked
+    // or filled — so "hollow" is the ABSENCE of `filled`, and this file
+    // reads Shell.astro's source rather than a render, so that is what it
+    // can honestly check.
+    expect(form).toContain('likeglyph')
+    expect(form).toContain('<Icon name={LIKE_ICON.name}')
+    expect(form).not.toContain('filled')
+    expect(form).not.toContain('♡')
     expect(form).not.toContain('♥')
   })
 })

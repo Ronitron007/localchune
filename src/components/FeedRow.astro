@@ -20,8 +20,9 @@
 // server fallback, and — since perf task 2.2 — carrying `data-file-id`
 // alone. No like toggle here on purpose — the feed is read-only; toggling
 // lives on the track page and the pool table.
+import Icon from './Icon.astro'
 import KeyChip from './KeyChip.astro'
-import { artThumb2xUrl, artThumbUrl, formatBpm } from '../lib/track-format'
+import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
 import type { PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack }
@@ -52,17 +53,23 @@ const label = `${artist} — ${track.display_title}`
       metadata rather than a second copy of it on the button. */}
   <button
     type="button"
-    class="queueadd btn-secondary"
+    class="queueadd btn-secondary btn-icon"
     hidden
     data-file-id={track.file_id}
     aria-label={`Add ${track.display_title} to the queue`}
-  >+Q</button>
+  ><Icon name="queue-add" size={16} /></button>
   <span class="feedrow-body">
     <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
     <span class="feedrow-meta">
       <KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} />
       <span class="num">{formatBpm(track.bpm, track.ibi_std_ms)}</span>
-      <span class="feedrow-likes">♥ {track.like_count}</span>
+      {/* A DISPLAY count, not a control — and it was a ♥ character, which
+          is the same U+2665 iOS emoji-renders in the row and the player
+          bar. The scanner that catches those only reads <button>/<a>
+          bodies, so this one sat outside it: a red emoji heart in a
+          monochrome meta run that no test could see. Same icon as the
+          real like control, one step smaller because a meta run is dense. */}
+      <span class="feedrow-likes"><Icon name={LIKE_ICON.name} size={12} /> {track.like_count}</span>
     </span>
   </span>
   {/* The row menu, exactly as TrackRow.astro's — see the long note there.
@@ -74,5 +81,5 @@ const label = `${artist} — ${track.display_title}`
     hidden
     aria-haspopup="dialog"
     aria-label={`More actions for ${track.display_title}`}
-  >⋮</button>
+  ><Icon name="kebab" size={20} /></button>
 </li>

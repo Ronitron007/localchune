@@ -210,10 +210,10 @@ export function artFallback(hasSrcset: boolean, isHero: boolean): ArtFallback {
  * stays in site.ts.
  *
  * They are here rather than in a new module because a fourth copy of "what
- * does a ♥ look like" is the thing to avoid: TrackRow.astro's pool cell and
- * track/[id].astro's .signals block both hard-code the same two glyphs and
- * the same Like/Unlike verb, and the bar now has to agree with both or the
- * same track reads differently in two places on one screen.
+ * does a like look like" is the thing to avoid: TrackRow.astro's pool cell
+ * and track/[id].astro's .signals block render the same icon and the same
+ * Like/Unlike verb, and the bar has to agree with both or the same track
+ * reads differently in two places on one screen.
  */
 
 /** The track detail page. Encoded because it is written into an href from a
@@ -223,11 +223,29 @@ export function trackHref(fileId: string): string {
   return `/track/${encodeURIComponent(fileId)}`
 }
 
-/** Filled when liked, hollow when not — TrackRow.astro's convention, stated
- *  once so the bar cannot drift from the row. */
-export function likeGlyph(liked: boolean): string {
-  return liked ? '♥' : '♡'
-}
+/**
+ * THE LIKE CONTROL'S GLYPH, NAMED ONCE FOR ALL FIVE SURFACES.
+ *
+ * It used to be `likeGlyph(liked)` returning '♥' or '♡'. Both characters
+ * are gone, and U+2665 is the reason: iOS gives it emoji presentation on
+ * its own, so a monochrome 90-degree interface painted a fat red heart in
+ * the middle of itself — the same font decision that made the transport
+ * controls emoji, reported by the owner and fixed for those in PR #41.
+ * There is no CSS that reliably suppresses it; the fix is to stop asking a
+ * font for a picture.
+ *
+ * So the state is no longer carried by CHOOSING A CHARACTER — it is one
+ * path, stroked at rest and filled when liked, which is exactly why
+ * `heart` is the one glyph in icons.ts that is not a solid primitive.
+ *
+ * The name and the size live here, together, because five surfaces render
+ * this control and every one of them must agree: TrackRow's pool cell,
+ * FeedRow's meta run, track/[id]'s signals block, the player bar, and the
+ * search overlay's result rows. site.ts REWRITES whichever of them is on
+ * screen the instant a like is toggled, so a surface that picked its own
+ * size would visibly resize on first click.
+ */
+export const LIKE_ICON = { name: 'heart', size: 16 } as const
 
 /**
  * The button's accessible name. The glyph itself is `aria-hidden`, so this

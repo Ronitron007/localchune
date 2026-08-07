@@ -179,3 +179,73 @@ export function renderGlyph(
   if (filled) markup = markup.replaceAll('fill="none"', 'fill="currentColor"')
   return markup
 }
+
+export interface IconOptions {
+  /** Rendered px. Both width and height — every glyph is square. */
+  size?: number
+  /** `heart` only: paints the path instead of stroking it. */
+  filled?: boolean
+  /** Extra classes after `icon`. Colour always comes from the parent. */
+  class?: string
+}
+
+/**
+ * THE WRAPPER, DEFINED ONCE — and the reason it is a table rather than two
+ * hand-written element literals.
+ *
+ * This app renders the same glyph from two places: Icon.astro at build time
+ * and `iconEl` at runtime. The heart is the case that proves it matters —
+ * site.ts REWRITES a server-rendered heart the instant a member toggles a
+ * like, so if the two wrappers disagreed by one attribute the glyph would
+ * change size or colour on first click, on a control the owner already
+ * reported once. Both paths read this table, so they cannot drift.
+ *
+ * `aria-hidden` is not negotiable and is why it lives here rather than at
+ * the call sites: an icon is never the accessible name of anything. The
+ * text glyphs being replaced ARE announced today, so every icon-only
+ * control carries its own aria-label and the <svg> stays silent.
+ */
+function wrapperAttrs(size: number, className?: string): Array<[string, string]> {
+  return [
+    ['class', className === undefined || className === '' ? 'icon' : `icon ${className}`],
+    ['width', String(size)],
+    ['height', String(size)],
+    ['viewBox', '0 0 24 24'],
+    ['fill', 'none'],
+    ['aria-hidden', 'true'],
+    ['focusable', 'false'],
+  ]
+}
+
+/**
+ * The complete `<svg>` as markup, for a server render or an `innerHTML`.
+ *
+ * Every value here is a literal from this file or a number — nothing a
+ * member typed reaches it — so the string is safe to insert as HTML. Titles
+ * and artist names never come near it; those stay `textContent` everywhere.
+ */
+export function renderIcon(name: IconName, opts: IconOptions = {}): string {
+  const { size = 16, filled = false, class: className } = opts
+  const attrs = wrapperAttrs(size, className)
+    .map(([k, v]) => `${k}="${v}"`)
+    .join(' ')
+  return `<svg ${attrs}>${renderGlyph(name, { small: size <= 14, filled })}</svg>`
+}
+
+/**
+ * The same glyph as a DOM node, for the controls that are built at runtime
+ * — the action sheet's rows, the search overlay's results, and the like
+ * heart site.ts repaints on every toggle.
+ *
+ * It replaces two byte-identical `svgIcon` helpers that had been copied
+ * into site.ts and search-overlay.ts. They also called `classList.add`
+ * with no matching rule: `.icon` was SCOPED to Icon.astro, so a runtime
+ * icon silently got none of its layout. `.icon` is a global rule now.
+ */
+export function iconEl(name: IconName, opts: IconOptions = {}): SVGSVGElement {
+  const { size = 16, filled = false, class: className } = opts
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  for (const [k, v] of wrapperAttrs(size, className)) svg.setAttribute(k, v)
+  svg.innerHTML = renderGlyph(name, { small: size <= 14, filled })
+  return svg
+}
