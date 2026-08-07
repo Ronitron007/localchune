@@ -96,3 +96,27 @@ describe('deletablePendingObjects', () => {
     expect(deletablePendingObjects(d)).toEqual([])
   })
 })
+
+// Migration 33. A member deleted their own upload; upload_delete()
+// tombstoned the row and /api/track/[id]/delete then issued the object
+// delete BEST-EFFORT, swallowing any failure on purpose. These two cases
+// are the whole contract this job owes that route.
+describe('a deleted tombstone', () => {
+  it('is NOT drift once the object is really gone — that is the steady state', () => {
+    const d = reconcile([row('audio/u/g.flac', 'deleted', 10)], [])
+    expect(d.missingObjects).toEqual([])
+    expect(d.pendingDeletion).toEqual([])
+    expect(d.sizeMismatches).toEqual([])
+    expect(d.orphanObjects).toEqual([])
+  })
+
+  // The route's delete failed (R2 hiccup, expired credential). The bytes
+  // are still billed and nothing will ever serve them, so this job is the
+  // backstop that finishes the job rather than a reporter of corruption.
+  it('is swept when the route could not reclaim the object', () => {
+    const d = reconcile([row('audio/u/h.flac', 'deleted', 10)], [obj('audio/u/h.flac', 10)])
+    expect(d.missingObjects).toEqual([])
+    expect(d.pendingDeletion).toEqual([{ key: 'audio/u/h.flac', state: 'deleted' }])
+    expect(deletablePendingObjects(d)).toEqual([{ key: 'audio/u/h.flac', state: 'deleted' }])
+  })
+})

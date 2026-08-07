@@ -82,11 +82,11 @@ const GLYPHS = [
  * would leave the same heart rendering two ways on one screen.
  */
 const ALLOWED = new Map<string, string[]>([
-  // The player bar's transport and the drawer toggle. site.ts swaps ▶ for
-  // ⏸ and writes the heart at runtime, so this one is not template-only —
-  // the ⏸ is not in the markup at all, which is exactly why the list is
-  // per-glyph and pruned.
-  ['layouts/Shell.astro', ['▶', '⏭', '☰', '♡']],
+  // Only the heart is left. The transport (▶ ⏭) and the drawer toggle (☰)
+  // became SVG in PR #41, and site.ts still writes the heart at runtime, so
+  // this one is not template-only — which is exactly why the list is
+  // per-glyph and pruned rather than per-file.
+  ['layouts/Shell.astro', ['♡']],
   ['components/TrackRow.astro', ['♥', '♡', '↓', '⋮', '→']],
   ['components/FeedRow.astro', ['⋮']],
   // Task 3.6 converted this page's play, download and tag-remove controls
@@ -95,7 +95,11 @@ const ALLOWED = new Map<string, string[]>([
   // Other agents' surfaces, untouched by this task and listed so their
   // current state is recorded rather than silently permitted.
   ['components/ComparePanel.astro', ['▶']],
-  ['pages/crate/[id].astro', ['▶', '↑', '↓', '✕']],
+  // pages/crate/[id].astro had ['▶','↑','↓','✕'] and now has NO glyph
+  // control at all: PR #42 (drag-to-reorder) converted the play button and
+  // the ↑ ↓ ✕ row controls to the SVG set. The entry is gone rather than
+  // emptied — a file with nothing to exempt does not belong on an
+  // exemption list.
   ['pages/member/[username].astro', ['→']],
 ])
 

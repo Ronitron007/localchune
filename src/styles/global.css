@@ -1382,6 +1382,22 @@ body.queueopen .uploadchip-slot {
 .myfiles-batch h2 { font-weight: normal; color: var(--mid); }
 .statechip { border: 1px solid var(--line); padding: 0 0.35em; display: inline-block; }
 .statebanner { margin: var(--pad-1) 0 var(--pad-2); }
+/* /uploads only: the filename of a file the member deleted. It is the one
+   row that does NOT link — /track/<id> 404s for a tombstone, uploader
+   included (migration 33) — so it must not look like a link either.
+   Struck through and dimmed says "this was yours and it is gone" without
+   needing a second line of copy. */
+.gonename { color: var(--mid); text-decoration: line-through; }
+
+/* The track page's delete control (migration 33), last section on the page.
+   It draws NO rule of its own. Task 3.6 made every `.trackdetail section >
+   h2` a micro uppercase label over a --rule-sec, and `.trackdetail > * + *`
+   already spaces the sections — a border-top here would give this one block
+   two rules and read as a rendering fault rather than as emphasis. The
+   emphasis is the red .btn-danger, which no other section on the page has.
+   Written first against the pre-restyle page, where the extra rule WAS the
+   separator; kept as a note because the same instinct will return. */
+.dangerzone .deleteform { margin-top: var(--pad-2); }
 .tags { margin-left: 0.5em; }
 .tagchip {
   border: 1px solid var(--faint);

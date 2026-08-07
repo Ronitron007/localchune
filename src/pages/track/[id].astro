@@ -44,6 +44,10 @@ const num = (v: number | null, digits = 1, unit = '') =>
 // Migration 16: only the uploader gets the add/remove forms. Everyone
 // pool-visible sees the chips — checked server-side, not hidden with CSS.
 const isUploader = Astro.locals.member?.user_id === t.uploaded_by
+// Migration 33: upload_delete() admits exactly two accounts — the uploader
+// and the platform owner. The page renders the delete control for the same
+// two, so the button and the RPC can never disagree about who may press it.
+const isOwner = Astro.locals.member?.role === 'owner'
 
 // Migration 16b: pool_get's own-uploader-any-state path now returns a row
 // for a failed/quarantined/rejected/abandoned file too (previously it never
@@ -407,5 +411,57 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
       </dl>
       {/* M4 slot: the duplicate-review verdict and the merge/undo history. */}
     </section>
+
+    {/* ------------------------------------------------------------------
+        Migration 33. The uploader deletes their own upload.
+
+        SERVER-RENDERED CONDITIONAL, never hidden with CSS — the same rule
+        the tag forms above follow. A member who is not the uploader gets
+        no markup at all, so there is nothing to un-hide in devtools and
+        nothing for a screen reader to read out and then refuse.
+
+        GATED ON 'stored' as well as on identity, because upload_delete()
+        refuses every other state (a pending upload is /api/upload/abort's
+        job, a failed one already holds no reachable bytes). Rendering the
+        button outside that state would be rendering a button whose only
+        possible outcome is a 409.
+
+        The owner sees it too — is_owner() is the one account other than
+        the uploader that upload_delete() admits — but with copy that does
+        not call someone else's file "your upload".
+
+        data-confirm drives the delegated confirm() in site.ts. An inline
+        handler attribute cannot serve here: it trips Cloudflare's API WAF
+        on deploy and the upload 403s with a challenge page (see
+        crate/[id].astro). With JS off the form submits unguarded — the
+        guard is a courtesy against a stray click, not the security
+        boundary. The boundary is upload_delete()'s in-body auth check.
+
+        data-astro-reload is mandatory: without it ClientRouter re-sends
+        the body as multipart, the route's urlencoded branch is missed and
+        the router navigates to the POST-only URL. src/lib/
+        astro-forms.test.ts fails the build if it is ever dropped.
+        ------------------------------------------------------------------ */}
+    {t.state === 'stored' && (isUploader || isOwner) && (
+      <section class="dangerzone">
+        <h2>{isUploader ? 'Your upload' : 'Owner controls'}</h2>
+        <p class="explain">
+          {isUploader
+            ? 'Deleting removes the audio file from the pool for everyone, permanently. Your contribution total does not change.'
+            : `This file was uploaded by ${t.uploader_name}. As the platform owner you can remove it.`}
+        </p>
+        <form
+          method="post"
+          action={`/api/track/${t.file_id}/delete`}
+          class="deleteform"
+          data-confirm={isUploader
+            ? `Delete your upload of ${t.display_title}? This removes the file for everyone, permanently.`
+            : `Delete ${t.uploader_name}'s upload of ${t.display_title}? This removes the file for everyone, permanently.`}
+          data-astro-reload
+        >
+          <button type="submit" class="btn-danger">Delete this upload</button>
+        </form>
+      </section>
+    )}
   </article>
 </Shell>

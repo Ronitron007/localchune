@@ -51,8 +51,29 @@ export const STATES_IN_FLIGHT: readonly string[] = ['pending', 'uploading']
  * `rejected_redundant` and `quarantined` are deliberately excluded: those
  * are M3-owned states where a human — not a cron — decides what happens to
  * the object (e.g. keeping a quarantined file as evidence).
+ *
+ * `deleted` (migration 33) is the strongest case of the three. A member
+ * asked for the bytes to go, `upload_delete()` tombstoned the row, and
+ * /api/track/[id]/delete then issued the object delete BEST-EFFORT — it
+ * swallows a failure on purpose, because answering 500 after the row is
+ * already a tombstone would invite a retry that can only say "already
+ * deleted". This job is the backstop that finishes it. There is no human
+ * decision left to make and no evidence to preserve: the state is
+ * terminal, one-way, and nothing can ever mint a write capability for the
+ * key again.
+ *
+ * A tombstone with NO object is the expected steady state and is not drift.
+ * `reconcile()` reaches that conclusion without naming 'deleted' at all —
+ * the state is in neither STATES_IN_FLIGHT nor STATES_HOLDING_BYTES, so it
+ * falls to the terminal branch, which reports a row only when the object
+ * is still THERE. Adding 'deleted' to STATES_HOLDING_BYTES would invert
+ * that and report every completed delete as a missing object forever.
  */
-export const STATES_SAFE_TO_AUTO_DELETE: readonly string[] = ['failed', 'abandoned']
+export const STATES_SAFE_TO_AUTO_DELETE: readonly string[] = [
+  'failed',
+  'abandoned',
+  'deleted',
+]
 
 /**
  * Compare the table against the bucket. Pure: no I/O, no clock, no env.
