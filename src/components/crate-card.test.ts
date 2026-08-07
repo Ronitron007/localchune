@@ -77,9 +77,13 @@ describe('the crate card cannot put a control on its title', () => {
   it('the + QUEUE button honours its own `hidden` attribute', () => {
     // `.btn-secondary`'s `display: inline-flex` BEATS the UA sheet's
     // `[hidden] { display: none }`, because an author rule always does. So
-    // the control painted before site.ts ever revealed it — the same trap
-    // `.searchrow` and `.cratepick` already carry a fix for.
-    expect(css).toContain('.cratecard > .queueadd[hidden] { display: none; }')
+    // the control painted before site.ts ever revealed it.
+    //
+    // Asserted on the CLASS rule, not a card-scoped one: the same bug had
+    // already been fixed twice by ancestor (`.searchrow`, then this card),
+    // and the track page's `+ Queue` would have been the third. One rule
+    // for `.queueadd` covers every surface that renders it.
+    expect(css).toContain('.queueadd[hidden] { display: none; }')
   })
 })
 

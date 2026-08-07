@@ -11,8 +11,12 @@ import {
   velocityPxPerMs, type SheetRow, type SheetRowInput,
 } from '../lib/sheet'
 import {
-  addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
+  addToCrate, createCrate, editTag, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
+import {
+  planTagAdd, tagAddFailedMessage, tagAddedMessage, tagDuplicateMessage,
+  tagRefusalMessage, tagRemoveFailedMessage, tagRemovedMessage,
+} from '../lib/tag-edit'
 import {
   CRATE_NAME_MAX, NEW_CRATE_ID, NEW_CRATE_LABEL, NO_CRATES_LABEL, addFailedMessage,
   addedMessage, cratePickerRows, createdNotAddedMessage, duplicateMessage,
@@ -2133,6 +2137,188 @@ document.addEventListener('click', (e) => {
   if (details instanceof HTMLDetailsElement) details.open = false
   openNewCrateModal(button.dataset.fileId || null, button)
 })
+
+/* ============================================================
+   TAGS WITHOUT A PAGE RELOAD — owner, 2026-08-07
+   ============================================================
+   Both `form.tagform` elements on /track/[id] were plain native POSTs: a
+   full server round trip and re-render for one chip, which on a phone
+   throws the member back to the top of a long page every time they add a
+   tag. Tagging is the one thing on that page a member does five times in
+   a row.
+
+   THIS IS THE ♥'s PATTERN, NOT A NEW ONE. `form.likeform` on the same page
+   is already a delegated capture-phase submit that repaints optimistically,
+   POSTs in the background and rolls back on failure, with the plain form as
+   the no-JS path. Everything below is that, for a chip instead of a glyph:
+
+     · the forms keep `method="post"`, their real `action` and
+       `data-astro-reload` — astro-forms.test.ts enforces the last one
+       repo-wide, and it is the correct fallback rather than a formality;
+     · no inline handlers (survive-list #6: an `onclick=` in this bundle
+       403s the deploy through Cloudflare's API WAF);
+     · the RULES live in src/lib/tag-edit.ts and are `tag_add`'s own —
+       whitespace collapse, 32 characters, lower-cased key, a repeat is a
+       no-op rather than an error, and the 20 cap counted only for a NEW
+       key. An optimistic chip that says something the server will not
+       store is worse than the reload it replaced.
+
+   ONE delegation for both intents. The remove button lives in its own tiny
+   form beside each chip and the add form is at the bottom of the section;
+   they differ by the `intent` field, which is the same thing the ROUTE
+   branches on. */
+
+/** The `<li>` a chip and its remove form share, on /track/[id]. */
+function tagItemOf(form: HTMLFormElement): HTMLElement | null {
+  const li = form.closest('li')
+  return li instanceof HTMLElement ? li : null
+}
+
+/** Every tag currently on the page, in display form — what the DOM has. */
+function tagsOnPage(list: Element): string[] {
+  return [...list.querySelectorAll('.tagchip')].map((el) => el.textContent?.trim() ?? '')
+}
+
+/**
+ * A chip and its remove control, built to match what the server renders.
+ *
+ * The remove form is a REAL form with the same action and the same
+ * `data-astro-reload` the server-rendered ones carry, so a chip added
+ * optimistically can be removed by the same delegation — and, if JS were
+ * to fail between the two, by the browser.
+ */
+function tagChipEl(display: string, action: string): HTMLLIElement {
+  const li = document.createElement('li')
+  const chip = document.createElement('span')
+  chip.className = 'tagchip'
+  chip.textContent = display
+  li.appendChild(chip)
+
+  const form = document.createElement('form')
+  form.className = 'tagform'
+  form.method = 'post'
+  form.action = action
+  form.setAttribute('data-astro-reload', '')
+  for (const [name, value] of [['intent', 'remove'], ['tag_key', display]]) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = name
+    input.value = value
+    form.appendChild(input)
+  }
+  const btn = document.createElement('button')
+  btn.type = 'submit'
+  btn.className = 'btn-danger btn-icon'
+  btn.setAttribute('aria-label', `Remove tag ${display}`)
+  // A NODE, not a string of markup — the same rule the ♥ follows. `close`
+  // is the set's own mark; `×` is U+00D7 and iOS may emoji-render it.
+  btn.appendChild(iconEl('close', { size: 14 }))
+  form.appendChild(btn)
+  li.appendChild(form)
+  return li
+}
+
+document.addEventListener('submit', (e) => {
+  const form = (e.target as Element).closest?.('form.tagform')
+  if (!(form instanceof HTMLFormElement)) return
+  const action = form.getAttribute('action')
+  const section = form.closest('.tags')
+  const list = section?.querySelector('.tageditor')
+  if (!action || !(list instanceof HTMLElement)) return
+
+  const fileId = action.match(/\/api\/track\/([^/]+)\/tags/)?.[1]
+  if (fileId === undefined) return
+
+  const intent = form.querySelector<HTMLInputElement>('input[name="intent"]')?.value === 'remove'
+    ? 'remove' : 'add'
+
+  if (intent === 'remove') {
+    const display = form.querySelector<HTMLInputElement>('input[name="tag_key"]')?.value ?? ''
+    const li = tagItemOf(form)
+    if (display === '' || li === null) return
+    e.preventDefault()
+
+    // OPTIMISTIC, WITH SOMETHING TO ROLL BACK TO — unlike a crate add,
+    // which has no prior state. The node is detached and kept, then put
+    // back at the same index if the server refuses.
+    const at = [...list.children].indexOf(li)
+    li.remove()
+    void (async () => {
+      try {
+        await editTag(fileId, 'remove', display)
+        setStatus(tagRemovedMessage(display))
+        if (list.children.length === 0) showTagsEmpty(section as HTMLElement, true)
+      } catch (err) {
+        list.insertBefore(li, list.children[at] ?? null)
+        setStatus(err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : tagRemoveFailedMessage(display))
+      }
+    })()
+    return
+  }
+
+  const input = form.querySelector<HTMLInputElement>('input[name="tag"]')
+  if (input === null) return
+  e.preventDefault()
+
+  const plan = planTagAdd(input.value, tagsOnPage(list))
+  if (!plan.ok) { setStatus(tagRefusalMessage(plan.reason)); input.focus(); return }
+  if (plan.action === 'duplicate') {
+    // `tag_add` would no-op. Saying so beats a silent success, and it beats
+    // a request that changes nothing.
+    setStatus(tagDuplicateMessage(plan.display))
+    input.value = ''
+    input.focus()
+    return
+  }
+
+  const li = tagChipEl(plan.display, action)
+  list.appendChild(li)
+  showTagsEmpty(section as HTMLElement, false)
+  // CLEARED AND STILL FOCUSED. Tagging is a burst — five tags in a row —
+  // and the whole point of not reloading is that the caret never leaves.
+  input.value = ''
+  input.focus()
+
+  void (async () => {
+    try {
+      await editTag(fileId, 'add', plan.display)
+      setStatus(tagAddedMessage(plan.display))
+    } catch (err) {
+      li.remove()
+      if (list.children.length === 0) showTagsEmpty(section as HTMLElement, true)
+      setStatus(err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : tagAddFailedMessage(plan.display))
+    }
+  })()
+}, true)
+
+/**
+ * "No tags yet." is server-rendered when the file has none, and the whole
+ * point of this feature is that the page never re-renders — so the line has
+ * to appear and disappear with the list. It is created on demand rather
+ * than shipped `hidden`, because a file that already has tags should not
+ * carry markup for a state it is not in.
+ */
+function showTagsEmpty(section: HTMLElement | null, show: boolean): void {
+  if (section === null) return
+  const existing = section.querySelector('p.explain')
+  if (show && existing === null) {
+    const p = document.createElement('p')
+    p.className = 'explain'
+    p.textContent = 'No tags yet.'
+    // insertBefore rather than h2.after(): the Workers type definitions in
+    // this project shadow the DOM's `after`/`append` with a streaming
+    // signature, so neither type-checks here — the same reason
+    // openActionSheet builds its panel with appendChild.
+    const h2 = section.querySelector('h2')
+    if (h2 !== null) section.insertBefore(p, h2.nextSibling)
+  } else if (!show && existing !== null) {
+    existing.remove()
+  }
+}
 
 /**
  * THE PLAYER BAR'S CRATE CONTROL — owner, 2026-08-07: the add-to-crate

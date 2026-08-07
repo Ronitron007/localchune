@@ -795,6 +795,19 @@ td.uploader, td.added { color: var(--mid); }
    server-rendered like forms never set the attribute, so this rule costs
    them nothing. */
 .likeform[hidden] { display: none; }
+
+/* THE SAME TRAP, AND THIS TIME FIXED FOR THE CLASS RATHER THAN FOR A
+   SURFACE. `button.queueadd` takes `.btn-secondary`, whose `display:
+   inline-flex` beats `[hidden]` exactly as `.likeform`'s did — and it
+   ships `hidden` on EVERY surface that renders it, because the queue is
+   client state and site.ts is what reveals it. The fix had been applied
+   twice, scoped: once to `.searchrow` (where a hidden picker drew a
+   visible empty box at 375px) and once, by this batch, to the crate card.
+   Both were the same bug arriving through a different ancestor, and the
+   track page's new `+ Queue` button would have been the third.
+   `.queueadd[hidden]` (0,2,0) out-specifies the tier and needs no
+   ancestor, so a fourth surface gets it for free. */
+.queueadd[hidden] { display: none; }
 .likebtn {
   border: none;
   background: none;
@@ -1725,10 +1738,10 @@ body.queueopen .uploadchip-slot {
 .cratecard > .privatechip { grid-area: chip; margin-left: 0; }
 .cratecard > .explain { grid-area: meta; margin-top: 0.15em; overflow-wrap: anywhere; }
 .cratecard > .queueadd { grid-area: act; }
-/* `hidden` honoured explicitly — the tier's own `display` beats the UA
-   sheet's `[hidden]`, which is why this control was on screen with JS
-   off. Same fix `.searchrow` and `.cratepick` already carry. */
-.cratecard > .queueadd[hidden] { display: none; }
+/* The `hidden` this control ships with is honoured by `.queueadd[hidden]`
+   up beside `.likeform[hidden]` — for the class, once, rather than per
+   surface. Without it the tier's own `display: inline-flex` beats the UA
+   sheet and the button paints with JS off, doing nothing. */
 
 /* ON A PHONE THE ACTION TAKES ITS OWN ROW. `+ QUEUE` is ~110px of the
    223px a 375px card has left after the sleeves, the padding and the

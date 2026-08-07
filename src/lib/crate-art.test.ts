@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { crateStackIds, SLEEVE_PX, SLEEVE_STEP_PX, STACK_MAX } from './crate-art'
+import { withoutComments } from './source-scan'
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `id-${i}`)
 
@@ -51,13 +52,10 @@ describe('crateStackIds', () => {
 describe('the numbers are shared with the places that draw them', () => {
   const css = readFileSync(new URL('../styles/global.css', import.meta.url), 'utf8')
   const block = css.slice(css.indexOf('.cratestack {'))
-  // COMMENTS STRIPPED FIRST, and this is the fourth time in this repo a
-  // guard has needed it: the "no perspective" assertion below failed on
-  // the comment that says the stack has no perspective transform. A rule
-  // about declarations should be reading declarations.
-  const stackCss = block
-    .slice(0, block.indexOf('/* The empty crate'))
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+  // COMMENTS STRIPPED FIRST: the "no perspective" assertion below failed
+  // on the comment that says the stack has no perspective transform. A
+  // rule about declarations should be reading declarations.
+  const stackCss = withoutComments(block.slice(0, block.indexOf('/* The empty crate')))
 
   it('the CSS sleeve is SLEEVE_PX square', () => {
     expect(stackCss).toContain(`width: ${SLEEVE_PX}px`)

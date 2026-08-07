@@ -29,33 +29,14 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+// A rule about rendered text must read rendered text, not the prose that
+// documents it — see that module's header for the five times this repo has
+// paid for the difference.
+import { withoutComments } from './source-scan'
 
 const SRC = new URL('../', import.meta.url).pathname
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
 const site = read('scripts/site.ts')
-
-/**
- * Source with its comments removed.
- *
- * EVERY GUARD IN THIS REPO THAT MATCHED A BARE SUBSTRING has eventually
- * failed on a comment that DOCUMENTS the very thing it guards — the drag
- * guard on `is-dragging`, the search guard on the overlay's module name,
- * and this file's own first draft, which flagged site.ts for the words
- * "New crate…" inside the comment explaining that the label is a
- * constant. Strip the prose, then scan; a rule about rendered text should
- * be looking at rendered text.
- *
- * Deliberately crude: a `//` inside a string literal would be eaten too.
- * That is acceptable here because the only thing scanned is a label, and
- * a false NEGATIVE from over-stripping is caught by the positive
- * assertions above that each surface actually uses NEW_CRATE_LABEL.
- */
-function withoutComments(src: string): string {
-  return src
-    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '') // .astro's {/* … */}
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1')
-}
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

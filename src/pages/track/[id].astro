@@ -211,6 +211,44 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
             <a class="btn-secondary" href={`/api/track/${t.file_id}/download`}>
               <Icon name="download" size={16} /> Download
             </a>
+            {/* OWNER, 2026-08-07: "on track details page...no way to add it
+                to queue." Every ROW surface has had `+Q` since M6b — the
+                spec's §4 even says "+ queue is a companion to play,
+                everywhere play appears" — and the detail page, which is
+                where a link or a search result lands a member, was the one
+                place play appeared without it.
+
+                NOT ONE LINE OF NEW SCRIPT. site.ts's `button.queueadd`
+                delegation reads `data-file-id`, then calls `playLinkFor()`
+                to find `a.play[data-track-id]` ANYWHERE in the document and
+                scrapes the queue entry off that link's own data-* set. The
+                Play link directly above is exactly that element and already
+                carries artist, title, duration, bpm and key — so the whole
+                contract is satisfied by the two attributes below. A copy of
+                those five values here would be a second source for the same
+                entry, and the queue would eventually show one thing on this
+                page and another in a row.
+
+                The 25 cap and its truncation message come from the same
+                delegation, and so does the "added to queue" report through
+                #player-label. There is no `[data-queue-list]` ancestor here
+                and that is correct: the source label is null, which
+                `toQueueEntry(…, 'add', null)` already handles for every
+                one-off add.
+
+                `hidden`, like every other queue control: the queue is client
+                state with no server endpoint, so a control that would do
+                nothing without JS must not be visible. site.ts's
+                revealQueueControls() unhides it by the same selector it uses
+                for every row's `+Q`. Not a form, so astro-forms is
+                untouched. */}
+            <button
+              type="button"
+              class="queueadd btn-secondary"
+              hidden
+              data-file-id={t.file_id}
+              aria-label={`Add ${t.display_title} to the queue`}
+            ><Icon name="queue-add" size={16} /> Queue</button>
           </div>
           {/* M6a Task 3, owner decision 2026-07-29 ("all metadata"): the
               full signal set together — like toggle, play count, download
