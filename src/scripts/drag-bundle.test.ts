@@ -1,0 +1,250 @@
+// src/scripts/drag-bundle.test.ts
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// THE DRAG LIBRARY MUST NOT REACH A PAGE THAT DOES NOT REORDER.
+//
+// `@formkit/drag-and-drop` is 8.7 KB gzip. Two surfaces reorder — the queue
+// drawer's layer 1 and the owner's own crate page — and every other page in
+// the app must gain nothing. The shell every signed-in page loads is site.ts;
+// /login ships no JavaScript at all; a /pool a member only reads is the same
+// site.ts as everything else. So "shell, login and a read-only pool gain zero
+// bytes" is one measurable claim about ONE file's entry chunk.
+//
+// IT IS MEASURED, NOT ASSERTED. A source guard can prove the import is
+// written as a dynamic one; it cannot prove the bundler honoured that and
+// emitted a separate chunk. One badly-placed re-export, one `export *`, one
+// helper hoisted into a shared module, and the library is back in the entry
+// with the source still reading exactly as it does now — no build error, no
+// failing test, no visible change on a laptop. That is the same shape as the
+// perf phase's `worker.format` default, and it gets the same treatment: run
+// the bundler and look.
+//
+// esbuild rather than the real build, for one reason: `npm test` runs BEFORE
+// `npm run build` in CI, so `dist/` does not exist when this file runs. A
+// guard that skipped itself when the directory was missing would be green in
+// CI and prove nothing, which is worse than no guard. esbuild is already
+// installed (vite's own dependency), it splits chunks on the same rule
+// rolldown does — a dynamic import is a chunk boundary — and it costs about a
+// second.
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import * as esbuild from 'esbuild'
+import { beforeAll, describe, expect, it } from 'vitest'
+
+const SRC = new URL('../', import.meta.url).pathname
+const ROOT = join(SRC, '..')
+const LIB = '@formkit/drag-and-drop'
+
+/**
+ * A string that appears in the library's own code and in nothing this repo
+ * wrote. `dragPlaceholderClass` is one of its config keys; grepping for the
+ * package NAME would match our own import statement and pass vacuously.
+ */
+const FINGERPRINT = 'dragPlaceholderClass'
+
+let entry: string
+let others: { name: string; text: string }[]
+
+beforeAll(async () => {
+  const out = await esbuild.build({
+    entryPoints: [join(SRC, 'scripts/site.ts')],
+    absWorkingDir: ROOT,
+    bundle: true,
+    write: false,
+    splitting: true,
+    format: 'esm',
+    outdir: 'out',
+    target: 'es2022',
+    platform: 'browser',
+    logLevel: 'silent',
+  })
+  const files = out.outputFiles.map((f) => ({
+    name: f.path.split('/').pop() ?? '',
+    text: f.text,
+  }))
+  entry = files.find((f) => f.name === 'site.js')?.text ?? ''
+  others = files.filter((f) => f.name !== 'site.js')
+})
+
+describe('the drag library is in a chunk of its own', () => {
+  it('bundles site.ts into more than one chunk', () => {
+    // If this fails, splitting did not happen at all and every assertion
+    // below is vacuously true.
+    expect(entry.length).toBeGreaterThan(0)
+    expect(others.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the library OUT of the entry chunk — the shell, /login and /pool', () => {
+    expect(entry).not.toContain(FINGERPRINT)
+  })
+
+  it('puts it in exactly one of the split chunks', () => {
+    const carriers = others.filter((f) => f.text.includes(FINGERPRINT))
+    expect(carriers.length).toBe(1)
+  })
+
+  it('splits at the drag module, so its WIRING is lazy too, not just the lib', () => {
+    // wireDragList itself is ~30 lines and would be free to inline. It is in
+    // the lazy chunk on purpose: the boundary is the module, so nothing about
+    // dragging — not the library, not the code that configures it — is
+    // parsed by a page that cannot reorder.
+    const carrier = others.find((f) => f.text.includes(FINGERPRINT))
+    expect(carrier?.text).toContain('wireDragList')
+    expect(entry).not.toContain('function wireDragList')
+  })
+
+  it('leaves the entry chunk NO BIGGER than it was before drag existed', () => {
+    // The measured outcome, and it is better than "zero bytes": the entry was
+    // 89,779 B before this feature and is 89,400 B after — 379 bytes SMALLER.
+    // The dynamic import does cost a preload helper and a chunk URL, and the
+    // hundred lines of native HTML5 drag delegation this replaced cost more.
+    //
+    // A budget rather than the exact number, because site.ts grows for
+    // reasons that have nothing to do with dragging and a test that fails on
+    // every unrelated edit gets deleted. The headroom is deliberate and the
+    // regression it catches is enormous by comparison: a static import puts
+    // the library's 30,171 B back in this chunk, which no plausible amount of
+    // ordinary growth reaches first.
+    expect(entry.length).toBeLessThan(92_000)
+  })
+
+  it('the lazy chunk really is the whole library, not a stub', () => {
+    // Guards the other direction: an assertion that the entry is clean is
+    // only worth having if the bytes went somewhere real. 30,171 B raw /
+    // 8,870 B gzip minified, against the 8,691 B the Phase 3 shootout
+    // measured for the library alone — the difference is wireDragList.
+    const carrier = others.find((f) => f.text.includes(FINGERPRINT))
+    expect(carrier?.text.length).toBeGreaterThan(25_000)
+  })
+})
+
+describe('one module owns the import, and reaches it dynamically', () => {
+  // The measurement above is the proof; these are the guards that say WHY it
+  // holds, so a failure names the mistake instead of just the symptom.
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  const sourceFiles = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = join(dir, e.name)
+      if (e.isDirectory()) return sourceFiles(full)
+      return /\.(ts|tsx|astro)$/.test(e.name) && !e.name.endsWith('.test.ts') ? [full] : []
+    })
+
+  it('is imported by exactly one file in the repo', () => {
+    const importers = sourceFiles(SRC)
+      .filter((f) => new RegExp(`from '${LIB}'|import\\('${LIB}'`).test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(SRC.length))
+    expect(importers).toEqual(['scripts/drag-reorder.ts'])
+  })
+
+  it('is not imported by any .astro page or island', () => {
+    // An island would defeat the split even with site.ts spotless — the same
+    // hole shell-bundle.test.ts closes for the queue engine.
+    const offenders = sourceFiles(SRC)
+      .filter((f) => f.endsWith('.astro') || f.endsWith('.tsx'))
+      .filter((f) => readFileSync(f, 'utf8').includes(LIB))
+      .map((f) => f.slice(SRC.length))
+    expect(offenders).toEqual([])
+  })
+
+  it('site.ts reaches the drag module through import(), never a static import', () => {
+    const site = read('scripts/site.ts')
+    expect(site).toContain("import('./drag-reorder')")
+    expect(site).not.toMatch(/^import .*from '\.\/drag-reorder'/m)
+  })
+
+  it('never keys the load off an element the shell renders on every page', () => {
+    // `#queue-sections` is in Shell.astro. Loading on its PRESENCE would
+    // download the library on every signed-in page and make the split
+    // pointless while every assertion above still passed. The triggers are
+    // the drawer being opened and `[data-reorder]` existing.
+    const site = read('scripts/site.ts')
+    const loads = [...site.matchAll(/loadDragModule\(\)/g)]
+    expect(loads.length).toBe(3) // definition + drawer open + crate page
+    expect(site).toMatch(/querySelector\('\[data-reorder\]'\)[^\n]*loadDragModule\(\)/)
+    expect(site).not.toMatch(/queue-sections'\)[^\n]*loadDragModule/)
+  })
+
+  it('a failed import is swallowed — reorder degrades, the page does not', () => {
+    const site = read('scripts/site.ts')
+    const at = site.indexOf("import('./drag-reorder')")
+    expect(site.slice(at, at + 400)).toContain('.catch(')
+  })
+})
+
+describe('a drag starts from a handle, and only from a handle', () => {
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  it('both surfaces pass one', () => {
+    // Without a handle the whole row is the drag surface. On touch that
+    // fights the scroll — a finger dragged down a list means "scroll" far
+    // more often than "reorder", and the library cannot tell which until it
+    // has swallowed the gesture. It is a required field on DragList for this
+    // reason; these assert the two call sites actually name a real one.
+    const site = read('scripts/site.ts')
+    expect(site).toContain("handle: '.queuerow-drag'")
+    expect(site).toContain("handle: '.cratedrag'")
+  })
+
+  it('the crate page renders its handle server-side', () => {
+    expect(read('pages/crate/[id].astro')).toContain('class="cratedrag"')
+  })
+
+  it('each handle declares touch-action: none, or a touch drag never starts', () => {
+    // The browser claims the gesture for a scroll before the library's first
+    // pointermove is heard. Scoped to the handle precisely so the rest of the
+    // row still scrolls.
+    const css = read('styles/global.css')
+    const block = css.slice(css.indexOf('.queuerow-drag,'))
+    expect(block.slice(0, block.indexOf('}'))).toContain('touch-action: none')
+  })
+
+  it('the drawer renders a handle instead of the ↑/↓ pair it replaced', () => {
+    const site = read('scripts/site.ts')
+    expect(site).toContain('queuerow-drag')
+    // OWNER: drag-and-drop replaces the arrow buttons. The class, its
+    // delegation and its `data-dir` are gone together — a half-removal
+    // leaves a control that renders and does nothing.
+    expect(site).not.toContain('queuerow-move')
+    expect(site).not.toContain('dataset.dir')
+  })
+
+  it('the handle is a real button with a name, so it is tabbable and announced', () => {
+    // The library sorts by pointer only. The arrow keys on a focused handle
+    // are the entire keyboard path for the drawer, and an <svg aria-hidden>
+    // is silent — the name has to be on the control.
+    const site = read('scripts/site.ts')
+    const at = site.indexOf("button('queuerow-drag'")
+    expect(at).toBeGreaterThan(-1)
+    expect(site.slice(at, at + 120)).toContain('Reorder ')
+    expect(site).toMatch(/e\.key === 'ArrowUp'/)
+  })
+})
+
+describe('the crate keeps its no-JS reorder — survive-list #10', () => {
+  const crate = readFileSync(join(SRC, 'pages/crate/[id].astro'), 'utf8')
+
+  it('still ships the ↑/↓ POST forms, which are the only JS-free reorder', () => {
+    // They are the keyboard path here too: the library has no keyboard
+    // sorting, so removing them would trade a touch gap for a keyboard one.
+    expect(crate).toContain('class="moveform"')
+    expect(crate).toContain('/move')
+    expect(crate.match(/name="dir"/g)?.length).toBe(2)
+  })
+
+  it('those forms still carry data-astro-reload', () => {
+    // astro-forms.test.ts enforces this repo-wide; restated here because this
+    // file is where someone would delete them.
+    for (const [form] of crate.matchAll(/<form[^>]*class="moveform"[^>]*>/g)) {
+      expect(form).toContain('data-astro-reload')
+    }
+  })
+
+  it('keeps the two selectors the drag resolves by name', () => {
+    expect(crate).toContain('data-reorder')
+    expect(readFileSync(join(SRC, 'components/TrackRow.astro'), 'utf8'))
+      .toContain('data-file-id={reorderable ? track.file_id : undefined}')
+  })
+})

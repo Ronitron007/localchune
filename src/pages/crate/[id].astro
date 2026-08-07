@@ -19,6 +19,7 @@
 // only the HTTP status is chosen here.
 import Shell from '../../layouts/Shell.astro'
 import TrackRow from '../../components/TrackRow.astro'
+import Icon from '../../components/Icon.astro'
 import { crateItemToPoolTrack, formatCrateMeta, type CrateCard, type CrateItem } from '../../lib/org-api'
 import { isUuid } from '../../lib/upload-api'
 
@@ -157,6 +158,16 @@ const HEADERS = [
           : isOwner ? 'No tracks in this crate yet.' : 'This crate is empty.'}
       </p>
     ) : (
+      <div class="tracktable">
+      {/* `.tracktable` is the pool's wrapper, and this table never had it —
+          so at 390px the crate stayed a 1,439px-wide table and its controls
+          cell, drag handle included, sat ~1,290px off the right edge of the
+          viewport. A touch reorder whose handle cannot be touched is the
+          exact hollow outcome the library shootout rejected pragmatic-dnd
+          for. This is the SMALLEST borrow of task 3.5 that makes the feature
+          real on a phone: the same one DOM / two grammars rule the pool
+          already uses, unchanged, plus one grid slot for the controls cell
+          the pool does not have. 3.5 can replace it wholesale. */}
       <table>
         <thead>
           <tr>
@@ -176,6 +187,18 @@ const HEADERS = [
             <TrackRow track={crateItemToPoolTrack(item)} reorderable={isOwner}>
               {isOwner && (
                 <td class="cratecontrols" slot="controls">
+                  {/* The grab affordance, and the ONLY thing a drag may start
+                      from. Without a handle the whole row is the drag surface,
+                      and on a phone a finger dragged down a list means "scroll"
+                      far more often than it means "reorder" — the library
+                      cannot tell which until it has already swallowed the
+                      gesture. Server-rendered rather than written by site.ts
+                      because it is markup, not behaviour: with JS off it is an
+                      inert 44px square that says what it is, and the ↑/↓ forms
+                      beside it still work. */}
+                  <span class="cratedrag" aria-hidden="true" title="Drag to reorder">
+                    <Icon name="drag" size={16} />
+                  </span>
                   <form method="post" action={`/api/crate/${id}/move`} class="moveform" data-astro-reload>
                     <input type="hidden" name="file_id" value={item.file_id} />
                     <input type="hidden" name="dir" value="up" />
@@ -210,6 +233,7 @@ const HEADERS = [
           ))}
         </tbody>
       </table>
+      </div>
     )}
   </article>
 </Shell>

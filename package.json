@@ -20,6 +20,7 @@
     "@astrojs/cloudflare": "^14.1.4",
     "@astrojs/solid-js": "^7.0.1",
     "@cloudflare/containers": "^0.3.7",
+    "@formkit/drag-and-drop": "^0.6.1",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.8",
     "astro": "^7.1.3",
