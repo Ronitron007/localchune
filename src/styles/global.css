@@ -520,6 +520,23 @@ input[type='checkbox'], input[type='radio'] { border: none; min-height: 0; }
 /* Buttons sitting side by side in a row (upload actions, retry rows, tag
    remove/add) get a gap instead of relying on a stray text-node space. */
 button + button { margin-left: var(--pad-1); }
+/* …but a FLOW rule has no business inside a grid or a flex container,
+   which already own their spacing. The rule above is written for buttons
+   that share a line box; in a grid it adds a phantom 8px INSIDE the cell,
+   which both offsets the control and widens the track by the same amount.
+   Every such container in this file sets `gap`, so the reset is exact
+   rather than a guess.
+   HOW IT SURFACED, because it is a good example of a latent rule: the
+   player bar's DOM was form -> queue -> play -> next, and the two
+   transport buttons both carry `justify-self: start` in auto columns, so
+   their phantom margins only widened their own tracks symmetrically and
+   nothing looked wrong. Adding the crate control between the ♥ and QUEUE
+   made QUEUE a button-after-button for the first time — and row 2 began
+   at x=24 while the name stack and the scrubber began at x=16. Measured,
+   at 375px, before and after. */
+.playerbar button + button,
+.sheet-list button + button,
+.cratepick-list button + button { margin-left: 0; }
 
 /* --- the three tiers ---
    Every button/submit in the app is one of these three. The FILLS are the
@@ -1036,11 +1053,26 @@ img.art {
    attr, so browsers give it no box. The visible row is the custom
    play/pause button, the touch-friendly range seek, and the elapsed/total
    clock; see src/scripts/site.ts for the timeupdate/seek wiring. */
-/* THE OWNER-CONFIRMED LAYOUT, from a mock, 2026-08-06.
-     row 1   [QUEUE]  [ title / artist stack ]  [♥]
-     row 2   [▶] [⏭]                   [elapsed / total]
+/* THE OWNER-CONFIRMED LAYOUT, 2026-08-06, AMENDED BY THE OWNER 2026-08-07.
+     row 1   [ title / artist stack ]              [♥] [crate]
+     row 2   [QUEUE] [▶] [⏭]              [elapsed / total]
      row 3   [ ================ scrubber ================ ]
    lifted off the bottom edge by the safe-area inset.
+
+   WHAT CHANGED AND WHY. The owner asked to "shift Queue also to same line
+   as playback controls" and to put the add-to-crate control "right
+   alongside the like button". Those are one decision seen from two sides:
+   the bar now has a TRACK row and a TRANSPORT row. Row 1 is what this
+   track is and what you can do WITH it (name, ♥, crate); row 2 is what the
+   player is doing with it (queue, play, skip, clock). QUEUE moved down
+   because it is a transport control — it changes what plays next — and the
+   two 44px signal controls moved up together because they act on the
+   track, not on the playback.
+
+   ♥ AND CRATE ARE ADJACENT COLUMNS, not one wrapper. A wrapper would be a
+   third box to reason about and would need its own gap; two auto columns
+   side by side put them the same `--pad-1` apart as every other pair in
+   the bar, and the grid already had to grow for the transport row anyway.
 
    GRID AREAS OVER THE SAME DOM. The spec's survive-list #9 asks that
    site.ts never learn about visual order, and grid keeps that promise
@@ -1048,8 +1080,15 @@ img.art {
    needs the row breaks to fall out of the widths, which is exactly how
    the bar ended up as an accidental three rows at 375px with QUEUE
    jumping to the front (it had no mobile `order` at all). DOM order is
-   still label / like / queue / toggle / next / seek / time and nothing
-   in the script knows where any of them is drawn.
+   still label / like / crate / queue / toggle / next / seek / time and
+   nothing in the script knows where any of them is drawn.
+
+   FIVE COLUMNS, and the count is forced. `name` has to span the flexible
+   column or it cannot ellipsize, and ♥ and crate have to be the two
+   columns after it. Row 2 then needs queue, play and next to sit in the
+   three columns to the LEFT of that flexible one — so `next` takes the
+   flexible column with `justify-self: start` (it already did) and hugs
+   play instead of drifting into the middle of the bar.
 
    #queue-drawer is position: absolute and #player-audio is display:none,
    so neither takes a grid cell. */
@@ -1059,11 +1098,11 @@ img.art {
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
-    "queue name  like"
-    "play  next  time"
-    "seek  seek  seek";
+    "name  name  name  like  crate"
+    "queue play  next  time  time"
+    "seek  seek  seek  seek  seek";
   align-items: center;
   gap: var(--pad-0) var(--pad-1);
   padding: var(--pad-1) var(--pad-2);
@@ -1163,6 +1202,36 @@ img.art {
   gap: 0.25em;
 }
 
+/* THE CRATE CONTROL, IMMEDIATELY BESIDE THE ♥ (owner, 2026-08-07).
+   Same box, same 44px floor, same no-tier treatment as the ♥ next to it —
+   these two are one visual group and a member reads them as a pair, so the
+   crate taking `.btn-secondary`'s border and weight would have made the ♥
+   look like the odd one out. Neither is an action button: they are the two
+   things you can do TO a track, and §3.2's three tiers are for actions.
+
+   `hidden` is honoured explicitly. `display: inline-flex` on the same
+   element BEATS the UA sheet's `[hidden] { display: none }` — the defeat
+   this file already records twice (the search row's controls, and the
+   crate card below) — and this control ships hidden, so without the
+   `[hidden]` rule it would paint an empty 44px box in the bar on every
+   page load before a track exists. */
+.playerbar .playercrate {
+  grid-area: crate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  transition: opacity var(--dur-fast) ease;
+}
+.playerbar .playercrate:active { opacity: 0.6; }
+.playerbar .playercrate[hidden] { display: none; }
+
 /* On a phone the scrubber has no room to be a middle sliver between name
    and time — give it its own full-width row below the controls instead.
    DOM order stays name/toggle/next/seek/time (site.ts doesn't care); `order`
@@ -1181,8 +1250,13 @@ img.art {
    no media query of its own: it is the default. */
 @media (min-width: 640px) {
   .playerbar {
-    grid-template-columns: auto minmax(8rem, 1fr) auto auto auto minmax(8rem, 2fr) auto;
-    grid-template-areas: "queue name like play next seek time";
+    grid-template-columns:
+      minmax(8rem, 1fr) auto auto auto auto auto minmax(8rem, 2fr) auto;
+    /* The same two groups the phone stacks, side by side: the track and
+       what you do with it, then the transport. QUEUE leads the transport
+       group here for the same reason it leads row 2 on a phone — one
+       reading of the bar at both sizes. */
+    grid-template-areas: "name like crate queue play next seek time";
     gap: var(--pad-1) var(--pad-2);
   }
 }
@@ -1197,7 +1271,14 @@ img.art {
 
    Deliberately NOT the drawer's own top handle. The owner asked for that
    one last and it is logged as a follow-up, not built here. */
-.playerbar .queuetoggle { grid-area: queue; }
+/* `justify-self: start` for the same reason #player-toggle and
+   #player-next carry it, and it became load-bearing the moment QUEUE moved
+   into the transport row. Column 1 is auto-sized against the whole grid,
+   not against this button, so it comes out wider than the button — and a
+   grid item that does not fill its column is CENTRED in it. Measured at
+   375px before the fix: the scrubber and the name stack both started at
+   x=16 and QUEUE started at x=24, so the bar had two left margins. */
+.playerbar .queuetoggle { grid-area: queue; justify-self: start; }
 .playerbar .queuetoggle[aria-expanded='true'] {
   background: var(--surface-inv);
   color: var(--bg);
@@ -1741,15 +1822,32 @@ body.queueopen .uploadchip-slot {
 }
 .cratepick-option:hover, .cratepick-option:focus { text-decoration: underline; }
 .cratepick-option:disabled { cursor: wait; opacity: 0.6; }
-.cratepick-new {
+/* "+ New crate…", and it is a BUTTON now rather than a text field and a
+   Create button crammed into a 10rem popover. The owner asked for the
+   create step to be a modal on every add-to-crate surface; this is the
+   trigger, and site.ts's `.cratepick-new` delegation opens the one dialog.
+
+   The class appears on TWO shapes and takes .btn-secondary on both: a
+   standalone control on the track page's add-to-crate block (nothing to
+   say here — the tier is the whole style), and the last entry inside a
+   picker menu, which is the rule below. Scoping the menu treatment to
+   `.cratepick-menu` is what keeps the standalone one an ordinary button
+   instead of a full-width borderless strip on a page that has no menu. */
+.cratepick-new[hidden] { display: none; }
+/* Inside the menu it is the last ENTRY, not a box within a box: full
+   width, separated from the crates above it by the same hairline the old
+   inline form used, and no border of its own — .btn-secondary's edge
+   would double that hairline into two lines 1.5px apart. */
+.cratepick-menu .cratepick-new {
   display: flex;
-  align-items: center;
-  gap: var(--pad-1);
+  width: 100%;
   margin-top: var(--pad-1);
-  padding-top: var(--pad-1);
+  padding: 0 var(--pad-1);
+  border: 0;
   border-top: 1px solid var(--faint);
+  justify-content: flex-start;
+  font-size: var(--text-sm);
 }
-.cratepick-new input[type='text'] { width: 100%; min-width: 0; }
 
 /* --- /track/[id]: the no-JS add-to-crate fallback form (M6a Task 8) —
    same inline shape as .tagform/.claimform above. --- */
@@ -2080,11 +2178,38 @@ dd { margin: 0; overflow-wrap: anywhere; }
 
 /* The ROW LIST is the scroller, not the panel: a panel that scrolls takes
    its own handle and header out of reach with it. */
-.sheet-list {
+.sheet-list,
+.sheet-body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
+
+/* THE MODAL VARIANT — the same panel with a form in it instead of a list
+   of rows. Everything that makes it a dialog (the scrim, the handle,
+   Escape, the swipe, the focus trap, the safe-area padding) is the
+   panel's, unchanged; this block only lays the form out. That is the
+   whole reason the create step is built on the sheet rather than on
+   `<dialog>` — see the SheetOptions comment in src/scripts/site.ts. */
+.sheet-body { padding: var(--pad-2); }
+.cratenew > * + * { margin-top: var(--pad-2); }
+.cratenew-label { display: block; }
+.cratenew-label > span {
+  display: block;
+  margin-bottom: var(--pad-0);
+  font-size: var(--text-xs);
+  color: var(--ink-55);
+}
+/* Full width, and the 16px floor below 640px is §6.3's — anything smaller
+   makes iOS zoom the whole page on focus, which on a bottom sheet scrolls
+   the panel half off screen. The global input recipe already sets it; the
+   width is the only thing a dialog field needs of its own. */
+.cratenew-label input[type='text'] { width: 100%; min-width: 0; }
+.cratenew-actions { display: flex; justify-content: flex-end; }
+/* One primary action and no Cancel: the panel already has three ways out
+   (the handle, the scrim, Escape) and a fourth spelled differently is the
+   ransom-note problem §3.2 warns about. */
+.cratenew-actions .btn { min-width: 8rem; }
 
 .sheet-row {
   display: flex;

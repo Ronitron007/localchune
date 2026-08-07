@@ -62,7 +62,7 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     expect(shell).toContain('id="queue-toggle"')
   })
 
-  it('renders the transport row: name, ♥, then play/pause, ⏭, seek and clock', () => {
+  it('renders the bar in reading order: name, ♥, crate, then the transport', () => {
     // The queue shipped with no on-page skip control at all — the only way to
     // reach the next track was the lock screen, which does not exist on a
     // desktop.
@@ -79,11 +79,32 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     // lines are the region's content and the region is the app's ONE
     // aria-live element (survive-list #12). A second live region for the
     // artist would race this one.
+    //
+    // OWNER, 2026-08-07: `player-crate` joins the ♥, and it joins it HERE
+    // — immediately after it, before the transport — because that is the
+    // grouping the owner asked for ("right alongside the like button") and
+    // because the DOM order is what a screen reader and a no-CSS render
+    // get. The grid draws row 1 as name · ♥ · crate and row 2 as the
+    // transport with QUEUE at its head; neither this array nor site.ts
+    // knows that.
     const ids = [...shell.matchAll(/id="(player-[a-z]+)"/g)].map((m) => m[1])
     expect(ids).toEqual([
-      'player-label', 'player-link', 'player-artist', 'player-like',
+      'player-label', 'player-link', 'player-artist', 'player-like', 'player-crate',
       'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio',
     ])
+  })
+
+  it('the crate control is inert without JS and names the sheet it opens', () => {
+    // Same three properties RowMenu.astro's ⋮ carries, and for the same
+    // three reasons: a sheet is client state with no server fallback, an
+    // <svg> is aria-hidden so the NAME has to be on the button, and
+    // "dialog" rather than "menu" is what a sheet actually is.
+    const btn = shell.slice(shell.indexOf('id="player-crate"'), shell.indexOf('id="queue-toggle"'))
+    expect(btn).toContain('hidden')
+    expect(btn).toContain('aria-haspopup="dialog"')
+    expect(btn).toContain('aria-label')
+    // No `action`, no form, nothing to POST: it opens a picker.
+    expect(btn).not.toContain('<form')
   })
 
   it('keeps both name lines inside the one aria-live region', () => {
@@ -168,7 +189,16 @@ describe('the like button reuses the row contract rather than inventing one', ()
   // Every selector that handler queries is asserted here; drop any one of
   // them and the bar's heart silently stops toggling, with no other test in
   // the repo noticing, because site.ts cannot be imported under node.
-  const form = shell.slice(shell.indexOf('id="player-like"'), shell.indexOf('id="queue-toggle"'))
+  // Ends at the form's OWN close tag, not at whatever id comes next. It
+  // used to slice to `id="queue-toggle"`, which silently included every
+  // comment in between — and the moment the crate control landed there
+  // with a comment that mentions the ♥, the "starts hollow" assertion
+  // below was reading prose instead of markup. A slice that ends at the
+  // element cannot be widened by a comment.
+  const form = shell.slice(
+    shell.indexOf('id="player-like"'),
+    shell.indexOf('</form>', shell.indexOf('id="player-like"')),
+  )
 
   it('is a real POST form carrying data-astro-reload', () => {
     expect(form).toContain('method="post"')

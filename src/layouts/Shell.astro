@@ -139,6 +139,38 @@ const { title, center = false } = Astro.props
       <button type="submit" class="likebtn" data-file-id="" aria-pressed="false" aria-label="Like" disabled
       ><span class="likeglyph"><Icon name={LIKE_ICON.name} size={LIKE_ICON.size} /></span> <span class="likecount">0</span></button>
     </form>
+    {/* THE CRATE, IMMEDIATELY BESIDE THE ♥ — owner, 2026-08-07: "add the add
+        to crate button in playback right alongside the like button". Same
+        row, same size, same treatment, adjacent: the two together are the
+        bar's "what do I do with this track" group, and the transport row
+        below is "what is it doing". Row 1 is name-stack · ♥ · crate.
+
+        NOT a `<details class="cratepick">` like a row's picker, and the
+        reason is geometry rather than taste: `.cratepick-menu` opens
+        DOWNWARD out of a `position: relative` summary, and this control is
+        fixed to the bottom edge of the viewport — the menu would open
+        off-screen on every device. It opens the SHARED picker sheet
+        instead, which is the same component the row ⋮ already opens
+        (§5.2 names the crate picker as one of the sheet's four jobs), so
+        there is no second picker and no second dismissal behaviour.
+
+        Hidden in the markup like #queue-toggle and #player-next, for the
+        same reason: with no JS there is no sheet to open, and a control
+        that does nothing must not be visible. site.ts unhides it in
+        setPlayerCrate() the moment a track id exists — the same call that
+        arms the ♥, so the two can never disagree about whether the bar
+        knows what is playing.
+
+        aria-haspopup="dialog" rather than "menu": it opens a sheet, which
+        is the same promise RowMenu.astro makes. */}
+    <button
+      id="player-crate"
+      type="button"
+      class="playercrate"
+      hidden
+      aria-haspopup="dialog"
+      aria-label="Add to a crate"
+    ><Icon name="crate" size={20} /></button>
     {/* Hidden until site.ts unhides it: with no JS there is no queue for it
         to open, and a control that does nothing must not be visible. */}
     <button
