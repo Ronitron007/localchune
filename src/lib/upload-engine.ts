@@ -3,10 +3,12 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 
+import { produce } from 'solid-js/store'
 import { planUpload } from './upload-policy'
 import { readDurationMs, preflightFile, formatDuration } from './preflight'
 import { checkBlobHead } from './head-check'
 import { journalKey, lookupFile, rememberFile, forgetFile, pruneJournal } from './upload-journal'
+import type { RowStatus } from './upload-progress'
 import {
   httpApi, uploadFile, isAbortError, SessionExpiredError, UploadFailure,
   type UploadItem,
@@ -158,6 +160,115 @@ const patch = (key: string, next: Partial<Row>) => {
   if (index !== undefined) setRows(index, next)
 }
 
+/**
+ * REMOVING ONE FILE FROM A BATCH NOBODY CURATED.
+ *
+ * The owner selected their entire Downloads folder: 551 files staged, 2,268
+ * skipped, and — their words — "clearly some of them aren't DJ tracks". The
+ * queue's only controls were Upload-everything and Cancel-everything, so one
+ * wrong file cost a re-pick of all 551. This is the third verb.
+ *
+ * THE RULE, AS A SET RATHER THAN AS A CONDITION. A file may be evicted while
+ * it is still only a NAME IN A LIST — nothing has been sent, nothing exists
+ * server-side, and the only trace it can have left is a journal entry from an
+ * earlier session, which removeRow deletes.
+ *
+ *   checking  the pre-flight is still reading its header. 551 files go four
+ *             at a time, so this is where most of the queue sits for the
+ *             first seconds — exactly when a member skimming the list spots
+ *             the first thing that is not a track.
+ *   queued    accepted, waiting for a transfer slot.
+ *   skipped   pre-flight or the byte sniffer already rejected it. It has no
+ *             bytes to lose and never will; 2,268 of these is the clutter
+ *             the ✕ exists to clear.
+ *
+ * Everything else is refused, and each for its own reason rather than as one
+ * blanket "it started":
+ *
+ *   uploading   bytes are moving. Dropping the row would abandon a multipart
+ *               upload mid-part with no abort — Cancel is the control that
+ *               ends a transfer, and it ends it properly.
+ *   done/already the file is IN. The row is now a receipt.
+ *   failed      the row is a task: it carries the reason and a Retry that
+ *               fixes it. Removing it hides the problem rather than solving
+ *               it.
+ *   cancelled   not "never started". rememberFile has run, a multipart
+ *               upload exists in R2 and a `files` row exists in Postgres, and
+ *               Retry RESUMES from where it stopped. Evicting it would strand
+ *               that partial for the 24 h sweeper and throw away the finish
+ *               that was still free.
+ */
+const REMOVABLE: ReadonlySet<RowStatus> = new Set<RowStatus>(['checking', 'queued', 'skipped'])
+
+/** Whether a row in this state may be evicted. Exported so the ✕ renders in
+ *  exactly the states removeRow will honour — one rule, not two. */
+export const removable = (status: RowStatus): boolean => REMOVABLE.has(status)
+
+export type Eviction = 'removed' | 'refused'
+
+/**
+ * `indexOf` maps key -> position, and EVERY write in this module goes through
+ * `patch(key, …)` -> `setRows(index, …)`. Splice a row out of the middle and
+ * every position after it shifts by one; leave the map alone and each later
+ * row's progress, status and error message land on its NEIGHBOUR. Nothing
+ * throws — the queue just quietly narrates the wrong file.
+ *
+ * Rebuilt wholesale rather than decremented from the removal point, because
+ * the store is the truth and a map derived from it in one pass cannot drift
+ * from it. 551 rows is 551 Map.set calls; a member clicking ✕ cannot outrun
+ * that.
+ */
+function reindex(): void {
+  indexOf.clear()
+  for (let i = 0; i < rows.length; i += 1) indexOf.set(rows[i].key, i)
+}
+
+/**
+ * Take one file out of the queue. The ENGINE does this, not the component:
+ * the chip on every other page reads the same store, and a UI that spliced
+ * its own copy of the list would be the second source of truth UX.12 exists
+ * to prevent.
+ *
+ * THE SYNCHRONOUS PREFIX IS THE WHOLE CONCURRENCY ARGUMENT. Everything that
+ * decides the outcome — the status test, the two map deletes, the splice and
+ * the reindex — runs before the first `await`. Read against runOne(), which
+ * sets its row to 'uploading' in ITS synchronous prefix, before ITS first
+ * await: between the pump choosing a file and that file becoming
+ * un-removable there is no suspension point for a click to land in. Either
+ * this function wins (the row and its File handle are gone, so runOne's
+ * opening guard returns) or runOne does (the status is 'uploading', so this
+ * refuses). "Never the in-flight file" is not a race that usually goes our
+ * way; there is no race.
+ *
+ * THE JOURNAL IS CLEANED, NOT TOMBSTONED. `forgetFile` deletes the
+ * name|size|mtime -> file_id mapping, so a later visit that meets this file
+ * again treats it as new instead of offering to resume it — eviction is not
+ * a pause. That mints a new file_id if the file ever comes back, leaving any
+ * earlier partial to the 24 h sweeper, which is the same honest price
+ * `startFresh` already documents and states in its own notice. A tombstone
+ * was the alternative and would be worse: it is a row that has to be pruned,
+ * has to be skipped by `lookupFile`, and would make "I removed it by mistake,
+ * let me drag it back in" resume a partial the member believes they deleted.
+ */
+export async function removeRow(key: string): Promise<Eviction> {
+  const index = indexOf.get(key)
+  if (index === undefined) return 'refused'
+  if (!removable(rows[index].status)) return 'refused'
+
+  handles.delete(key)
+  clientDurations.delete(key)
+  setRows(produce((list) => { list.splice(index, 1) }))
+  reindex()
+
+  // After the store is already correct: the ✕ must feel instant, and the
+  // journal delete is a round trip to IndexedDB. It cannot fail in a way that
+  // matters — withStore resolves null when IndexedDB is absent or blocked,
+  // and an absent key (the common case by a wide margin: 551 files staged,
+  // none of them ever started) is a no-op.
+  await forgetFile(key)
+  return 'removed'
+}
+
 export async function enqueue(picked: File[]): Promise<void> {
   const added: { key: string; file: File }[] = []
   for (const file of picked) {
@@ -199,6 +310,13 @@ export async function enqueue(picked: File[]): Promise<void> {
         patch(key, { status: 'skipped', message: p.message })
         return
       }
+      // The row can be evicted WHILE this task is suspended — 'checking' is
+      // removable, and with PREFLIGHT_CONCURRENCY at 4 a 551-file queue sits
+      // here for seconds. `patch` is already a no-op for a key with no index,
+      // but the two lines below are not: one would resurrect an entry in
+      // clientDurations for a file that no longer exists, and the other is an
+      // IndexedDB round trip for an answer nobody will read.
+      if (!indexOf.has(key)) return
       // Only a header duration is trustworthy enough to send to the server
       // (Task 2's client_duration_ms column). An estimate is display-only.
       clientDurations.set(key, p.clientDurationMs)
