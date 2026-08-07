@@ -97,6 +97,30 @@ const isOwner = meta.is_mine
             data-crate-id={id}
             data-crate-name={meta.name}
           >+ QUEUE</button>
+          {/* The owner's ask: "download the whole crate as a folder". A ZIP
+              is what a browser can actually be handed, and it unpacks into
+              exactly that folder, named after the crate.
+
+              A plain <a download>, not a button with a fetch behind it. The
+              browser's own download manager then owns the progress, the
+              pause and the resume, and none of that has to be rebuilt in
+              JavaScript — which also makes this the ONE control in this row
+              that still works with JS off, where PLAY and + QUEUE are
+              `hidden` until site.ts unhides them.
+
+              `download` is also what keeps ClientRouter's hands off it:
+              the router skips any link carrying that attribute
+              (ClientRouter.astro's own check), so the response is never
+              swallowed by a client-side navigation. data-astro-reload says
+              the same thing a second way — see CLAUDE.md on the POST-form
+              variant of this bug, which shipped three times. */}
+          <a
+            class="cratedownload btn-secondary"
+            href={`/api/crate/${id}/download`}
+            download
+            data-astro-reload
+            aria-label={`Download ${meta.name} as a zip of its ${items.length} tracks`}
+          ><Icon name="download" size={16} /> DOWNLOAD</a>
         </p>
       )}
 
