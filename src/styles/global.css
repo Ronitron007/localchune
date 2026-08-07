@@ -860,6 +860,45 @@ a.play:focus-visible::before,
    the transport exception says so in as many words. Opacity only. */
 a.play:active::before { opacity: 0.75; }
 
+/* THE SAME LINK ON A PAGE WITH NO ROW — task 3.6, and the owner's "the
+   play button looks weird".
+
+   The two pseudo-elements above assume the link WRAPS ARTWORK: they paint
+   a scrim square and a triangle over whatever is inside it. On /track/[id]
+   there is no artwork inside the link, so they painted over the label and
+   the control read "►▯ay". The rule was right; the surface it landed on
+   had never been restyled.
+
+   `content: none` REMOVES both pseudo-elements rather than hiding them —
+   there is no scrim to see through and no triangle to align. The glyph is
+   an <svg> in the markup now, which is also the owner's directive: iOS
+   emoji-renders ▶, and an SVG cannot be emoji-rendered.
+
+   Additive on purpose. Every row keeps the artwork treatment untouched;
+   this is one extra class doing one extra thing, not a redefinition of
+   `a.play` that a hundred rows would have to be re-checked against. */
+a.play.playbtn::before,
+a.play.playbtn::after { content: none; }
+a.play.playbtn {
+  gap: var(--pad-0);
+  padding: 0 var(--pad-2);
+  /* Inverted, not blue. Blue is the `.btn` primary and this control takes
+     no tier (§3.5's transport exemption); inversion is the app's existing
+     emphasis idiom (.keychip, aria-current), so this adds no colour. */
+  background: var(--surface-inv);
+  color: var(--bg);
+  border: var(--line-full);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  /* THE TRANSPORT EXCEPTION, and it is the reason this rule is not just
+     `.btn`. No transform, no lift, no sink: travel on a play button reads
+     as latency. Opacity only, and faster than --dur-fast. */
+  transition: opacity 80ms linear;
+}
+a.play.playbtn:hover { opacity: 0.85; }
+a.play.playbtn:active { opacity: 0.6; }
+
 td.download > a {
   display: inline-flex;
   align-items: center;
@@ -941,7 +980,30 @@ img.thumb, .thumb-empty {
 }
 img.thumb { object-fit: cover; border: 1px solid var(--line); }
 .thumb-empty { border: 1px solid var(--faint); }
-img.art { max-width: 256px; height: auto; border: 1px solid var(--line); }
+/* THE TRACK PAGE'S HERO, AND THE ONE RESTING SHADOW THIS VIEW GETS.
+   §4.3 rations shadows to at most one resting `--rest-1` per view, on the
+   page's hero object. The track page's hero is the art, and it is the only
+   element in the app that takes this.
+
+   THE BOX IS RESERVED, NOT INFERRED — the audit's CLS finding here. The
+   art arrives from a second host after the HTML, and with `height: auto`
+   and no ratio it occupied 0px until the bytes landed and then shoved the
+   whole page down. `aspect-ratio` fixes the box before the first byte.
+
+   `object-fit: contain` is what makes a SQUARE reservation honest:
+   medium.jpg is "long edge <= 512, aspect preserved", so a 4:3 cover is a
+   real possibility and `cover` would crop it. Contained, it is shown whole
+   inside the square — this is the one page in the app where a member came
+   to look at the artwork. */
+img.art {
+  display: block;
+  width: 100%;
+  max-width: 256px;
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+  border: var(--line-full);
+  box-shadow: var(--rest-1);
+}
 
 /* --- player bar ---
    The <audio> element is the playback engine only — no native controls
@@ -1508,12 +1570,77 @@ tr[draggable='true']:active { cursor: grabbing; }
 .status.error { color: var(--fg); font-weight: bold; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--pad-1) var(--pad-2); }
 dt { color: var(--mid); }
-dd { margin: 0; }
+/* OVERFLOW-WRAP ON EVERY dd, NOT JUST ONE — offender #5.
+   `.compareside dd` had this and nothing else did, and the page carrying
+   the app's longest strings is the one that did not: a 103-character
+   filename or a two-line copyright has no space to break at, so it pushed
+   the `1fr` column past the viewport and took the whole page sideways with
+   it. `anywhere` rather than `break-word` because it also lets the column
+   SHRINK, which is what stops the grid track being sized by the longest
+   unbreakable run in the first place. */
+dd { margin: 0; overflow-wrap: anywhere; }
 
 /* --- track detail: header block tight together, sections given the same
    pad-3 rhythm as every other page's top-level blocks. --- */
 .trackdetail header > * + * { margin-top: var(--pad-2); }
 .trackdetail > * + * { margin-top: var(--pad-3); }
+
+/* TASK 3.6 — /track/[id], the page with the app's longest strings.
+
+   SECTION HEADINGS AS ARCHITECTURE. Six h2s at --text-lg bold were six
+   pieces of running text; the micro uppercase label over a --rule-sec is
+   the same idiom the nav already uses, and it makes the page read as
+   blocks rather than as one long column. */
+.trackdetail section > h2 {
+  margin: 0 0 var(--pad-2);
+  padding-bottom: var(--pad-1);
+  font-size: var(--text-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: var(--rule-sec);
+}
+/* The transport pair. Wraps, because at 320px "Play" and "Download" side
+   by side plus their icons is wider than the content box. */
+.trackdetail .transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pad-1);
+}
+/* The no-JS crate picker — survive-list #10 makes this THE fallback path
+   for every row's `+` in the app, so it has to be usable with a thumb. A
+   fixed-width select and a button on one unwrapping line was neither. */
+.addcrateform { flex-wrap: wrap; }
+.addcrateform select {
+  width: 100%;
+  max-width: 20rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+/* An icon-only tier button: square, not a 16px-padded pill with a 14px
+   glyph rattling around inside it. */
+.btn-icon { width: var(--tap); padding: 0; }
+
+/* THE STACKED dl — offender #5's other half.
+   `max-content 1fr` gives "Integrated loudness" ~170px of a 343px content
+   box, so every value on the page is read through a 170px slot. Below
+   640px the term becomes a label ABOVE its value and the value gets the
+   full width. The dt is styled as the same micro label the section
+   headings use, so the two read as one system rather than as two ideas. */
+@media (max-width: 640px) {
+  dl { grid-template-columns: 1fr; gap: 0; }
+  dt {
+    margin-top: var(--pad-2);
+    font-size: var(--text-micro);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-55);
+  }
+  dl > dt:first-child { margin-top: 0; }
+  dd { margin-top: var(--pad-0); }
+}
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;
