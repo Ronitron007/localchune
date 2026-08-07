@@ -22,8 +22,17 @@
 // of the document. Play is deliberately NOT offered here; playing a crate
 // REPLACES the queue after a prompt, and the crate page (one click away) is
 // where that belongs, next to the tracks it would replace.
+//
+// Every card ALSO carries a download link, and unlike `+ QUEUE` it is
+// visible with JS off — it is a plain <a download>, so there is nothing to
+// unhide. Icon-only on purpose: this card is already crowded enough that
+// the `+ QUEUE`/title collision needed a fix, and a second text button
+// would make that worse. It is suppressed on an empty crate, matching the
+// 409 the route answers for one. The full-width, labelled version lives on
+// the crate page itself. See src/pages/api/crate/[id]/download.ts.
 import Shell from '../layouts/Shell.astro'
 import EmptyState from '../components/EmptyState.astro'
+import Icon from '../components/Icon.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../lib/org-api'
 
 const { data, error } = await Astro.locals.supabase.rpc('crate_list')
@@ -82,6 +91,16 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
                   data-crate-name={c.name}
                   aria-label={`Add ${c.name} to the queue`}
                 >+ QUEUE</button>
+                {c.track_count > 0 && (
+                  <a
+                    class="cratedownload btn-secondary"
+                    href={`/api/crate/${c.id}/download`}
+                    download
+                    data-astro-reload
+                    title={`Download ${c.name}`}
+                    aria-label={`Download ${c.name} as a zip of its ${c.track_count} tracks`}
+                  ><Icon name="download" size={16} /></a>
+                )}
                 <div class="explain">{formatCrateMeta(c)} · updated {updatedDate(c)}</div>
               </li>
             ))}
@@ -106,6 +125,16 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
                   data-crate-name={c.name}
                   aria-label={`Add ${c.name} to the queue`}
                 >+ QUEUE</button>
+                {c.track_count > 0 && (
+                  <a
+                    class="cratedownload btn-secondary"
+                    href={`/api/crate/${c.id}/download`}
+                    download
+                    data-astro-reload
+                    title={`Download ${c.name}`}
+                    aria-label={`Download ${c.name} as a zip of its ${c.track_count} tracks`}
+                  ><Icon name="download" size={16} /></a>
+                )}
                 {/* M6c Task 3: owner_name links to their member page.
                     Unconditional, same never-claimed-member caveat as
                     TrackRow.astro's uploader link — see that comment. */}
