@@ -354,10 +354,9 @@ export async function dedupSweep(env: Env): Promise<void> {
     const page = await dedupPending(call, Math.min(DEDUP_PAGE, DEDUP_MAX_FILES - seen))
     if (page.length === 0) break
 
-    // A file the matcher CANNOT assign (no fingerprint) stays trackless and
-    // dedup_pending returns it again next page, forever. Counting real
-    // progress per page and stopping when there is none is what bounds that
-    // — the seed below is what finally gets those rows an identity.
+    // Rows that got an ANSWER this page, of any kind. Since migration 34
+    // the stamp below is what actually drains the queue, so this now means
+    // only "did anything at all work here" — see the break at the bottom.
     let progress = 0
     // Every file whose probe RAN — merged, no-match or ok:false alike. The
     // stamp is what takes them out of dedup_pending(), so a page that is
