@@ -5,8 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  ARTIST_CANDIDATE_LIMIT, artistHref, EMPTY_QUERY, feedTrackToPoolTrack, isDefaultQuery,
-  matchesArtist, parsePoolQuery, poolListArgs,
+  ARTIST_CANDIDATE_LIMIT, artistHref, EMPTY_QUERY, feedTrackToPoolTrack, impliedSort,
+  isDefaultQuery, matchesArtist, parsePoolQuery, poolListArgs, poolPageArgs,
+  poolPartialHref, POOL_PARTIAL_PATH,
   poolQueryToSearchParams, poolHref, type FeedTrack,
 } from './pool-api'
 
@@ -107,11 +108,102 @@ describe('poolListArgs', () => {
       p_q: null, p_bpm_min: null, p_bpm_max: null, p_half_double: false,
       p_key: null, p_harmonic: false, p_tier_min: null, p_uploader: null,
       p_sort: 'added_desc', p_cursor: null, p_limit: 100,
+      // Migration 37, and BOTH are the pre-migration behaviour spelled out.
+      // A caller that says nothing about collapse or mode keeps listing
+      // FILES with a substring `p_q`.
+      p_collapse: false, p_q_mode: 'substring',
     })
   })
 
   it('passes an empty text query as null, not as an empty string', () => {
     expect(poolListArgs({ ...EMPTY_QUERY, q: '' }, null, 100).p_q).toBeNull()
+  })
+
+  /**
+   * THE OPT-IN IS THE PROTECTION. Migration 37 added two arguments to a
+   * function five surfaces call, and the defaults are what stop those
+   * surfaces from changing under them. Each of these pins a caller whose
+   * behaviour must NOT move.
+   */
+  it('defaults to per-file, substring — what /member/[username] needs', () => {
+    // A member page lists what a member UPLOADED. Two encodes of one
+    // recording are two uploads; collapsing them would under-report a
+    // member's own contribution on their own page.
+    const args = poolListArgs({ ...EMPTY_QUERY, uploader: 'u' }, null, 100)
+    expect(args.p_collapse).toBe(false)
+    expect(args.p_q_mode).toBe('substring')
+  })
+
+  it('never sends fuzzy for an artist name — the /artist/808 State hazard', () => {
+    // ui-final-batch-report.md measured this off search_tracks()' body: a
+    // `^[0-9]{2,3}$` word routes to a tempo window and `4b` to a Camelot
+    // key. /artist/[name] passes the artist's NAME as p_q, so fuzzy mode
+    // there would search for a tempo and lose the act entirely.
+    expect(poolListArgs({ ...EMPTY_QUERY, q: '808 State' }, null, 200).p_q_mode)
+      .toBe('substring')
+    expect(poolListArgs({ ...EMPTY_QUERY, q: '4B' }, null, 200).p_q_mode)
+      .toBe('substring')
+  })
+
+  it('takes both only when a caller asks', () => {
+    const args = poolListArgs(EMPTY_QUERY, null, 100, { collapse: true, mode: 'fuzzy' })
+    expect(args.p_collapse).toBe(true)
+    expect(args.p_q_mode).toBe('fuzzy')
+  })
+})
+
+describe('poolPageArgs — what /pool and its partial both send', () => {
+  it('collapses to one row per recording in both states', () => {
+    expect(poolPageArgs(EMPTY_QUERY, null, 100).p_collapse).toBe(true)
+    expect(poolPageArgs({ ...EMPTY_QUERY, q: 'bicep' }, null, 100).p_collapse).toBe(true)
+  })
+
+  it('is substring for an empty box and fuzzy for a typed one', () => {
+    expect(poolPageArgs(EMPTY_QUERY, null, 100).p_q_mode).toBe('substring')
+    expect(poolPageArgs({ ...EMPTY_QUERY, q: 'bicep' }, null, 100).p_q_mode).toBe('fuzzy')
+  })
+
+  it('carries the cursor, so the ranked view pages like the browsed one', () => {
+    const q = { ...EMPTY_QUERY, q: 'bicep', sort: 'relevance' as const }
+    expect(poolPageArgs(q, 'CURSOR', 100)).toMatchObject({
+      p_cursor: 'CURSOR', p_sort: 'relevance', p_q_mode: 'fuzzy', p_collapse: true,
+    })
+  })
+})
+
+describe('impliedSort — the sort a page means when nobody said', () => {
+  it('is newest-first for browsing and best-first for searching', () => {
+    expect(impliedSort('')).toBe('added_desc')
+    expect(impliedSort('bicep')).toBe('relevance')
+  })
+
+  it('keeps both URLs clean', () => {
+    // Neither state pays for a `&sort=` that says what the page would have
+    // done anyway — and clearing the box does not leave a relevance sort
+    // behind, ranking nothing.
+    expect(poolHref({ ...EMPTY_QUERY, q: 'bicep', sort: 'relevance' })).toBe('/pool?q=bicep')
+    expect(poolHref(EMPTY_QUERY)).toBe('/pool')
+  })
+
+  it('is overridden by an explicit sort, in either state', () => {
+    expect(parsePoolQuery(new URLSearchParams('q=bicep&sort=bpm_asc')).sort).toBe('bpm_asc')
+    expect(parsePoolQuery(new URLSearchParams('q=bicep')).sort).toBe('relevance')
+    expect(parsePoolQuery(new URLSearchParams('')).sort).toBe('added_desc')
+  })
+
+  it('treats an empty sort param as a missing one', () => {
+    // The Sort chip's implied option carries `value=""`, so a native submit
+    // sends `sort=`. It must mean the same thing as sending nothing.
+    expect(parsePoolQuery(new URLSearchParams('q=bicep&sort=')).sort).toBe('relevance')
+    expect(parsePoolQuery(new URLSearchParams('sort=')).sort).toBe('added_desc')
+  })
+})
+
+describe('poolPartialHref — the instant-results address', () => {
+  it('is the partial path, never the page', () => {
+    expect(poolPartialHref(new URLSearchParams())).toBe(POOL_PARTIAL_PATH)
+    expect(poolPartialHref(new URLSearchParams('q=bicep&key=8A')))
+      .toBe(`${POOL_PARTIAL_PATH}?q=bicep&key=8A`)
   })
 })
 

@@ -90,6 +90,19 @@
      a ::after overlay extends the hit box and paints nothing. */
   --tap: 44px;
 
+  /* THE NAV'S OWN HEIGHT, so a second sticky element can sit under it
+     without measuring anything at runtime. It is `.appnav`'s recipe
+     restated in one place: a 44px min-height, the notch-aware top padding,
+     the bottom padding and the 2px section rule.
+
+     It is a MINIMUM, exactly as `.appnav`'s own `min-height` is. The nav
+     can only exceed it by wrapping, and below 640px it cannot wrap at all
+     (the links are hidden and replaced by the ⋮). On a wide screen the
+     links have room. If a future nav grows a second row, this token grows
+     with it — the pinned pool field is the only thing that reads it. */
+  --nav-h: calc(var(--tap) + max(var(--pad-1), env(safe-area-inset-top))
+                + var(--pad-1) + 2px);
+
   /* Task 8 — the ONE deliberate colour exception to the brutalist
      monochrome above. These four values exist for .btn/.btn-secondary/
      .btn-danger ONLY (see that block below); nothing else in this file
@@ -210,11 +223,16 @@
      exists, which is this redesign. Declared once; do not invent steps. */
   --z-rowmenu: 1;    /* in-row overlays (the crate picker) — unchanged value */
   --z-thead: 10;     /* sticky table headers                                 */
+  /* POOL.1. BETWEEN the table head and the nav, and both edges matter: the
+     rows must scroll UNDER the pinned search field, and the field must
+     scroll under the nav. It takes the step `--z-search: 45` used to hold —
+     that overlay is retired, /pool is the search page, and a token applied
+     to nothing is one more step somebody has to reason about. */
+  --z-poolsearch: 15;
   --z-nav: 20;       /* the compact top nav bar                              */
   --z-chip: 30;      /* the upload chip                                      */
   --z-scrim: 35;     /* the queue drawer's scrim — see the note below        */
   --z-player: 40;    /* the player bar, and the queue drawer inside it       */
-  --z-search: 45;    /* the nav's search overlay — see below                 */
   --z-nowplaying: 50;/* the now-playing sheet surface                        */
   --z-sheet: 60;     /* bottom action sheets and their scrims                */
   --z-dialog: 70;    /* confirm dialogs                                      */
@@ -769,27 +787,18 @@ button + button { margin-left: var(--pad-1); }
   box-shadow: var(--focus-ring);
 }
 
-/* --- filter form --- */
-.filterbar {
-  display: flex;
-  align-items: end;
-  gap: var(--pad-2);
-  flex-wrap: wrap;
-  padding: var(--pad-2) 0;
-}
-.filterbar fieldset {
-  border: 1px solid var(--faint);
-  display: flex;
-  align-items: center;
-  gap: var(--pad-1);
-  padding: var(--pad-1) var(--pad-2);
-}
-/* The label carries the 44px box for the checkbox it wraps (see the
-   input[type='checkbox'] opt-out above) — the whole "half / double" or
-   "harmonic" phrase becomes the target, which is bigger and easier than
-   the box itself could ever be. */
-.filterbar label { display: inline-flex; align-items: center; gap: 0.35rem; min-height: var(--tap); }
-.filterbar input[type='number'] { width: 4.5rem; }
+/* --- filter form ---
+   `.filterbar` IS GONE. POOL.1 replaced the wrapping row of five fieldsets
+   with one pinned field and one scrolling chip row; the rules that styled
+   it are in this file's last block, under `.poolsearch` / `.filterchips`.
+   Deleted rather than left behind: a selector that matches nothing is a
+   rule the next reader has to prove is dead.
+
+   The one thing carried forward, because it was a real fix rather than
+   layout: a `<label>` wrapping a checkbox carries the 44px box for it (see
+   the input[type='checkbox'] opt-out above), so the whole "Half / double"
+   or "Harmonic neighbours" phrase is the target. `.chip-menu label` says
+   the same thing about the same controls. */
 
 /* --- the table ---
    `.tracktable` had NO CSS rule at all, which is why a 15-column table
@@ -2887,243 +2896,236 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .strip .stripfill { fill: var(--fg); }
 .strip .strippeak { fill: var(--mid); }
 
+
 /* =====================================================================
-   THE SEARCH OVERLAY — appended, never interleaved (same discipline the
-   perf phase used above: parallel workers, no shared lines).
+   POOL.1 — THE POOL PAGE IS THE SEARCH PAGE
+   Appended, never interleaved (the same discipline the perf phase and the
+   search overlay before it used: parallel workers, no shared lines).
 
-   Built by src/lib/search-overlay.ts, which is the repo's ONE lazily
-   loaded module. The rows inside it reuse `a.play`, `img.thumb`,
-   `.thumb-empty`, `.keychip` and `button.rowmenu` — every one of those is
-   already styled above and none of it is restated here. What follows is
-   the surface and the row's own two-line layout, and nothing else.
+   THIS BLOCK REPLACES THE SEARCH OVERLAY'S. The overlay is retired — the
+   owner's directive was "on searching, it is a page ... replacing pool
+   completely" — so `.searchoverlay*` and `.searchrow*` are gone with the
+   module that built them, rather than left behind styling nothing. What
+   they used to do is now done by rules that already existed: a result row
+   IS a `.tracktable` row, so `a.play`, `img.thumb`, `.keychip`,
+   `button.rowmenu` and the whole `<640px` card grammar apply to it
+   unchanged and none of it is restated here.
 
-   WHY z-index 45 AND NOT 60. The overlay must cover the player bar (40),
-   because it is a full-screen surface and a bar poking through it reads as
-   a rendering fault. It must sit UNDER the action sheet (60), because
-   tapping a result's ⋮ opens that sheet ON TOP of this — same component,
-   same dismissal, portalled to <body> either way. 45 is the only step that
-   satisfies both, and it is declared in the ladder rather than invented
-   here.
+   WHAT THIS BLOCK REPLACES ON THE PAGE ITSELF. `.filterbar` was a
+   `flex-wrap` row of five fieldsets and labels — Search, a BPM pair with a
+   checkbox, a 24-option Key select with a checkbox, Min quality, Uploader,
+   a genre facet, Filter and Clear. At 375px it stacked to roughly 300px of
+   chrome before the first track, on a 667px screen: the audit's largest
+   remaining vertical loss. It is one 44px field and one 44px chip row now,
+   and `.filterbar`'s rules are deleted above rather than left orphaned.
    ===================================================================== */
-.searchoverlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-search);
-}
-/* Its scrim is the shared `.scrim` — see the block above `.sheet-panel`.
-   `.searchoverlay.is-open > .scrim` is covered there by `.is-open > .scrim`,
-   so nothing is restated here. */
 
-/* BELOW 640px THE PANEL IS THE SCREEN. A search that opens as a small box
-   on a phone wastes the only dimension a phone has, and the keyboard eats
-   half of what is left. Above 640px it becomes the centred column §5.2's
-   sheet already establishes for a wide viewport. */
-.searchoverlay-panel {
-  position: absolute;
-  inset: 0;
+.poolpage { display: block; }
+
+/* THE FIELD IS PINNED, and `--nav-h` is what it is pinned under. `top`
+   cannot be a guess: the nav is `position: sticky` at the top of the same
+   scroller, so a field that stuck at 0 would slide under it. Below 640px
+   the nav is 44px + its safe-area inset; above, the same. One custom
+   property so the two agree by construction.
+
+   `z-index` sits between the sticky table head (--z-thead: 10) and the nav
+   (--z-nav: 20): rows must scroll UNDER the field, and the field must
+   scroll under the nav. */
+.poolsearch {
+  position: sticky;
+  top: var(--nav-h);
+  z-index: var(--z-poolsearch);
   display: flex;
   flex-direction: column;
+  gap: var(--pad-1);
+  padding: var(--pad-1) 0;
   background: var(--bg);
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  transform: translate3d(0, -8px, 0);
-  opacity: 0;
-  transition: transform var(--dur-panel) var(--ease-panel),
-              opacity var(--dur-panel) var(--ease-panel);
 }
-.searchoverlay.is-open .searchoverlay-panel { transform: none; opacity: 1; }
 
-.searchoverlay-bar {
-  flex: none;
+/* One box, one border, the icon inside it — not a label beside a field.
+   The 16px font-size is not a style choice: iOS Safari ZOOMS THE VIEWPORT
+   on focus for anything smaller, and a search field that zooms the page on
+   every tap is unusable (§5.5). */
+.poolsearch-field {
   display: flex;
   align-items: center;
   gap: var(--pad-1);
   min-height: var(--tap);
-  padding: var(--pad-1) var(--pad-2);
-  border-bottom: var(--line-full);
+  padding: 0 var(--pad-2);
+  border: var(--line-soft);
+  background: var(--bg);
 }
-.searchoverlay-leading { flex: none; color: var(--ink-55); }
-
-/* The input carries NO border of its own: the bar's bottom rule is the
-   edge, and a box inside a box is the thing §1.2 spent the whole border
-   hierarchy avoiding. 16px at every width — anything smaller and iOS zooms
-   the page on focus, which on a full-screen overlay is unrecoverable. */
-.searchoverlay-input {
+.poolsearch-field:focus-within {
+  border-color: var(--btn-blue);
+  box-shadow: var(--focus-ring);
+}
+.poolsearch-field .icon { flex: none; color: var(--mid); }
+.poolsearch-field input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: var(--tap);
-  border: 0;
+  min-height: calc(var(--tap) - 4px);
   padding: 0;
+  border: 0;
   background: none;
-  font: 16px/1.2 var(--font-ui);
-  color: var(--fg);
+  font: inherit;
+  font-size: 16px;
 }
-.searchoverlay-input:focus { outline: none; }
-.searchoverlay-input::placeholder { color: var(--ink-35); }
-/* The UA's own clear button is a second, unstyleable close control right
-   beside ours. */
-.searchoverlay-input::-webkit-search-cancel-button { display: none; }
+/* The reset gave inputs a ring; this one wears its parent's. */
+.poolsearch-field input:focus-visible { outline: none; box-shadow: none; }
+/* WebKit draws its own decorations inside `type=search`. The clear cross is
+   welcome; the results/decoration buttons are not, and neither is the
+   inherited inner border. */
+.poolsearch-field input::-webkit-search-decoration,
+.poolsearch-field input::-webkit-search-results-button { display: none; }
 
-.searchoverlay-close {
-  flex: none;
+/* ONE ROW, AND IT SCROLLS RATHER THAN WRAPS. A second line of chips is the
+   ~300px of stacked chrome this page exists to have removed, arriving again
+   in a nicer costume. `scrollbar-width: none` because a 3px scrollbar under
+   a 44px row is noise on the one platform that draws it persistently. */
+.filterchips {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  /* The row is a horizontal scroller inside a vertical one: naming the axis
+     is what stops a sideways drag from stealing the page's scroll. */
+  touch-action: pan-x;
+  /* Bleed to the viewport edge so the last chip is visibly cut off — the
+     affordance that says "this scrolls" — while the first still lines up
+     with the field above it. */
+  margin: 0 calc(var(--pad-2) * -1);
+  padding: 0 var(--pad-2);
+}
+.filterchips::-webkit-scrollbar { display: none; }
+
+/* The chip is a <details> so it works with no JavaScript (site.ts cancels
+   the summary's click and opens the sheet instead). `position: static` is
+   deliberate: the disclosure's menu below is a FLOW element in the no-JS
+   case, and floating it would put it over the first row with nothing
+   scrolling it back. */
+.chip { flex: none; }
+.chip-btn,
+a.chip-reset {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: var(--tap);
-  height: var(--tap);
-  min-width: var(--tap);
+  gap: var(--pad-0);
   min-height: var(--tap);
-  padding: 0;
-  border: 0;
-  background: none;
+  padding: 0 var(--pad-2);
+  border: var(--line-soft);
+  background: var(--bg);
   color: var(--fg);
-  cursor: pointer;
-}
-
-.searchoverlay-results {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
-
-.searchoverlay-status {
-  flex: none;
-  margin: 0;
-  padding: var(--pad-1) var(--pad-2);
-  border-top: var(--line-hair);
-  color: var(--ink-55);
-  font-size: var(--text-xs);
-}
-/* An empty status is not a bordered empty strip. */
-.searchoverlay-status:empty { display: none; }
-
-/* --- the three messages (§6.6, survive-list #16) ---
-   THE OUTAGE AND THE EMPTY RESULT MUST NOT LOOK ALIKE. That is the whole
-   rule, and a search box is where confusing them costs most: a member who
-   reads "the database is down" as "your pool is empty" stops looking.
-
-   So `is-empty` is the dashed language `.empty` and the upload dropzone
-   already speak — "nothing here", a normal outcome — while `is-error`
-   drops the dash, takes the danger colour the sheet's danger row uses, and
-   reads as a fault. `is-hint` is the quietest of the three: it is not a
-   result at all, only the syntax nobody would otherwise discover. */
-.searchoverlay-message {
-  margin: 0;
-  padding: var(--pad-3) var(--pad-2);
-  text-align: center;
   font-size: var(--text-sm);
-  color: var(--mid);
-}
-.searchoverlay-message.is-hint  { color: var(--ink-55); font-size: var(--text-xs); }
-.searchoverlay-message.is-empty { border: var(--line-dash); margin: var(--pad-2); color: var(--mid); }
-.searchoverlay-message.is-error { color: var(--btn-red); }
-
-/* --- one result row ---
-   §5.1's card, exactly: 44px artwork, two lines of text, chips, one ⋮.
-   The row does NOT lift on hover (§4.3) — a background step is the whole
-   recipe, and :active carries it because touch has no hover. */
-.searchrow {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 0 var(--pad-2);
-  padding: var(--pad-1) var(--pad-2);
-  border-bottom: var(--line-hair);
-  cursor: pointer;
-  transition: background var(--dur-fast) ease;
-}
-.searchrow:last-child { border-bottom: 0; }
-.searchrow:hover,
-.searchrow:active,
-.searchrow.is-active { background: var(--surface-2); }
-.searchrow > .play { grid-column: 1; grid-row: 1 / 3; }
-
-.searchrow-text {
-  grid-column: 2;
-  grid-row: 1 / 3;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
-}
-/* One line each, ellipsised. A DJ scans this column; a wrapped title
-   turns a 64px row into a 96px one and four results into two. */
-.searchrow-title,
-.searchrow-artist {
-  overflow: hidden;
+  line-height: 1;
   white-space: nowrap;
-  text-overflow: ellipsis;
+  cursor: pointer;
+  text-decoration: none;
+  /* The UA marker would draw a triangle beside a control that opens a
+     sheet, which is a promise about a disclosure this does not keep. */
+  list-style: none;
 }
-.searchrow-title { color: var(--fg); font-size: var(--text-sm); text-decoration: none; }
-.searchrow-title:hover { text-decoration: underline; }
-.searchrow-artist { color: var(--mid); font-size: var(--text-xs); }
+.chip-btn::-webkit-details-marker { display: none; }
+.chip-btn:hover,
+a.chip-reset:hover { background: var(--surface-2); }
 
-.searchrow-meta {
-  grid-column: 3;
-  grid-row: 1 / 3;
-  display: flex;
-  align-items: center;
-  gap: var(--pad-1);
-}
-.searchrow-meta .bpm { color: var(--ink-55); font-family: var(--font-num); font-size: var(--text-xs); }
-
-/* THE SHEET'S CONTROLS ARE IN THE DOM AND MUST NOT BE ON SCREEN, AND
-   `hidden` ALONE DOES NOT DO IT. This file already records the rule once:
-   "a `display` declaration on the same element BEATS the UA sheet's
-   [hidden]" — and `button`, `summary` and `details` all carry one here. So
-   `queueadd.hidden = true` computed to `display: flex` and every result row
-   drew two empty boxes under its title. Caught in the browser at 375px;
-   nothing in the DOM or the unit tests could have seen it, because the
-   attribute really was set and the node really was there.
-
-   The row keeps these controls because `openRowSheet` builds its sheet by
-   READING them (see search-overlay.ts) — the pool's own mobile card does
-   exactly this under `.has-rowmenu`. */
-.searchrow .queueadd[hidden],
-.searchrow .likeform[hidden],
-.searchrow .cratepick[hidden] { display: none; }
-
-.searchrow .rowmenu {
-  grid-column: 4;
-  grid-row: 1 / 3;
+/* A SET FILTER READS AS SET FROM ACROSS THE ROOM. Inversion, the same
+   signal `aria-pressed` uses everywhere else in this system (§1.3), so a
+   member scanning the row sees which chips are doing something without
+   reading any of them. */
+.chip-value {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: var(--tap);
-  height: var(--tap);
-  min-width: var(--tap);
-  min-height: var(--tap);
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--fg);
-  cursor: pointer;
+  padding: 2px var(--pad-0);
+  background: var(--surface-inv);
+  color: var(--bg);
+  font-size: var(--text-xs);
+  font-weight: 700;
 }
+.chip-value.num { font-family: var(--font-num); }
+.chip:has(.chip-value) .chip-btn { border-color: var(--ink-100); }
+
+/* THE NO-JS PANEL. With JavaScript this never opens — the summary's click
+   is cancelled and the bottom sheet is the panel. Without it, the native
+   controls drop out below the row as a plain block, which is the same story
+   the nav's ⋮ tells with its own <details>. */
+.chip-menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--pad-2);
+  margin-top: var(--pad-1);
+  padding: var(--pad-2);
+  border: var(--line-soft);
+  background: var(--surface-1);
+}
+.chip-menu label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pad-1);
+  min-height: var(--tap);
+}
+.chip-menu input[type='number'] { width: 5rem; }
+
+/* The submit that exists only for a member with no JavaScript. site.ts adds
+   `has-instant` to <html> on /pool, exactly as `has-rowmenu` gates the row
+   controls the sheet replaces — so this is visible precisely when it is the
+   only way to run a search. */
+.has-instant .poolsearch-go { display: none; }
+
+/* THE ANNOUNCEMENT, and it is deliberately not a visible status line: the
+   count is already on screen in `.pager` and printing it twice is two
+   numbers to keep in step. `sr-only`'s recipe, restated here rather than
+   reusing the class, because the ERROR state below has to become visible
+   and a class that means "never visible" cannot do that. */
+.poolstatus {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* survive-list #16 — AN OUTAGE MUST NOT READ AS AN EMPTY POOL. The rows
+   already on screen are left exactly where they are (they are still true,
+   they are just no longer the answer to what is typed), and this says so in
+   the error voice, which cannot be mistaken for the dashed empty box. */
+.poolstatus.is-error {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: var(--pad-1) var(--pad-2);
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  border: 1.5px solid var(--btn-red);
+  color: var(--btn-red);
+  font-size: var(--text-sm);
+}
+
+/* In flight. Opacity only, and only a little: a results list that fades out
+   while you type is a list you cannot read the top of, and the whole point
+   of 150 ms is that the answer arrives before you notice the wait. */
+.tracktable[aria-busy='true'] { opacity: 0.6; }
 
 @media (min-width: 640px) {
-  /* The centred column §5.2 already established for a wide viewport. Top
-     aligned rather than middle: results grow downward, and a box that
-     re-centres itself on every keystroke is unreadable. */
-  .searchoverlay-panel {
-    inset: var(--pad-4) 0 auto 50%;
-    width: min(40rem, calc(100vw - var(--pad-4)));
-    max-height: min(32rem, calc(100vh - var(--pad-4) * 2));
-    transform: translate3d(-50%, -8px, 0);
-    border: var(--line-full);
-    box-shadow: var(--sheet);
-  }
-  .searchoverlay.is-open .searchoverlay-panel { transform: translate3d(-50%, 0, 0); }
+  /* The desktop table stays a table (owner decision), so the chip row and
+     the field sit above it at their natural width rather than in a centred
+     column of their own. The bleed is dropped: there is no viewport edge to
+     reach on a wide screen. */
+  .filterchips { margin: 0; padding: 0; }
+  .poolsearch { padding: var(--pad-2) 0; }
 }
 
 /* NO per-component prefers-reduced-motion block here, and that is the
-   system working rather than an omission. The ONE global block near the
-   top of this file flattens `transition-duration` on `*, *::before,
-   *::after` with `!important`, which already covers both transitions
-   above; a second block would be a second place the preference is
-   honoured, and global-tokens.test.ts fails the build on exactly that.
-
-   The JS side still needs its own answer, because a timeout is a separate
-   clock from a transition — see `exitDelayMs` in src/lib/sheet.ts. The
-   overlay does not need one: it removes its node synchronously on close
-   rather than waiting out an exit animation. */
+   system working rather than an omission. The ONE global block near the top
+   of this file flattens `transition-duration` on `*, *::before, *::after`
+   with `!important`; a second block would be a second place the preference
+   is honoured, and global-tokens.test.ts fails the build on exactly that.
+   Nothing in this block animates anyway — the results swap is a node
+   replacement, not a transition, because a 150 ms answer that then spends
+   200 ms fading in is a 350 ms answer. */

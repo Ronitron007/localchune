@@ -9,16 +9,18 @@
 // WHY A COMPONENT FOR SEVEN LINES OF MARKUP. This button is the entry
 // point to the action sheet, and site.ts finds it by exactly one selector
 // (`button.rowmenu`, a document-level delegation). It had been hand-typed
-// in TrackRow.astro and again in FeedRow.astro, and a third copy is built
-// in search-overlay.ts for result rows. Three copies of the hook a single
-// delegation depends on is the two-navs incident in miniature: the copies
-// drifted immediately — one carried a text `⋮` and the other an SVG for a
-// while, and nothing failed, because the delegation only ever cared about
-// the class.
+// in TrackRow.astro and again in FeedRow.astro, and a third copy was built
+// at runtime in the retired search overlay. Three copies of the hook a
+// single delegation depends on is the two-navs incident in miniature: the
+// copies drifted immediately — one carried a text `⋮` and the other an SVG
+// for a while, and nothing failed, because the delegation only ever cared
+// about the class.
 //
-// So the markup is stated once here. The runtime copy in search-overlay.ts
-// cannot import an .astro file, but `sheet-single-source.test.ts` holds it
-// to the same three attributes, which is the part that has to agree.
+// So the markup is stated once here. POOL.1 removed the third copy at the
+// root rather than keeping it in step: /pool's instant search results are
+// an Astro partial rendering TrackRow, so a searched row IS a pool row and
+// there is no runtime builder left to agree with. `sheet-single-source
+// .test.ts` now pins the ABSENCE, which is the stronger property.
 //
 // WHAT MUST NOT CHANGE, and why each is here rather than at the call site:
 //   class="rowmenu"       the ONE selector site.ts delegates on

@@ -1,0 +1,68 @@
+---
+// src/pages/partials/pool-rows.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// POOL.1 — THE ROWS, WITHOUT THE PAGE AROUND THEM.
+//
+// `/pool` fetches this while a member types and swaps its results section
+// for what comes back. That is the whole instant-search implementation, and
+// the reason it is a PARTIAL and not a JSON route is worth stating plainly:
+//
+//   THERE IS NO SECOND ROW BUILDER. The retired search overlay had one —
+//   ~140 lines of `document.createElement` in search-overlay.ts, written to
+//   match TrackRow.astro's markup contract by hand, with a comment
+//   admitting as much and a guard test trying to keep the two aligned. It
+//   still drifted (three separate ⋮ implementations, one of them a text
+//   glyph). This route renders `<TrackTable>`, which renders `<TrackRow>`,
+//   which is the same component the server-rendered page uses. A row that
+//   appears while you type is byte-identical to the row a reload would
+//   have produced, `data-queue-list` and every queue attribute included.
+//
+//   IT IS ALSO WHY PLAY-FROM-HERE STILL WORKS. site.ts resolves
+//   `[data-queue-list]` at CLICK time by walking up from the tapped row, so
+//   a swapped-in `<tbody>` needs no re-binding at all — the queue built
+//   from a search result is the search result, in the order on screen.
+//
+// `export const partial = true` is what stops Astro wrapping this in a
+// document: no <html>, no <head>, no ClientRouter script, no second copy of
+// the shell on every keystroke. It is NOT a public path — src/middleware.ts
+// redirects a request with no live member to /login, exactly as it does for
+// /pool, so this route cannot be used to read the pool unauthenticated.
+//
+// THE FRONTMATTER IS THE PAGE'S, DELIBERATELY DUPLICATED IN NEITHER
+// DIRECTION: both call `poolPageArgs`, which is the one place that knows
+// /pool lists recordings and searches fuzzily. If the two ever disagreed,
+// typing one character would change more than the rows.
+export const partial = true
+
+import TrackTable from '../../components/TrackTable.astro'
+import { PAGE_SIZE, parsePoolQuery, poolPageArgs, type PoolTrack } from '../../lib/pool-api'
+
+const query = parsePoolQuery(Astro.url.searchParams)
+const rawCursor = Astro.url.searchParams.get('cursor')
+const cursor = rawCursor !== null && rawCursor.length > 36 ? rawCursor : null
+
+// ONE round trip, not two. The page pairs pool_list with pool_uploaders
+// because the uploader chip needs the facet; this route re-renders only the
+// rows, and the uploader list cannot change while a member types.
+const { data, error } = await Astro.locals.supabase.rpc(
+  'pool_list', poolPageArgs(query, cursor, PAGE_SIZE))
+if (error) console.error('pool_list failed:', error.message)
+
+const tracks = (data ?? []) as PoolTrack[]
+const nextCursor =
+  tracks.length === PAGE_SIZE ? tracks[tracks.length - 1].row_cursor : null
+
+// `poolEmpty` decides between "nothing here yet" and "no matches", and only
+// pool_uploaders() can tell them apart. This route does not call it, so it
+// answers the question it CAN answer: a partial is only ever fetched from a
+// page that already rendered, and a member looking at instant results has
+// necessarily typed or filtered something. `false` therefore yields the
+// no-match message, which is the true one in every case that reaches here.
+// survive-list #16 — an outage must never read as an empty pool — is
+// unaffected: an `error` above still renders zero rows AND logs, and the
+// page's own first render is the one that reports a dead database.
+---
+<TrackTable tracks={tracks} query={query} nextCursor={nextCursor} poolEmpty={false} />

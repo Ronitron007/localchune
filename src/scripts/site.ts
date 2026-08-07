@@ -30,7 +30,7 @@ import {
 import { createPlayMeter } from '../lib/play-meter'
 import { artFallback, artMediumUrl, artThumbUrl, LIKE_ICON, likeActionLabel, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
-import { artistHref } from '../lib/pool-api'
+import { artistHref, poolPartialHref } from '../lib/pool-api'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
   confirmMessage, reduce, regenerate, requiresClearConfirm,
@@ -1529,15 +1529,17 @@ drawerGrab?.addEventListener('click', () => {
 /**
  * Escape, IN THE BUBBLE PHASE, and the phase is the whole design.
  *
- * The action sheet and the search overlay both listen on `document` with
- * `capture: true` and both call preventDefault() on Escape. A capture
- * listener on document runs before every bubble listener on it, so by the
- * time this one is reached, anything stacked above the drawer has already
- * claimed the key and said so. `defaultPrevented` is therefore an exact
- * answer to "is something in front of me", and it costs no import — which
- * matters, because search-overlay.ts is deliberately a dynamic import
- * (search-bundle.test.ts) and calling its isSearchOpen() from here would
- * pull the overlay into every page's entry chunk.
+ * The action sheet listens on `document` with `capture: true` and calls
+ * preventDefault() on Escape. A capture listener on document runs before
+ * every bubble listener on it, so by the time this one is reached, anything
+ * stacked above the drawer has already claimed the key and said so.
+ * `defaultPrevented` is therefore an exact answer to "is something in front
+ * of me", and it costs no import and no state.
+ *
+ * A second such panel — the full-screen search overlay — was added and then
+ * removed by POOL.1 without this handler being touched, which is the
+ * argument for the phase over an `isXOpen()` probe: the probe would have
+ * needed an edit in both directions.
  */
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return
@@ -2891,12 +2893,171 @@ async function restorePlayer() {
 }
 void restorePlayer()
 
-const autosubmit = debounce((form: HTMLFormElement) => form.requestSubmit(), 300)
+/* ============================================================
+   POOL.1 — INSTANT RESULTS ON /pool
+   ============================================================
+   What this replaces: a 300 ms `debounce(form.requestSubmit)` that
+   FULL-PAGE-RELOADED into `pool_list`'s `q`. Every keystroke pause cost a
+   document, a Shell, a nav and two RPCs, and the caret survived only
+   because ClientRouter happened to persist the field.
+
+   Now one `fetch` of /partials/pool-rows and one node swap. 150 ms, the
+   number the retired search overlay measured into: long enough that a fast
+   typist issues one request per word, short enough that the rows feel
+   attached to the keyboard.
+
+   ═══ ONLY THE BOX IS INSTANT, AND THAT IS A DESIGN, NOT A GAP ═══
+
+   The chips submit NATIVELY — ClientRouter soft-navigates and the server
+   re-renders the page. Three things fall out of that and each one would
+   otherwise need code here:
+
+     1. THE CHIP LABELS STAY TRUE. "Key 8A+", "BPM 120–130" and the
+        uploader's name are derived in FilterBar.astro from the same
+        PoolQuery the RPC was called with. Swapping only rows on a filter
+        change would leave those labels describing the previous answer, and
+        the fix would be a second copy of that derivation in TypeScript.
+     2. THE FACET COUNTS STAY TRUE. `pool_uploaders(p_collapse => true)`
+        answers a different number for a different filter set.
+     3. BACK WORKS WHERE IT MEANS SOMETHING. A deliberate filter change is
+        a history entry; a keystroke is not. Typing uses replaceState, so
+        the URL is always shareable and reloadable but nobody has to press
+        Back forty times to leave a search box.
+
+   ═══ WHY A PARTIAL AND NOT JSON ═══
+
+   /partials/pool-rows renders `<TrackTable>` — the same component the page
+   renders — so there is NO client-side row builder. The retired overlay
+   had one, ~140 lines of createElement written by hand against
+   TrackRow.astro's markup contract, and it still drifted into three
+   different ⋮ implementations. It also means play-from-here needs no
+   re-binding: site.ts resolves `[data-queue-list]` by walking up from the
+   tapped row at click time, so the queue built from a search IS the search,
+   in the order on screen. */
+
+const POOL_DEBOUNCE_MS = 150
+
+const poolRoot = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[data-poolpage]')
+
+/**
+ * The form's own state, as a URL. `new FormData` rather than reading each
+ * control by name: the form is the single source of what the page is
+ * showing, and a name list here would be a second one to keep in step with
+ * FilterBar.astro.
+ *
+ * Empty values are dropped so the address bar stays clean — which is also
+ * why the Sort chip's implied option carries `value=""` rather than
+ * `value="relevance"`. `parsePoolQuery` treats a missing sort and an empty
+ * one identically, so the two paths agree.
+ */
+function poolParams(form: HTMLFormElement): URLSearchParams {
+  const sp = new URLSearchParams()
+  for (const [name, value] of new FormData(form)) {
+    if (typeof value !== 'string') continue
+    const v = name === 'q' ? value.trim() : value
+    if (v !== '') sp.set(name, v)
+  }
+  return sp
+}
+
+let poolInflight: AbortController | null = null
+
+function poolSwap(html: string, root: HTMLElement): void {
+  // DOMParser, not innerHTML: it never runs a script and never adopts one.
+  // The partial contains no script today and this is what keeps that from
+  // mattering if it ever does.
+  const next = new DOMParser()
+    .parseFromString(html, 'text/html')
+    .querySelector('section.tracktable')
+  const here = root.querySelector('section.tracktable')
+  if (next === null || here === null) return
+  here.replaceWith(document.importNode(next, true))
+
+  // THE ANNOUNCEMENT LIVES OUTSIDE THE SWAPPED NODE. A live region that is
+  // replaced along with its content does not announce reliably — the region
+  // the screen reader was watching is gone. `.poolstatus` is a stable node
+  // on the page; the NUMBER still comes from the server's own `.counts`, so
+  // there is one place that decides what "12 tracks (filtered)" says.
+  const status = root.querySelector<HTMLElement>('.poolstatus')
+  const counts = root.querySelector<HTMLElement>('.tracktable .counts')
+  if (status !== null) status.textContent = counts?.textContent?.trim() ?? ''
+  // The row menu and +Q arrive `hidden` from the server; the swap brought a
+  // fresh page's worth of them.
+  revealQueueControls()
+}
+
+const poolRun = debounce((form: HTMLFormElement) => {
+  const root = poolRoot()
+  if (root === null) return
+
+  const sp = poolParams(form)
+  const qs = sp.toString()
+  // `history.state` is PRESERVED, never replaced with null: ClientRouter
+  // keeps its own {index, scroll} bookkeeping in there and a popstate onto
+  // a stateless entry makes it hard-reload the document.
+  history.replaceState(history.state, '', qs === '' ? '/pool' : `/pool?${qs}`)
+
+  // CANCEL THE PREVIOUS ONE. Without this a slow answer to `mo` can land
+  // after a fast answer to `mochakk` and repaint the older result — the
+  // classic search race, and it looks exactly like the search being wrong.
+  poolInflight?.abort()
+  const ac = new AbortController()
+  poolInflight = ac
+
+  const table = root.querySelector('section.tracktable')
+  table?.setAttribute('aria-busy', 'true')
+
+  void fetch(poolPartialHref(sp), { headers: { accept: 'text/html' }, signal: ac.signal })
+    .then(async (res) => {
+      // src/middleware.ts redirects a request with no live member to
+      // /login and fetch() follows it, so a dead session arrives as a 200
+      // full of HTML. `redirected` is the only honest signal here — a
+      // content-type test cannot tell one HTML page from another.
+      if (res.redirected) throw new SessionExpiredError()
+      if (!res.ok) throw new Error(`pool search failed (${res.status})`)
+      return res.text()
+    })
+    .then((html) => { if (!ac.signal.aborted) poolSwap(html, root) })
+    .catch((err) => {
+      if (err instanceof Error && err.name === 'AbortError') return
+      // survive-list #16: an outage must NOT read as an empty pool. The
+      // rows already on screen are left exactly where they are — they are
+      // still true, they are just no longer the answer to what is typed —
+      // and the status line says so in the error voice.
+      const status = root.querySelector<HTMLElement>('.poolstatus')
+      if (status !== null) {
+        status.textContent = err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : 'Search is unavailable right now.'
+        status.classList.add('is-error')
+      }
+    })
+    .finally(() => { table?.removeAttribute('aria-busy') })
+}, POOL_DEBOUNCE_MS)
+
 document.addEventListener('input', (e) => {
   const el = e.target
-  if (el instanceof HTMLInputElement && el.name === 'q'
-      && el.form?.hasAttribute('data-autosubmit')) autosubmit(el.form)
+  if (!(el instanceof HTMLInputElement) || el.name !== 'q') return
+  const form = el.form
+  if (form === null || !form.hasAttribute('data-poolsearch')) return
+  // `.poolstatus` is a SIBLING of the form, not a child: it must survive the
+  // results swap, so it lives on the page beside the table.
+  poolRoot()?.querySelector('.poolstatus')?.classList.remove('is-error')
+  poolRun(form)
 })
+
+/**
+ * The submit button that exists for a member with no JavaScript. Hidden the
+ * moment there is some, the same way `has-rowmenu` hides the row controls
+ * the sheet replaces — and re-run on every swap, because a soft navigation
+ * brings a fresh page's markup and `<script src>` modules evaluate once.
+ */
+function revealInstantSearch(): void {
+  if (poolRoot() !== null) document.documentElement.classList.add('has-instant')
+}
+revealInstantSearch()
+document.addEventListener('astro:after-swap', revealInstantSearch)
 
 /* ============================================================
    THE BOTTOM ACTION SHEET
@@ -3387,34 +3548,102 @@ document.addEventListener('click', (e) => {
 }, true)
 
 /* ============================================================
-   THE NAV'S SEARCH ICON — THE ONE LAZY CHUNK
+   POOL.1 — A FILTER CHIP OPENS *THE* SHEET
    ============================================================
-   `await import()`, and the await is the entire point. Shell.astro mounts
-   on every page, so a STATIC import of search-overlay here would ship the
-   overlay, its renderer and its fetch client to /login and to every page a
-   member never searches from — the same regression shell-bundle.test.ts
-   already guards for the queue engine, arriving by a different door.
-   Rollup emits a dynamic import as its own chunk, so the cost is paid on
-   the first tap of the icon and never again.
-   src/lib/search-bundle.test.ts fails the build if this becomes static.
+   The nav's ⋮, every row's ⋮, the crate picker, the "+ New crate…" modal
+   and now the five filter chips are one component. Building a fifth
+   dismissal behaviour for a filter panel is how an app ends up with four
+   and a member who has learned one.
 
-   THE TRIGGER IS AN <a href="/pool">, AND CANCELLING IT IS THE POINT —
-   the same shape as the nav's ⋮. With JS this opens the overlay; without
-   it, the anchor navigates to /pool's server-rendered filter, which is
-   still a working search. Nothing here is a control that does nothing.
+   THE SHEET IS BUILT BY READING THE CHIP, exactly as `openRowSheet` is
+   built by reading the row. It knows nothing about keys, tempos, tiers,
+   uploaders or sorts — it finds the controls inside `.chip-menu` and
+   offers what they offer:
 
-   A modified click is left alone: cmd/ctrl/shift/middle-click on a link
-   means "open /pool in a new tab", and hijacking that is the rudest thing
-   a single-page script can do to a link. */
+     a `<select>`   -> one row per `<option>`, the current one `pressed`
+     a `<input type=checkbox>` -> one toggle row
+
+   So the Key chip's 24 keys and the Uploader chip's member list need no
+   code here at all, and M8's genre facet will need none either. The chip
+   is a `<details>` so that WITHOUT JavaScript the same controls are one
+   click away as a native disclosure — the nav's ⋮ pattern, unchanged.
+
+   THE VALUE IS WRITTEN INTO THE REAL CONTROL AND THE FORM IS SUBMITTED.
+   Nothing here builds a URL: the form already serialises the whole filter
+   state, and a URL built here would be a second opinion about what the page
+   is showing. `requestSubmit()` rather than `submit()` — submit() fires no
+   submit event, so ClientRouter would never see it and the soft navigation
+   would become a hard one.
+
+   A modified click is left alone on the anchor chip (Clear) by never
+   touching anchors at all; this listens on `summary` only. */
+
+/**
+ * `Element` and two `instanceof` narrowings rather than a
+ * `querySelectorAll<HTMLSelectElement | HTMLInputElement>`: the Workers
+ * type definitions in this project shadow `Element.remove()` with an
+ * incompatible signature, so a UNION of element types fails
+ * querySelectorAll's `T extends Element` constraint even though each half
+ * satisfies it alone. Same family as the `appendChild` note on the sheet.
+ */
+const CHIP_CONTROLS = 'select, input[type="checkbox"]'
+
+function chipRows(menu: HTMLElement): SheetRowInput[] {
+  const rows: SheetRowInput[] = []
+  menu.querySelectorAll(CHIP_CONTROLS).forEach((el) => {
+    if (el instanceof HTMLSelectElement) {
+      for (const opt of el.options) {
+        rows.push({
+          // `name=value` — the NAME is what tells onChoose which control to
+          // write when a chip holds more than one (Key holds a select and a
+          // checkbox). An index would break the moment an option list is
+          // reordered server-side.
+          id: `${el.name}=${opt.value}`,
+          label: opt.textContent?.trim() ?? opt.value,
+          pressed: el.value === opt.value,
+        })
+      }
+    } else if (el instanceof HTMLInputElement) {
+      rows.push({
+        id: `${el.name}=toggle`,
+        label: el.labels?.[0]?.textContent?.trim() ?? el.name,
+        icon: 'check',
+        pressed: el.checked,
+      })
+    }
+  })
+  return rows
+}
+
 document.addEventListener('click', (e) => {
-  const icon = (e.target as Element).closest?.('a.navsearch')
-  if (!(icon instanceof HTMLAnchorElement)) return
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+  const summary = (e.target as Element).closest?.('.chip[data-filterchip] > summary')
+  if (!(summary instanceof HTMLElement)) return
+  const chip = summary.parentElement
+  const menu = chip?.querySelector<HTMLElement>('.chip-menu')
+  const form = chip?.closest('form')
+  if (chip === null || chip === undefined || menu === null || menu === undefined
+      || form === null || form === undefined) return
+
+  // The disclosure never opens with JS — the sheet is the panel. Same
+  // contract the nav's ⋮ holds.
   e.preventDefault()
-  void import('../lib/search-overlay')
-    .then((m) => { if (!m.isSearchOpen()) m.openSearchOverlay(icon) })
-    // The chunk failing to load is a network fault, not a bug to swallow:
-    // fall back to the destination the anchor already names, which is the
-    // no-JS path and a real search page.
-    .catch(() => { window.location.href = icon.href })
+
+  openActionSheet({
+    title: chip.dataset.filterchip ?? 'Filter',
+    returnFocusTo: summary,
+    rows: chipRows(menu),
+    onChoose: (id) => {
+      const eq = id.indexOf('=')
+      const name = id.slice(0, eq)
+      const value = id.slice(eq + 1)
+      const el = menu.querySelector(`[name="${CSS.escape(name)}"]`)
+      if (el instanceof HTMLSelectElement) el.value = value
+      else if (el instanceof HTMLInputElement) el.checked = !el.checked
+      else return
+      // A filter change is a real navigation: the chip labels and the
+      // uploader facet are both server-derived, and back should reach the
+      // filter you were looking at a moment ago.
+      form.requestSubmit()
+    },
+  })
 }, true)

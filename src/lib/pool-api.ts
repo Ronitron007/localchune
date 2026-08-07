@@ -16,6 +16,12 @@ import { isUuid } from './upload-api'
 export const POOL_SORTS = [
   'added_desc', 'bpm_asc', 'key_asc', 'artist_asc', 'duration_asc', 'tier_desc',
   'downloads_desc', 'likes_desc', 'plays_desc',
+  // POOL.1 / migration 37. A real keyset sort key, not a special case: the
+  // score is folded into the same zero-padded text cursor every other sort
+  // uses, so a ranked view pages like any other. With no free text the RPC
+  // degrades it to added_desc, which is why `impliedSort` below never
+  // offers it for an empty box.
+  'relevance',
 ] as const
 export type PoolSort = (typeof POOL_SORTS)[number]
 
@@ -24,6 +30,24 @@ export const DEFAULT_SORT: PoolSort = 'added_desc'
 export const PAGE_SIZE = 100
 const MAX_Q_LENGTH = 120
 const MAX_BPM = 1000
+
+/**
+ * THE SORT A PAGE MEANS WHEN NOBODY SAID. Browsing is newest-first;
+ * searching is best-first. Making this a function rather than one constant
+ * is what lets the URL stay clean in BOTH states — `?q=bicep` needs no
+ * `&sort=relevance` glued to it, and clearing the box does not leave a
+ * relevance sort behind ranking nothing.
+ *
+ * An explicit `?sort=` always wins, in either state, which is how a member
+ * sorts search results by tempo.
+ */
+export function impliedSort(q: string): PoolSort {
+  return q === '' ? DEFAULT_SORT : 'relevance'
+}
+
+/** The Astro partial /pool fetches for instant results. Named once so the
+ *  route, the client and the guard test cannot drift apart. */
+export const POOL_PARTIAL_PATH = '/partials/pool-rows'
 
 export type PoolQuery = {
   q: string
@@ -99,8 +123,9 @@ export function parsePoolQuery(sp: URLSearchParams): PoolQuery {
   const sortRaw = sp.get('sort')
   const uploader = sp.get('uploader')
   const tier = numberIn(sp.get('tier_min'), 1, 5)
+  const q = (sp.get('q') ?? '').trim().slice(0, MAX_Q_LENGTH)
   return {
-    q: (sp.get('q') ?? '').trim().slice(0, MAX_Q_LENGTH),
+    q,
     bpmMin: numberIn(sp.get('bpm_min'), 0, MAX_BPM),
     bpmMax: numberIn(sp.get('bpm_max'), 0, MAX_BPM),
     halfDouble: flag(sp.get('half_double')),
@@ -110,7 +135,7 @@ export function parsePoolQuery(sp: URLSearchParams): PoolQuery {
     uploader: isUuid(uploader) ? uploader : null,
     sort: (POOL_SORTS as readonly string[]).includes(sortRaw ?? '')
       ? (sortRaw as PoolSort)
-      : DEFAULT_SORT,
+      : impliedSort(q),
   }
 }
 
@@ -125,7 +150,10 @@ export function poolQueryToSearchParams(q: PoolQuery): URLSearchParams {
   if (q.harmonic) sp.set('harmonic', '1')
   if (q.tierMin !== null) sp.set('tier_min', String(q.tierMin))
   if (q.uploader !== null) sp.set('uploader', q.uploader)
-  if (q.sort !== DEFAULT_SORT) sp.set('sort', q.sort)
+  // Against the IMPLIED default, not the constant one — otherwise every
+  // search URL grows a `&sort=relevance` that says nothing, and every URL
+  // that has one keeps it after the box is cleared.
+  if (q.sort !== impliedSort(q.q)) sp.set('sort', q.sort)
   return sp
 }
 
@@ -138,8 +166,36 @@ export function isDefaultQuery(q: PoolQuery): boolean {
     q.key === null && q.tierMin === null && q.uploader === null
 }
 
+/**
+ * Migration 37's two new arguments, and they are OPT-IN on purpose.
+ *
+ * `pool_list` defaults both to their pre-migration behaviour, so a caller
+ * that says nothing keeps listing FILES with a substring `p_q`. Three
+ * callers say nothing and must keep saying nothing:
+ *
+ *   - `/api/queue/candidates` (which does not use this builder at all —
+ *     `candidateArgs` in queue-candidates.ts builds its own object, and a
+ *     test pins that it names neither key). A silent change to the queue's
+ *     candidate source is the "wrong song plays" failure class.
+ *   - `/member/[username]`, which lists what a member UPLOADED. Two encodes
+ *     of one recording are two uploads; collapsing them would under-report
+ *     a member's own contribution on their own page.
+ *   - anything that pages the pool as files rather than as recordings.
+ *
+ * `mode` is the /artist/[name] hazard, answered: that page calls this with
+ * the artist's NAME as `p_q`, and in fuzzy mode `808 State` would route its
+ * first word to a tempo window and `4B` to a Camelot key. Substring is the
+ * default and the artist page never overrides it.
+ */
+export type PoolListOpts = {
+  /** One row per recording (migration 34's face-file rule). */
+  collapse?: boolean
+  /** 'fuzzy' = ranked trigram search with token routing. */
+  mode?: 'substring' | 'fuzzy'
+}
+
 export function poolListArgs(
-  q: PoolQuery, cursor: string | null, limit: number,
+  q: PoolQuery, cursor: string | null, limit: number, opts: PoolListOpts = {},
 ): Record<string, unknown> {
   return {
     p_q: q.q === '' ? null : q.q,
@@ -153,7 +209,29 @@ export function poolListArgs(
     p_sort: q.sort,
     p_cursor: cursor,
     p_limit: limit,
+    p_collapse: opts.collapse ?? false,
+    p_q_mode: opts.mode ?? 'substring',
   }
+}
+
+/**
+ * THE POOL PAGE'S OWN CALL, in one place because two routes make it: the
+ * page itself and the partial it fetches for instant results. If those two
+ * ever disagreed, typing a character would change more than the rows.
+ *
+ * Collapse is ON — the owner's decision, and the other encodes stay
+ * reachable from the track page. The mode follows the box: an empty query
+ * has nothing to rank, and `p_q => null` makes the mode moot anyway, so
+ * substring is the honest value to send rather than a fuzzy call with no
+ * text in it.
+ */
+export function poolPageArgs(
+  q: PoolQuery, cursor: string | null, limit: number,
+): Record<string, unknown> {
+  return poolListArgs(q, cursor, limit, {
+    collapse: true,
+    mode: q.q === '' ? 'substring' : 'fuzzy',
+  })
 }
 
 /* ═══════════════════════════ ARTIST PAGES, STRING-KEYED ══════════════
@@ -243,6 +321,26 @@ export function poolHref(
   if (opts.cursor !== undefined) sp.set('cursor', opts.cursor)
   const s = sp.toString()
   return s === '' ? '/pool' : `/pool?${s}`
+}
+
+/**
+ * The same query, addressed to the Astro partial instead of the page.
+ *
+ * ONE FUNCTION, TWO ADDRESSES, and that is the whole reason instant results
+ * are not a second renderer. `/partials/pool-rows` runs the same
+ * frontmatter and renders the same `<TrackTable>` as `/pool` — so a row
+ * that appears while you type is byte-identical to the row the server would
+ * have sent, `data-queue-list` and all. There is no client-side row
+ * builder to drift (the retired search overlay had one, hand-maintained
+ * against TrackRow.astro's markup contract).
+ *
+ * Takes raw params rather than a PoolQuery because its caller is the
+ * browser reading its own form, and re-parsing what the form already says
+ * would be a second interpretation of the same fields.
+ */
+export function poolPartialHref(sp: URLSearchParams): string {
+  const s = sp.toString()
+  return s === '' ? POOL_PARTIAL_PATH : `${POOL_PARTIAL_PATH}?${s}`
 }
 
 /**
