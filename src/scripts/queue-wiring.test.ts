@@ -475,9 +475,13 @@ describe('every way out of the drawer goes through one writer', () => {
     expect(everywhere).toBe(inside)
   })
 
-  it('the drag, the handle and Escape all call setDrawerOpen(false)', () => {
+  it('the drag, the handle, the scrim and Escape all call setDrawerOpen(false)', () => {
+    // Four ways out, one writer. The scrim joined them when the owner
+    // overruled the no-backdrop decision — "the background page must not be
+    // usable as with any queues" — and it goes through the same door as the
+    // other three rather than hiding the drawer itself.
     expect(code).toContain('onDismiss: () => setDrawerOpen(false)')
-    expect((code.match(/setDrawerOpen\(false\)/g) ?? []).length).toBe(3)
+    expect((code.match(/setDrawerOpen\(false\)/g) ?? []).length).toBe(4)
   })
 
   it('open-ness accounts for the exit animation, not just `hidden`', () => {

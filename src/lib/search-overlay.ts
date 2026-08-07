@@ -55,6 +55,7 @@
 
 import { debounce } from './debounce'
 import { iconEl } from './icons'
+import { lockPage, scrimEl } from './overlay'
 import { nextFocusIndex } from './sheet'
 import { SessionExpiredError } from './org-api'
 import {
@@ -249,7 +250,9 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
 
   const root = el('div', 'searchoverlay')
   root.dataset.searchOverlay = ''
-  const scrim = el('div', 'searchoverlay-scrim')
+  // The shared scrim. This file used to build its own with a class of its
+  // own, byte-identical to the action sheet's — see src/lib/overlay.ts.
+  const scrim = scrimEl()
 
   const panel = el('div', 'searchoverlay-panel')
   panel.setAttribute('role', 'dialog')
@@ -313,8 +316,11 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
   let active = -1
   let inflight: AbortController | null = null
   let closed = false
-  const prevOverflow = document.body.style.overflow
-  document.body.style.overflow = 'hidden'
+  // `lockPage(null)`: this surface covers the whole viewport, player bar
+  // included, so its own scrim already blocks every pointer and nothing
+  // outside it has to stay reachable. What the shared helper adds is the
+  // reference count — see the note in src/lib/overlay.ts.
+  const releaseLock = lockPage(null)
 
   function setActive(i: number): void {
     rows[active]?.classList.remove('is-active')
@@ -407,7 +413,7 @@ export function openSearchOverlay(returnFocusTo?: HTMLElement | null): () => voi
     openOverlay = null
     run.cancel()
     inflight?.abort()
-    document.body.style.overflow = prevOverflow
+    releaseLock()
     document.removeEventListener('keydown', onKeydown, true)
     document.removeEventListener('astro:before-swap', close)
     root.remove()

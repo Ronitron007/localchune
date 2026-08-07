@@ -95,8 +95,49 @@ describe('the motion system', () => {
     }
   })
 
-  it('nothing loops — no infinite animation anywhere', () => {
-    expect(decls).not.toMatch(/animation[^;]*\binfinite\b/)
+  /**
+   * NOTHING LOOPS — WITH ONE DECLARED EXCEPTION.
+   *
+   * OWNER, 2026-08-08, on the player bar's track name: "loop forever,
+   * car-stereo style." A title that is wider than its column scrolls for as
+   * long as the track plays, because the name is not transient: a member
+   * looks up at it thirty seconds in, a minute in, at the end, and anything
+   * that STOPS leaves a permanently truncated middle at whatever moment
+   * they happen to look.
+   *
+   * The exception is NAMED here rather than left to a blanket relaxation,
+   * and that distinction is the whole value of this test. An undeclared
+   * exception is indistinguishable from a mistake — the next person to read
+   * the motion doctrine would delete the animation as a violation, or worse,
+   * add a second looping thing believing the rule had been dropped. This
+   * still fails on any infinite animation that is not `name-marquee`.
+   *
+   * What keeps it an exception rather than a hole, all enforced elsewhere:
+   * it never runs on a title that fits (measured, player-status.test.ts),
+   * never under reduced motion (`shouldMarquee` returns false, same file),
+   * never on a hidden line, and it pauses while the queue drawer is open.
+   */
+  const LOOP_ALLOWED = ['name-marquee']
+
+  it('nothing loops, except the name marquee the owner asked for', () => {
+    const loops = [...decls.matchAll(/animation:\s*([\w-]+)[^;]*\binfinite\b/g)]
+      .map((m) => m[1])
+      .filter((name) => !LOOP_ALLOWED.includes(name))
+    expect(loops, 'the motion doctrine allows one loop, and it is named').toEqual([])
+  })
+
+  it('and the allowed loop is still actually there, so this is not vacuous', () => {
+    // The inverse. "No unlisted loops" is also satisfied by there being no
+    // loops at all, which would mean the owner's marquee had been deleted
+    // and this exception left behind as a lie.
+    expect(decls).toMatch(/animation:\s*name-marquee[^;]*\binfinite\b/)
+  })
+
+  it('every other looping construct stays banned too', () => {
+    // `animation-iteration-count: infinite` written on its own line is the
+    // same thing spelled differently, and the shorthand check above would
+    // not see it.
+    expect(decls).not.toMatch(/animation-iteration-count:\s*infinite/)
   })
 })
 
