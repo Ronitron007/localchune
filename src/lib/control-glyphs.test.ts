@@ -235,6 +235,58 @@ describe('no glyph a platform will colour in appears in rendered text', () => {
   })
 })
 
+/**
+ * THE THIRD HIDING PLACE: THE FRONTMATTER.
+ *
+ * Both scans above drop everything before the closing `---`, because
+ * frontmatter is script and a comment there discussing `▶` must not read
+ * as a violation. That is right for comments and wrong for DATA — and
+ * three files were quietly rendering a heart out of it:
+ *
+ *     const HEADERS = [ …, { label: '♥' }, … ]
+ *
+ * in TrackTable.astro, crate/[id].astro and member/[username].astro, each
+ * emitted as `<th>♥</th>`. A column header, in a table where every other
+ * header is a word, painted red by iOS. Neither scan could see it: it is
+ * not in a control, and it is not in the template body at all.
+ *
+ * So this one reads the frontmatter with its COMMENTS STRIPPED and looks
+ * at what is left. String literals are the only thing that can reach the
+ * page from there, and the comment stripping is what keeps the many
+ * legitimate mentions ("the `▶` used to be a bare glyph") legal.
+ */
+function frontmatterCode(source: string): string {
+  if (!source.startsWith('---')) return ''
+  const end = source.indexOf('---', 3)
+  if (end < 0) return ''
+  return source
+    .slice(3, end)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+}
+
+describe('no glyph reaches the page from the frontmatter', () => {
+  it('holds on every template', () => {
+    const offences = astroFiles(SRC).flatMap((file) => {
+      const hits = GLYPHS.filter((g) => frontmatterCode(readFileSync(file, 'utf8')).includes(g))
+      return hits.length === 0 ? [] : [`${file.slice(SRC.length)} frontmatter carries ${hits.join(' ')}`]
+    })
+    expect(offences, 'a label is data — put the word, or render an <Icon>').toEqual([])
+  })
+
+  it('catches a glyph in a data array', () => {
+    const bad = "---\nconst H = [{ label: '♥' }]\n---\n<p>x</p>"
+    expect(GLYPHS.filter((g) => frontmatterCode(bad).includes(g))).toEqual(['♥'])
+  })
+
+  it('leaves a frontmatter comment discussing a glyph alone', () => {
+    // TrackRow.astro's header genuinely says "(↑ ↓ ✕)" while explaining
+    // what it removed. Documenting a removal must not read as the bug.
+    const good = '---\n// the `▶` used to be a bare glyph — see icons.ts\nconst x = 1\n---\n<p>x</p>'
+    expect(GLYPHS.filter((g) => frontmatterCode(good).includes(g))).toEqual([])
+  })
+})
+
 describe('the scanner itself', () => {
   it('catches a glyph control', () => {
     const bad = '---\n---\n<a class="play">▶ Play</a>'

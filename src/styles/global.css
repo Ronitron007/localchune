@@ -1561,6 +1561,40 @@ body.queueopen .uploadchip-slot {
 .cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
 .cratecard .explain { margin-top: 0.15em; }
 
+/* ═══ /member/[username] and /artist/[name] ════════════════════════════
+   `.memberdetail` had NO RULE ANYWHERE — its single occurrence in the
+   repo was the class attribute itself. The page was two card lists and a
+   bare <header>, so on a phone the member's own name read as one more
+   section heading among three.
+
+   THE HERO, AND THE RATION. §4.3 allows at most ONE resting shadow per
+   view, on the page's hero object, and on a profile the hero is the
+   identity block — there is nothing else here that is not a list. It
+   takes `--rest-1`, the faint 0.10 one, which is the same treatment
+   /track/[id]'s artwork gets and for the same stated reason. No page in
+   the app has two.
+
+   Both routes share it: an artist page is the same shape with a
+   string-keyed subject instead of a member. One recipe, two surfaces. */
+.memberdetail > * + * { margin-top: var(--pad-3); }
+
+.memberhero {
+  border: var(--line-full);
+  box-shadow: var(--rest-1);
+  padding: var(--pad-2);
+  background: var(--bg);
+}
+.memberhero > * + * { margin-top: var(--pad-0); }
+.memberhero h1 {
+  margin: 0;
+  /* The subject is user-generated and can be long — a 40-character
+     display_artist is real. It wraps rather than widening the page, which
+     is the failure `overflow-wrap` exists for on the one page in this app
+     whose title a member chose. */
+  overflow-wrap: anywhere;
+}
+.memberhero .explain { margin: 0; }
+
 /* --- / (home feed, M6c Task 2): Fresh/Hot/Top track cards. Same
    border/pad card idiom as .cratecard — the feed section it sits in
    reuses .cratelist's own list for its "New public crates" section, so

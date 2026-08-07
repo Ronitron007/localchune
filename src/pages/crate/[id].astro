@@ -18,6 +18,7 @@
 // 20's crate_get comment: the database's own answer is 42501 either way;
 // only the HTTP status is chosen here.
 import Shell from '../../layouts/Shell.astro'
+import TrackHead from '../../components/TrackHead.astro'
 import TrackRow from '../../components/TrackRow.astro'
 import Icon from '../../components/Icon.astro'
 import { crateItemToPoolTrack, formatCrateMeta, type CrateCard, type CrateItem } from '../../lib/org-api'
@@ -54,24 +55,9 @@ if (getError) {
 const items = (rowsData ?? []) as CrateItem[]
 const isOwner = meta.is_mine
 
-const HEADERS = [
-  { label: '', sr: 'Play' },
-  { label: '', sr: 'Artwork' },
-  { label: 'Artist' },
-  { label: 'Title' },
-  { label: 'BPM' },
-  { label: 'Key' },
-  { label: 'Length' },
-  { label: 'Quality' },
-  { label: 'Uploader' },
-  { label: 'Added' },
-  { label: 'Downloads' },
-  { label: '♥' },
-  { label: 'Plays' },
-  { label: '', sr: 'Download' },
-  // Task 8: TrackRow's add-to-crate picker cell — see that component.
-  { label: '', sr: 'Add to crate' },
-]
+// The fifteen <th> live in TrackHead.astro now — this page, /member and
+// /artist all held their own copy, and TrackRow renders exactly fifteen
+// cells, so a divergence shears every label one column sideways.
 ---
 <Shell title={`localchune — ${meta.name}`}>
   <article class="cratedetail">
@@ -169,14 +155,7 @@ const HEADERS = [
           already uses, unchanged, plus one grid slot for the controls cell
           the pool does not have. 3.5 can replace it wholesale. */}
       <table>
-        <thead>
-          <tr>
-            {HEADERS.map((h) => (
-              <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
-            ))}
-            {isOwner && <th scope="col"><span class="sr-only">Manage</span></th>}
-          </tr>
-        </thead>
+        <TrackHead manage={isOwner} />
         {/* `data-reorder` carries the crate id itself — site.ts's drag
             delegation reads it straight off the container instead of
             parsing the page URL, so the enhancement works regardless of

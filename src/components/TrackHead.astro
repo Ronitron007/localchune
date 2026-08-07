@@ -1,0 +1,63 @@
+---
+// src/components/TrackHead.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// The <thead> for every table of TrackRow.astro that is NOT the pool.
+//
+// WHY IT EXISTS. TrackRow renders exactly fifteen <td>, so any table
+// holding it needs exactly fifteen <th> or every column label sits over
+// the wrong column. That array had been copy-pasted into /crate/[id] and
+// /member/[username], and the artist page would have been a third copy —
+// three places to edit whenever the row gains or loses a cell, with a
+// silent one-column shear as the failure mode. A shear is invisible to a
+// string assertion and obvious to nobody until a member reads "Plays"
+// over a download link.
+//
+// The pool's own head (TrackTable.astro) stays separate on purpose: its
+// labels are SORT LINKS carrying `poolHref(query, …)` and `aria-current`,
+// which needs the query this component has no business knowing about.
+// One shared head that took an optional query would be the pool's head
+// with a second mode, and the two would diverge anyway.
+//
+// `manage` is /crate/[id]'s owner-only trailing column, which pairs with
+// the `controls` slot TrackRow renders for the same page.
+interface Props { manage?: boolean }
+const { manage = false } = Astro.props
+
+// Fifteen, matching TrackRow's fifteen cells in order. The first two and
+// the last two are icon/art columns with no visible label, so they carry
+// screen-reader text instead — a <th> with nothing in it is a column a
+// screen reader cannot announce.
+//
+// "Likes" rather than the ♥ that used to be here: U+2665 is emoji-
+// presented by iOS, and this was one of three frontmatter copies of it
+// that no glyph scanner could see (see control-glyphs.test.ts). Every
+// other header on the row is a word.
+const HEADERS: ReadonlyArray<{ label: string; sr?: string }> = [
+  { label: '', sr: 'Play' },
+  { label: '', sr: 'Artwork' },
+  { label: 'Artist' },
+  { label: 'Title' },
+  { label: 'BPM' },
+  { label: 'Key' },
+  { label: 'Length' },
+  { label: 'Quality' },
+  { label: 'Uploader' },
+  { label: 'Added' },
+  { label: 'Downloads' },
+  { label: 'Likes' },
+  { label: 'Plays' },
+  { label: '', sr: 'Download' },
+  { label: '', sr: 'Add to crate' },
+]
+---
+<thead>
+  <tr>
+    {HEADERS.map((h) => (
+      <th scope="col">{h.sr ? <span class="sr-only">{h.sr}</span> : h.label}</th>
+    ))}
+    {manage && <th scope="col"><span class="sr-only">Manage</span></th>}
+  </tr>
+</thead>
