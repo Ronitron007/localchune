@@ -446,3 +446,128 @@ describe('a row is the play control — the whole row, not a glyph', () => {
     }
   })
 })
+
+/* ---------------------------------------------- dismissing the drawer
+ *
+ * OWNER, 2026-08-07: "the current queue drawer cant be closed by dragging
+ * it down and that feels like a bummer… make it like the drawer component
+ * of add to crate."
+ *
+ * The drawer now has four ways out — the QUEUE button, the grab handle, a
+ * swipe down, and Escape. Four ways out is four chances for the button's
+ * inverted close state, `body.queueopen` and `--queue-height` to disagree
+ * with whether the drawer is actually on screen, and every one of those
+ * disagreements is silent: the drawer looks shut and the upload chip sits
+ * 300px too high, or the button reads "close the queue" over a closed one.
+ *
+ * The defence is that there is ONE writer, and that is what this asserts.
+ */
+describe('every way out of the drawer goes through one writer', () => {
+  it('`hidden` is written in exactly one function', () => {
+    // Two writes, both inside setDrawerOpen: the open branch and the exit
+    // timer's callback. Anything outside it can desync the toggle.
+    const at = code.indexOf('function setDrawerOpen')
+    expect(at, 'setDrawerOpen is one named function').toBeGreaterThan(-1)
+    const fn = code.slice(at, code.indexOf('\nif (drawerToggle', at))
+    const inside = (fn.match(/\.hidden = /g) ?? []).length
+    const everywhere = (code.match(/panel\.hidden = |drawer\.hidden = /g) ?? []).length
+    expect(inside).toBeGreaterThan(0)
+    expect(everywhere).toBe(inside)
+  })
+
+  it('the drag, the handle and Escape all call setDrawerOpen(false)', () => {
+    expect(code).toContain('onDismiss: () => setDrawerOpen(false)')
+    expect((code.match(/setDrawerOpen\(false\)/g) ?? []).length).toBe(3)
+  })
+
+  it('open-ness accounts for the exit animation, not just `hidden`', () => {
+    // A dismissed drawer stays mounted for one panel duration so it can
+    // slide out. Without this clause a tap on QUEUE during that window
+    // reads "open" and closes an already-closing drawer instead of
+    // re-opening it.
+    const at = code.indexOf('const isDrawerOpen')
+    const line = code.slice(at, code.indexOf('\n\n', at))
+    expect(line).toContain('hidden === false')
+    expect(line).toContain('dataset.closing')
+  })
+
+  it('the exit timer is short-circuited under reduced motion', () => {
+    // The global CSS block flattens the transition to 0.01ms, but the JS
+    // timeout is a SEPARATE clock — left at 280ms it holds a finished
+    // drawer on screen, which reads as broken rather than as fast.
+    const at = code.indexOf('drawerExitTimer = window.setTimeout')
+    expect(at).toBeGreaterThan(-1)
+    expect(code.slice(at, at + 200)).toContain('exitDelayMs(prefersReducedMotion())')
+  })
+})
+
+describe('a reorder is not a dismissal — the two gestures do not fight', () => {
+  it('the drag grip is vetoed at pointerdown', () => {
+    // A row's reorder grip and the drawer's dismiss are the same finger
+    // going the same direction. `handle: '.queuerow-drag'` is the only
+    // thing @formkit will start a sort from, so vetoing that subtree is
+    // exact: a reorder can begin nowhere else, and everywhere else still
+    // dismisses.
+    const at = code.indexOf('wireDragDismiss({')
+    expect(at).toBeGreaterThan(-1)
+    const call = code.slice(at, code.indexOf('})', at))
+    expect(call).toContain("ignore: '.queuerow-drag'")
+    expect(code).toContain("handle: '.queuerow-drag'")
+  })
+
+  it('the module is told which node scrolls, so the list is not hijacked', () => {
+    const at = code.indexOf('wireDragDismiss({')
+    const call = code.slice(at, code.indexOf('})', at))
+    expect(call).toContain('scroller: drawerSections')
+  })
+})
+
+describe('Escape reaches the drawer last, on purpose', () => {
+  const at = code.indexOf("if (e.key !== 'Escape'")
+
+  it('bails when something in front of the drawer already claimed the key', () => {
+    expect(at).toBeGreaterThan(-1)
+    expect(code.slice(at, at + 120)).toContain('defaultPrevented')
+  })
+
+  it('listens in the BUBBLE phase, so the capture handlers run first', () => {
+    // The sheet and the search overlay both listen with capture: true and
+    // both preventDefault() on Escape. A capture listener on `document`
+    // runs before every bubble listener on it, which is what makes
+    // defaultPrevented an exact answer to "is something in front of me".
+    const listener = code.lastIndexOf("document.addEventListener('keydown'", at)
+    expect(code.slice(listener, at)).not.toContain('true')
+  })
+
+  it('asks nothing above it whether it is open', () => {
+    // search-overlay.ts is a deliberate DYNAMIC import (search-bundle
+    // .test.ts). A static one here, to answer one keystroke, would pull
+    // the whole overlay into every page's entry chunk — and the handler
+    // does not need it: the phase already answers the question. The same
+    // goes for isSheetOpen(), which is cheap but would be a second thing
+    // to remember the next time a panel is added.
+    const handler = code.slice(at, code.indexOf('\n})', at))
+    for (const probe of ['isSearchOpen', 'isSheetOpen', 'sheet-panel']) {
+      expect(handler, 'defaultPrevented already answers this').not.toContain(probe)
+    }
+    // …and the overlay is still not statically imported anywhere.
+    expect(code).not.toMatch(/^import .*search-overlay/m)
+  })
+})
+
+describe('a soft navigation does not strip the chip\'s clearance', () => {
+  it('re-applies body.queueopen and --queue-height after a swap', () => {
+    // The drawer survives — it is inside transition:persist="player" — but
+    // <body> is replaced, and with it every class and inline custom
+    // property on it. Without this the upload chip dropped back down
+    // behind an open drawer on every filter submit.
+    const marker = "document.addEventListener('astro:after-swap', () => {\n  document.body.classList.toggle('queueopen'"
+    const at = code.indexOf(marker)
+    expect(at, 'the re-sync is its own after-swap handler').toBeGreaterThan(-1)
+    expect(code.slice(at, code.indexOf('})', at))).toContain('syncDrawerHeight()')
+  })
+
+  it('writes --queue-height from exactly one function', () => {
+    expect((code.match(/'--queue-height'/g) ?? []).length).toBe(1)
+  })
+})

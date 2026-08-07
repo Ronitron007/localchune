@@ -72,6 +72,33 @@ const { title, center = false } = Astro.props
         which is also why astro-forms.test.ts stays green — this milestone
         adds no POST form anywhere. */}
     <div id="queue-drawer" class="queuedrawer" hidden aria-label="Playback queue">
+      {/* THE GRAB HANDLE — OWNER, 2026-08-07: "the current queue drawer cant
+          be closed by dragging it down and that feels like a bummer… make it
+          like the drawer component of add to crate". The bar he had earlier
+          deferred ("shutter like icon on top of queue… keep that for last")
+          is that drawer's, and this is the same class rendering the same
+          36x4 bar with the same 44px hit box from its ::after — one rule in
+          global.css, not a copy.
+
+          MARKUP RATHER THAN site.ts, unlike every other control in this
+          drawer. The bundle rule that keeps the engine out of /login is
+          about IMPORTS, and a bare button imports nothing; putting it here
+          means it exists at first paint and, more importantly, that
+          renderDrawer() cannot destroy it — that function rebuilds
+          #queue-methods and #queue-sections on every queue change, and a
+          handle inside either would lose its listener several times a
+          minute.
+
+          It ships WITHOUT `hidden`, which every other JS-only control in
+          this file carries, and the exception is structural rather than an
+          oversight: its parent is the drawer, the drawer ships `hidden`, and
+          only site.ts can unhide it. There is no no-JS render in which this
+          button is reachable.
+
+          It is a real <button>, so the drag has a keyboard and screen-reader
+          equivalent: tap or Enter closes the drawer, which is the same
+          promise the sheet's handle makes. */}
+      <button type="button" id="queue-grab" class="grabhandle" aria-label="Close the queue"></button>
       <div class="queuedrawer-head">
         <div id="queue-methods" class="queuemethods" role="group" aria-label="Autoplay method"></div>
         <button type="button" id="queue-clear" class="btn-danger">CLEAR</button>

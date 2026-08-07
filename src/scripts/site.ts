@@ -6,10 +6,11 @@
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
 import { iconEl } from '../lib/icons'
-import {
-  classifyGesture, exitDelayMs, nextFocusIndex, normalizeRows, shouldDismiss,
-  velocityPxPerMs, type SheetRow, type SheetRowInput,
-} from '../lib/sheet'
+// The gesture ARITHMETIC (thresholds, axis test, velocity) is not imported
+// here on purpose — it is reached only through wireDragDismiss below, so
+// there is exactly one place that can decide a panel has been thrown away.
+import { exitDelayMs, nextFocusIndex, normalizeRows, type SheetRow, type SheetRowInput } from '../lib/sheet'
+import { wireDragDismiss } from './drag-dismiss'
 import {
   addToCrate, createCrate, editTag, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
@@ -1155,8 +1156,18 @@ document.addEventListener('keydown', (e) => {
  */
 /** `hidden` is no longer a plain boolean in lib.dom (it also takes
  *  `'until-found'`), so open-ness is read through one predicate rather than
- *  coerced at four call sites. */
-const isDrawerOpen = (): boolean => drawer !== null && drawer.hidden === false
+ *  coerced at four call sites.
+ *
+ *  `data-closing` is the second half of the same question. A dismissed
+ *  drawer stays MOUNTED for one panel duration so it can slide out —
+ *  `display: none` cannot be animated — and during that window `hidden` is
+ *  still false while the drawer is, to every part of the app that matters,
+ *  shut. Without this clause a tap on QUEUE mid-exit would read "open" and
+ *  close it a second time; with it, the tap re-opens, which is what the
+ *  member asked for. The sheet splits the same two ideas the same way
+ *  (`openSheet` is nulled immediately, the node is removed 280ms later). */
+const isDrawerOpen = (): boolean =>
+  drawer !== null && drawer.hidden === false && drawer.dataset.closing === undefined
 
 function syncDrawerHeight(): void {
   if (drawer === null) return
@@ -1164,9 +1175,41 @@ function syncDrawerHeight(): void {
     '--queue-height', isDrawerOpen() ? `${drawer.offsetHeight}px` : '0px')
 }
 
+/** The exit timer, so a re-open mid-exit cannot be un-hidden by a callback
+ *  that was scheduled before it. */
+let drawerExitTimer = 0
+
 function setDrawerOpen(open: boolean): void {
   if (drawer === null || drawerToggle === null) return
-  drawer.hidden = !open
+  const panel = drawer
+  window.clearTimeout(drawerExitTimer)
+  delete panel.dataset.closing
+  delete panel.dataset.entering
+  if (open) {
+    panel.hidden = false
+    // TWO-FRAME rAF MOUNT, the sheet's own recipe (see openActionSheet).
+    // The drawer mounts off-screen and the browser needs one frame in
+    // which that is its committed state before the class that moves it has
+    // anywhere to animate FROM. One rAF is not reliably enough; two is.
+    // Under reduced motion there is nothing to animate from, so the state
+    // is never written at all rather than written and removed.
+    if (!prefersReducedMotion()) {
+      panel.dataset.entering = 'true'
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        delete panel.dataset.entering
+      }))
+    }
+  } else {
+    // LOGICALLY SHUT NOW, VISUALLY GONE IN 280ms. Everything below this
+    // branch — the toggle's glyph, body.queueopen, --queue-height — runs in
+    // the same frame the gesture committed, because those are the things a
+    // member reads as "it closed". Only the node's own removal waits.
+    panel.dataset.closing = 'true'
+    drawerExitTimer = window.setTimeout(() => {
+      panel.hidden = true
+      delete panel.dataset.closing
+    }, exitDelayMs(prefersReducedMotion()))
+  }
   drawerToggle.setAttribute('aria-expanded', String(open))
   // OWNER-APPROVED OPEN STATE, from a mock: the button inverts to solid
   // ink and its glyph becomes a close mark, so the control that opened the
@@ -1202,6 +1245,101 @@ if (drawerToggle !== null) {
     setDrawerOpen(!isDrawerOpen())
   })
 }
+
+/* ------------------------------------------- dismissing the queue drawer
+ *
+ * OWNER, 2026-08-07: "the current queue drawer cant be closed by dragging it
+ * down and that feels like a bummer… make it like the drawer component of add
+ * to crate." So it now has every way out that sheet has, running the same
+ * code: a grab handle, a drag past 30%, a flick over 0.5 px/ms, and Escape.
+ *
+ * EVERY PATH GOES THROUGH setDrawerOpen(false). That is the whole reason the
+ * QUEUE button's inverted ✕ state cannot desync from the drawer: there is one
+ * writer of `hidden`, of `aria-expanded`, of the glyph, of `body.queueopen`
+ * and of `--queue-height`, and nothing below reaches past it.
+ *
+ * NO BACKDROP, and it is a decision rather than an omission. The sheet has a
+ * scrim because a sheet is modal — it locks body scroll and the page behind
+ * it is not meant to be used. This drawer is the opposite by design: it lives
+ * inside the persisted player node precisely so a member can keep browsing,
+ * filtering and sorting WHILE they build a queue, which is the navigation
+ * Shell.astro's own comment names. A scrim over that page would either close
+ * the drawer on the very filter click the persistence exists to survive, or
+ * swallow it. It would also have to cover — or be cut around — the player
+ * bar's transport, which is fixed at the bottom edge and must stay usable
+ * with the drawer open. The UI study reaches the same answer from the other
+ * end: its mobile drawers are a takeover with no backdrop, and its bottom
+ * sheet is a transparent click-catcher over an undimmed page.
+ */
+const drawerGrab = document.getElementById('queue-grab') as HTMLButtonElement | null
+
+if (drawer !== null) {
+  wireDragDismiss({
+    panel: drawer,
+    // #queue-sections is the drawer's scroller (the drawer itself stopped
+    // being one when the handle landed — see .queuedrawer in global.css). A
+    // drag that starts in a scrolled list scrolls it; a drag that starts in
+    // a list already at its top pulls the drawer, exactly as the sheet's
+    // row list behaves. Same component, same answer.
+    scroller: drawerSections,
+    // THE SHARPEST EDGE IN THIS CHANGE. A row's reorder grip and the
+    // drawer's dismiss are the same finger going the same direction, and
+    // the grip has to win — a member dragging a track to the bottom of the
+    // queue must not throw the queue away doing it. The grip is the only
+    // thing @formkit will start a sort from (`handle: '.queuerow-drag'` in
+    // wireQueueDrag), so vetoing its subtree here is exact rather than
+    // approximate: a reorder can begin nowhere else, and everywhere else
+    // still dismisses.
+    ignore: '.queuerow-drag',
+    onDismiss: () => setDrawerOpen(false),
+  })
+}
+
+/** The handle's tap. A bar you can drag must also be a button you can press,
+ *  or it is an affordance with no keyboard behind it. */
+drawerGrab?.addEventListener('click', () => {
+  setDrawerOpen(false)
+  drawerToggle?.focus()
+})
+
+/**
+ * Escape, IN THE BUBBLE PHASE, and the phase is the whole design.
+ *
+ * The action sheet and the search overlay both listen on `document` with
+ * `capture: true` and both call preventDefault() on Escape. A capture
+ * listener on document runs before every bubble listener on it, so by the
+ * time this one is reached, anything stacked above the drawer has already
+ * claimed the key and said so. `defaultPrevented` is therefore an exact
+ * answer to "is something in front of me", and it costs no import — which
+ * matters, because search-overlay.ts is deliberately a dynamic import
+ * (search-bundle.test.ts) and calling its isSearchOpen() from here would
+ * pull the overlay into every page's entry chunk.
+ */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return
+  if (!isDrawerOpen()) return
+  e.preventDefault()
+  setDrawerOpen(false)
+  // Focus goes back to the control that opened it, for the reason the
+  // sheet returns focus: a keyboard user dumped at the top of the document
+  // has to find their place again every single time.
+  drawerToggle?.focus()
+})
+
+/**
+ * A SOFT NAVIGATION SWAPS <body>, AND WITH IT EVERY CLASS AND INLINE
+ * CUSTOM PROPERTY ON IT.
+ *
+ * The drawer itself survives — it is inside transition:persist="player" —
+ * but `body.queueopen` and `--queue-height` are not, so after a filter
+ * submit with the drawer open the upload chip dropped back down behind it.
+ * This is the same re-run revealQueueControls() needs, for the same reason:
+ * `<script src>` modules evaluate once per document and never again.
+ */
+document.addEventListener('astro:after-swap', () => {
+  document.body.classList.toggle('queueopen', isDrawerOpen())
+  syncDrawerHeight()
+})
 
 /** Unhidden here rather than in the markup, same rule as the drawer toggle
  *  above: with no JS there is no queue and nothing to skip to. */
@@ -2650,7 +2788,11 @@ export function openActionSheet(opts: SheetOptions): () => void {
 
   const handle = document.createElement('button')
   handle.type = 'button'
-  handle.className = 'sheet-handle'
+  // `grabhandle`, not `sheet-handle`: the queue drawer wears the same bar,
+  // and a second class with the same 36x4 recipe copied into it is how the
+  // two would drift apart. One class, one rule — global.css declares it
+  // once and drag-dismiss-single-source.test.ts keeps it that way.
+  handle.className = 'grabhandle'
   handle.setAttribute('aria-label', 'Close')
 
   const head = document.createElement('div')
@@ -2760,65 +2902,13 @@ export function openActionSheet(opts: SheetOptions): () => void {
   document.addEventListener('astro:before-swap', onSwap)
 
   // --- the drag ----------------------------------------------------
-  let startY = 0
-  let startX = 0
-  let startT = 0
-  let lastY = 0
-  let lastT = 0
-  let dragging = false
-  let axis: ReturnType<typeof classifyGesture> = 'none'
-
-  panel.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') return // a mouse drags nothing here
-    // A TEXT FIELD OWNS ITS OWN DRAG. In the modal variant the scroller
-    // holds an <input>, and a finger dragged across it is a member
-    // selecting text or moving the caret — stealing that to dismiss the
-    // panel would make the field unusable on the device the sheet exists
-    // for. scrollTop is 0 in a short modal, so the check below would not
-    // have caught it.
-    if ((e.target as Element | null)?.closest?.('input, textarea')) return
-    // A drag that starts inside the scrolling list must be allowed to
-    // scroll it; only a list already at its top can pull the sheet down.
-    if (list.contains(e.target as Node) && list.scrollTop > 0) return
-    dragging = true
-    axis = 'none'
-    startY = lastY = e.clientY
-    startX = e.clientX
-    startT = lastT = e.timeStamp
-    panel.dataset.dragging = 'true'
-  })
-
-  panel.addEventListener('pointermove', (e) => {
-    if (!dragging) return
-    const dy = e.clientY - startY
-    const dx = e.clientX - startX
-    if (axis === 'none') {
-      axis = classifyGesture(dx, dy)
-      // A sideways swipe belongs to somebody else — a carousel, or the
-      // browser's back gesture. Let go of it rather than half-tracking it.
-      if (axis === 'horizontal') { dragging = false; delete panel.dataset.dragging; return }
-    }
-    if (dy <= 0) return // dragging up: the sheet is already at its top
-    lastY = e.clientY
-    lastT = e.timeStamp
-    // Write the OFFSET, not the whole transform. The desktop rule adds a
-    // -50% X translation for centring, and an inline `transform` would
-    // silently drop it — a bug that only shows on an iPad, where the
-    // panel is centred and the input is touch.
-    panel.style.setProperty('--drag-y', `${dy}px`)
-  })
-
-  function endDrag(e: PointerEvent): void {
-    if (!dragging) return
-    dragging = false
-    delete panel.dataset.dragging
-    panel.style.removeProperty('--drag-y')
-    const dy = e.clientY - startY
-    const velocity = velocityPxPerMs(lastY - startY, lastT - startT)
-    if (shouldDismiss({ dy, panelHeight: panel.getBoundingClientRect().height, velocity })) close()
-  }
-  panel.addEventListener('pointerup', endDrag)
-  panel.addEventListener('pointercancel', endDrag)
+  // ONE IMPLEMENTATION, TWO PANELS. The fifty lines that used to sit here
+  // are src/scripts/drag-dismiss.ts now, because the owner asked the queue
+  // drawer to dismiss "like the drawer component of add to crate" — and
+  // the only honest way to make two panels behave alike is for them to run
+  // the same code. drag-dismiss-single-source.test.ts fails the build if a
+  // second copy appears.
+  wireDragDismiss({ panel, scroller: list, onDismiss: () => close() })
 
   document.body.appendChild(root)
   // TWO-FRAME rAF MOUNT. The panel mounts off-screen, and the browser

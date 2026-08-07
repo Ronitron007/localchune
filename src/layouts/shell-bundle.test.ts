@@ -144,6 +144,44 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     expect(persisted).toContain('id="player-next"')
   })
 
+  it('renders the grab handle, first child of the drawer', () => {
+    // OWNER, 2026-08-07: "make it like the drawer component of add to
+    // crate". The bar is the affordance for the swipe-down, so it has to
+    // be the thing at the top of the panel — a handle under the method
+    // row is a decoration.
+    const from = shell.indexOf('id="queue-drawer"')
+    const grab = shell.indexOf('id="queue-grab"', from)
+    const head = shell.indexOf('class="queuedrawer-head"', from)
+    expect(grab, 'the drawer has a grab handle').toBeGreaterThan(-1)
+    expect(grab).toBeLessThan(head)
+  })
+
+  it('the handle is a real button wearing the shared class', () => {
+    // `grabhandle`, not a second 36x4 recipe: global.css declares the bar
+    // once and site.ts puts the same class on the sheet's handle.
+    // drag-dismiss-single-source.test.ts owns that half.
+    const at = shell.indexOf('id="queue-grab"')
+    const tag = shell.slice(shell.lastIndexOf('<button', at), shell.indexOf('>', at))
+    expect(tag).toContain('type="button"')
+    expect(tag).toContain('class="grabhandle"')
+    // The bar draws no glyph, so the accessible name is the only name it
+    // has — the same rule RowMenu.astro's ⋮ follows.
+    expect(tag).toContain('aria-label')
+  })
+
+  it('the handle does NOT ship hidden, and that exception is structural', () => {
+    // Every other JS-only control in this file ships `hidden` because it
+    // would be visible and inert without JS. This one cannot be: its
+    // parent is the drawer, the drawer ships `hidden`, and only site.ts
+    // can unhide it. A `hidden` here would need a fourth unhide call for
+    // no gain.
+    const at = shell.indexOf('id="queue-grab"')
+    const tag = shell.slice(shell.lastIndexOf('<button', at), shell.indexOf('>', at))
+    expect(tag).not.toContain('hidden')
+    const drawer = shell.slice(shell.indexOf('id="queue-drawer"'))
+    expect(drawer.slice(0, drawer.indexOf('>'))).toContain('hidden')
+  })
+
   it('keeps the drawer inside the persisted player node', () => {
     // Outside it, a ClientRouter navigation recreates the drawer and it closes
     // itself on every filter submit and every sort click.
