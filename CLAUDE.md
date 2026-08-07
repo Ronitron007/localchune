@@ -11,6 +11,16 @@
   once sat a full day behind main with nothing red anywhere. No lock spans
   the two deploy paths: a laptop deploy superseded a CI deploy mid-run on
   2026-07-31. Last deploy wins; check build-info when paths could race.
+  **A deploy from a worktree/branch that predates main silently REVERTS
+  shipped features** — on 2026-08-08 a side session deployed `2f4664ae`
+  (not an ancestor of main) over a good deploy, and production lost the
+  player bar's crate button and its whole grid layout while the repo was
+  perfectly fine. Symptom shape: the UI regresses to an older design with
+  no bad commit anywhere. Diagnose with
+  `git merge-base --is-ancestor <build-info sha> HEAD` — if that fails,
+  the running build is off-main; fix by redeploying from main. Before ANY
+  deploy: be on main, pulled, and confirm the sha you are about to ship
+  is an ancestor of origin/main.
   **build-info is edge-cached and lies for ~8 minutes after a deploy**,
   through a query string and `no-cache` (seen 2026-08-05). For an immediate
   answer, use `npx wrangler deployments list` or fetch a brand-new asset
