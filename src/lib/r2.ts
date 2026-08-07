@@ -297,6 +297,51 @@ export async function headObject(key: string): Promise<{ size: number; etag: str
 }
 
 /**
+ * An object's BYTES, as a stream. Returns null when the key is not there.
+ *
+ * This is the one place the Worker carries file bytes rather than signing a
+ * URL and stepping aside — the crate download has to, because a ZIP is a
+ * single response built out of many objects and no redirect can express
+ * that. Nothing is buffered: the caller pumps `body` straight into the
+ * archive.
+ *
+ * WHY NOT THE `AUDIO` BINDING. wrangler.jsonc binds AUDIO to
+ * `localchune-audio` — the PRODUCTION bucket — with `remote: true`, while
+ * every signed path in this file reads `R2_BUCKET`, which in dev is
+ * `localchune-audio-dev`. Using the binding here would make one route read
+ * a different bucket from the presigned URLs the same request just handed
+ * the browser, and the disagreement would show up only in dev, only as a
+ * missing key. One credential path, one bucket.
+ *
+ * `size` is R2's own content-length, not the database's byte_size. The ZIP
+ * writer needs the size BEFORE it writes an entry's header to choose ZIP64,
+ * and the authoritative number arrives with the response headers, ahead of
+ * a single byte of the body.
+ */
+export async function getObjectStream(
+  key: string,
+): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null> {
+  const res = await signedFetch(readObjectUrl(key), { method: 'GET' })
+  if (res.status === 404) {
+    // Drain so the connection can be reused; a 404 body is a few bytes of XML.
+    await res.arrayBuffer().catch(() => undefined)
+    return null
+  }
+  if (res.status < 200 || res.status >= 300 || !res.body) {
+    await res.arrayBuffer().catch(() => undefined)
+    throw new R2Error(`GetObject: HTTP ${res.status}`, res.status, 'HttpError')
+  }
+  const len = res.headers.get('content-length')
+  if (len === null || !/^\d+$/.test(len)) {
+    throw new R2Error(
+      'GetObject returned no usable content-length; refusing to guess an entry size',
+      502, 'NoContentLength',
+    )
+  }
+  return { body: res.body as ReadableStream<Uint8Array>, size: Number(len) }
+}
+
+/**
  * Called from /api/upload/complete (size_mismatch, object_missing) and
  * /api/upload/abort — both reclaim a key whose row is about to become
  * `failed`. Task 8's maintenance Worker deletes orphans through its own R2
