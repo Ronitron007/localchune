@@ -2254,6 +2254,22 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 .searchrow-meta .bpm { color: var(--ink-55); font-family: var(--font-num); font-size: var(--text-xs); }
 
+/* THE SHEET'S CONTROLS ARE IN THE DOM AND MUST NOT BE ON SCREEN, AND
+   `hidden` ALONE DOES NOT DO IT. This file already records the rule once:
+   "a `display` declaration on the same element BEATS the UA sheet's
+   [hidden]" — and `button`, `summary` and `details` all carry one here. So
+   `queueadd.hidden = true` computed to `display: flex` and every result row
+   drew two empty boxes under its title. Caught in the browser at 375px;
+   nothing in the DOM or the unit tests could have seen it, because the
+   attribute really was set and the node really was there.
+
+   The row keeps these controls because `openRowSheet` builds its sheet by
+   READING them (see search-overlay.ts) — the pool's own mobile card does
+   exactly this under `.has-rowmenu`. */
+.searchrow .queueadd[hidden],
+.searchrow .likeform[hidden],
+.searchrow .cratepick[hidden] { display: none; }
+
 .searchrow .rowmenu {
   grid-column: 4;
   grid-row: 1 / 3;
