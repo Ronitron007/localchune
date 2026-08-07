@@ -954,9 +954,27 @@ td.download > a {
    the compressor sends the markup once. track-row.test.ts has the
    measurement.
 
-   Mobile grammar only: above 640px the table shows every column and every
-   control (owner decision Q3), so a menu there would offer what is
-   already on screen. */
+   VISIBLE AT EVERY WIDTH — owner, 2026-08-07: "dont hide three dot menu
+   for the desktop site on home and whereever other places it is present."
+
+   It used to be mobile grammar only, revealed inside `@media (max-width:
+   640px)`. That was defensible while the pool TABLE was the only thing
+   that had one: above 640px the table shows every column and every
+   control (owner decision Q3), so a menu there offered what was already
+   on screen. It stopped being true the moment the app grew CARD rows —
+   the home feed, the artist and member pages and the search overlay all
+   render `.feedrow`/`.searchrow` at EVERY width, and none of those cards
+   has a metadata column or an action strip to fall back on. Above 640px
+   those rows had a play link, a title and nothing else: no download, no
+   add-to-queue, no add-to-crate, no track page, and no BPM or key.
+
+   So the reveal moves out of the media query. What stays inside it is
+   `html.has-rowmenu`'s column hiding (see the mobile block far below) —
+   that is a DIFFERENT rule with a different job: below 640px the sheet
+   REPLACES the row's controls, and above it the sheet DUPLICATES them.
+   Duplication on a desktop table is the cost of one affordance that means
+   the same thing everywhere; an empty card on a desktop feed was a
+   feature that simply was not there. */
 .rowmenu {
   display: none;
   align-items: center;
@@ -973,9 +991,20 @@ td.download > a {
   transition: background var(--dur-fast) ease;
 }
 .rowmenu:hover, .rowmenu:active { background: var(--surface-2); }
-@media (max-width: 640px) {
-  .rowmenu:not([hidden]) { display: inline-flex; }
-}
+/* `display: none` above is the no-JS state — the `hidden` attribute alone
+   cannot hold it, because a `display` declaration on the same element
+   beats the UA sheet's `[hidden]`. This is the reveal, and it is
+   unconditional now. */
+.rowmenu:not([hidden]) { display: inline-flex; }
+/* THE POOL TABLE'S CONTROLS CELL, which had no desktop rule at all — it
+   held one control, so it never needed one. With the ⋮ visible above
+   640px it holds two 44px boxes, and a table cell is a line box: they
+   wrapped, the ⋮ dropped under the `+queue` button and every row grew
+   from 64px to 110px. Measured in a real render of TrackRow before the
+   fix. `nowrap` keeps them on one line and lets the column ask the table
+   for the width it needs; the 8px between them is `button + button`,
+   which is precisely the rule that exists for buttons sharing a line. */
+.tracktable td.controls { white-space: nowrap; }
 
 /* ROW FEEDBACK IS A BACKGROUND STEP. Rows do NOT lift: a hundred lifting
    rows is the black-rectangle collapse in its purest form (§4.3). A tap
