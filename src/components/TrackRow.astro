@@ -45,27 +45,6 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   draggable={reorderable ? 'true' : undefined}
   data-file-id={reorderable ? track.file_id : undefined}
 >
-  {/* M6b: the play link carries the queue's own metadata as well as its
-      label. site.ts scrapes every `a.play` inside the enclosing
-      `[data-queue-list]` container to build the list a play means — the rest
-      of THIS table, in the order it is rendered — so the attributes have to
-      be on the link, not on the row: /track/[id] and /review render a play
-      link with no row at all.
-
-      `+Q` is play's companion (§4: "+ queue is a companion to play,
-      everywhere play appears"). It is `hidden` in the markup and unhidden by
-      site.ts, because a button that would do nothing without JS must not be
-      visible without JS — the queue is client state and there is no server
-      endpoint for it to fall back to. The glyph is deliberately NOT the bare
-      `+` the add-to-crate picker already uses two cells away.
-
-      PERF TASK 2.2 — the button carries `data-file-id` AND NOTHING ELSE.
-      It used to repeat artist/title/duration/bpm/key, which is five of the
-      eight times the audit found artist and title serialised in one row, on
-      every one of a hundred rows. site.ts's `+Q` delegation now reads the
-      row's own `a.play` for that metadata — the same link it already
-      scrapes to build the list a play means. `title="add to queue"` went
-      with them: it repeated the aria-label and is invisible on touch. */}
   {/* ARTWORK LEADS, AND THE ARTWORK IS THE PLAY LINK. The `▶` used to be
       a bare text glyph 14x18px in its own cell — the audit's offender #2
       — beside a 28px thumb that did nothing. They are one control now:

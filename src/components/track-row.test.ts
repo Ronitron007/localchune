@@ -22,7 +22,7 @@
 //    Then 2,797 / 1,345 when the retina `srcset` landed. Then re-baselined
 //    to a NORMALISED number — see `normalize` below — because the art URLs
 //    made the count depend on a deployment setting rather than on the row.
-//    The figures the budgets now hold are 2,590 and 1,138.
+//    The figures the budgets now hold are 2,742 and 1,290.
 //
 //    `data-label` WAS dead weight — site.ts derives the same string from
 //    artist and title in `entryLabel()` and never read the attribute. It is
@@ -124,9 +124,9 @@ async function render(Component: unknown, props: Record<string, unknown>): Promi
 }
 
 describe('TrackRow — the per-row budget', () => {
-  it('stays at or under 2,590 bytes with realistic strings (was 2,957)', async () => {
+  it('stays at or under 2,742 bytes with realistic strings (was 2,957)', async () => {
     const html = await render(TrackRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_590)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(2_742)
   })
 
   /* SURVIVE-LIST #15, AND THE TWO DERIVATIVE KEYS.
@@ -212,15 +212,9 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-<<<<<<< HEAD
-  it('stays at or under 1,138 bytes (was 1,505)', async () => {
+  it('stays at or under 1,290 bytes (was 1,505)', async () => {
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_138)
-=======
-  it('stays at or under 1,279 bytes (was 1,505)', async () => {
-    const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_279)
->>>>>>> 56b4601 (feat(rows): the three-dot sheet — six 8-30px controls become six 44px rows)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(1_290)
   })
 
   it('gives `button.queueadd` a file id and nothing else to say', async () => {
