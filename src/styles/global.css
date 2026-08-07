@@ -213,6 +213,7 @@
   --z-nav: 20;       /* the compact top nav bar                              */
   --z-chip: 30;      /* the upload chip                                      */
   --z-player: 40;    /* the player bar, and the queue drawer inside it       */
+  --z-search: 45;    /* the nav's search overlay — see below                 */
   --z-nowplaying: 50;/* the now-playing sheet surface                        */
   --z-sheet: 60;     /* bottom action sheets and their scrims                */
   --z-dialog: 70;    /* confirm dialogs                                      */
@@ -2064,3 +2065,251 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 .strip .stripfill { fill: var(--fg); }
 .strip .strippeak { fill: var(--mid); }
+
+/* =====================================================================
+   THE SEARCH OVERLAY — appended, never interleaved (same discipline the
+   perf phase used above: parallel workers, no shared lines).
+
+   Built by src/lib/search-overlay.ts, which is the repo's ONE lazily
+   loaded module. The rows inside it reuse `a.play`, `img.thumb`,
+   `.thumb-empty`, `.keychip` and `button.rowmenu` — every one of those is
+   already styled above and none of it is restated here. What follows is
+   the surface and the row's own two-line layout, and nothing else.
+
+   WHY z-index 45 AND NOT 60. The overlay must cover the player bar (40),
+   because it is a full-screen surface and a bar poking through it reads as
+   a rendering fault. It must sit UNDER the action sheet (60), because
+   tapping a result's ⋮ opens that sheet ON TOP of this — same component,
+   same dismissal, portalled to <body> either way. 45 is the only step that
+   satisfies both, and it is declared in the ladder rather than invented
+   here.
+   ===================================================================== */
+.searchoverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-search);
+}
+/* Solid. No backdrop-filter, at any breakpoint — §1.5, and the sheet's
+   scrim has the same note for the same reason. */
+.searchoverlay-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity var(--dur-panel) var(--ease-panel);
+}
+.searchoverlay.is-open .searchoverlay-scrim { opacity: 1; }
+
+/* BELOW 640px THE PANEL IS THE SCREEN. A search that opens as a small box
+   on a phone wastes the only dimension a phone has, and the keyboard eats
+   half of what is left. Above 640px it becomes the centred column §5.2's
+   sheet already establishes for a wide viewport. */
+.searchoverlay-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  transform: translate3d(0, -8px, 0);
+  opacity: 0;
+  transition: transform var(--dur-panel) var(--ease-panel),
+              opacity var(--dur-panel) var(--ease-panel);
+}
+.searchoverlay.is-open .searchoverlay-panel { transform: none; opacity: 1; }
+
+.searchoverlay-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+  min-height: var(--tap);
+  padding: var(--pad-1) var(--pad-2);
+  border-bottom: var(--line-full);
+}
+.searchoverlay-leading { flex: none; color: var(--ink-55); }
+
+/* The input carries NO border of its own: the bar's bottom rule is the
+   edge, and a box inside a box is the thing §1.2 spent the whole border
+   hierarchy avoiding. 16px at every width — anything smaller and iOS zooms
+   the page on focus, which on a full-screen overlay is unrecoverable. */
+.searchoverlay-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--tap);
+  border: 0;
+  padding: 0;
+  background: none;
+  font: 16px/1.2 var(--font-ui);
+  color: var(--fg);
+}
+.searchoverlay-input:focus { outline: none; }
+.searchoverlay-input::placeholder { color: var(--ink-35); }
+/* The UA's own clear button is a second, unstyleable close control right
+   beside ours. */
+.searchoverlay-input::-webkit-search-cancel-button { display: none; }
+
+.searchoverlay-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.searchoverlay-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.searchoverlay-status {
+  flex: none;
+  margin: 0;
+  padding: var(--pad-1) var(--pad-2);
+  border-top: var(--line-hair);
+  color: var(--ink-55);
+  font-size: var(--text-xs);
+}
+/* An empty status is not a bordered empty strip. */
+.searchoverlay-status:empty { display: none; }
+
+/* --- the three messages (§6.6, survive-list #16) ---
+   THE OUTAGE AND THE EMPTY RESULT MUST NOT LOOK ALIKE. That is the whole
+   rule, and a search box is where confusing them costs most: a member who
+   reads "the database is down" as "your pool is empty" stops looking.
+
+   So `is-empty` is the dashed language `.empty` and the upload dropzone
+   already speak — "nothing here", a normal outcome — while `is-error`
+   drops the dash, takes the danger colour the sheet's danger row uses, and
+   reads as a fault. `is-hint` is the quietest of the three: it is not a
+   result at all, only the syntax nobody would otherwise discover. */
+.searchoverlay-message {
+  margin: 0;
+  padding: var(--pad-3) var(--pad-2);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--mid);
+}
+.searchoverlay-message.is-hint  { color: var(--ink-55); font-size: var(--text-xs); }
+.searchoverlay-message.is-empty { border: var(--line-dash); margin: var(--pad-2); color: var(--mid); }
+.searchoverlay-message.is-error { color: var(--btn-red); }
+
+/* --- one result row ---
+   §5.1's card, exactly: 44px artwork, two lines of text, chips, one ⋮.
+   The row does NOT lift on hover (§4.3) — a background step is the whole
+   recipe, and :active carries it because touch has no hover. */
+.searchrow {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0 var(--pad-2);
+  padding: var(--pad-1) var(--pad-2);
+  border-bottom: var(--line-hair);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+.searchrow:last-child { border-bottom: 0; }
+.searchrow:hover,
+.searchrow:active,
+.searchrow.is-active { background: var(--surface-2); }
+.searchrow > .play { grid-column: 1; grid-row: 1 / 3; }
+
+.searchrow-text {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+/* One line each, ellipsised. A DJ scans this column; a wrapped title
+   turns a 64px row into a 96px one and four results into two. */
+.searchrow-title,
+.searchrow-artist {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.searchrow-title { color: var(--fg); font-size: var(--text-sm); text-decoration: none; }
+.searchrow-title:hover { text-decoration: underline; }
+.searchrow-artist { color: var(--mid); font-size: var(--text-xs); }
+
+.searchrow-meta {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  display: flex;
+  align-items: center;
+  gap: var(--pad-1);
+}
+.searchrow-meta .bpm { color: var(--ink-55); font-family: var(--font-num); font-size: var(--text-xs); }
+
+/* THE SHEET'S CONTROLS ARE IN THE DOM AND MUST NOT BE ON SCREEN, AND
+   `hidden` ALONE DOES NOT DO IT. This file already records the rule once:
+   "a `display` declaration on the same element BEATS the UA sheet's
+   [hidden]" — and `button`, `summary` and `details` all carry one here. So
+   `queueadd.hidden = true` computed to `display: flex` and every result row
+   drew two empty boxes under its title. Caught in the browser at 375px;
+   nothing in the DOM or the unit tests could have seen it, because the
+   attribute really was set and the node really was there.
+
+   The row keeps these controls because `openRowSheet` builds its sheet by
+   READING them (see search-overlay.ts) — the pool's own mobile card does
+   exactly this under `.has-rowmenu`. */
+.searchrow .queueadd[hidden],
+.searchrow .likeform[hidden],
+.searchrow .cratepick[hidden] { display: none; }
+
+.searchrow .rowmenu {
+  grid-column: 4;
+  grid-row: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+@media (min-width: 640px) {
+  /* The centred column §5.2 already established for a wide viewport. Top
+     aligned rather than middle: results grow downward, and a box that
+     re-centres itself on every keystroke is unreadable. */
+  .searchoverlay-panel {
+    inset: var(--pad-4) 0 auto 50%;
+    width: min(40rem, calc(100vw - var(--pad-4)));
+    max-height: min(32rem, calc(100vh - var(--pad-4) * 2));
+    transform: translate3d(-50%, -8px, 0);
+    border: var(--line-full);
+    box-shadow: var(--sheet);
+  }
+  .searchoverlay.is-open .searchoverlay-panel { transform: translate3d(-50%, 0, 0); }
+}
+
+/* NO per-component prefers-reduced-motion block here, and that is the
+   system working rather than an omission. The ONE global block near the
+   top of this file flattens `transition-duration` on `*, *::before,
+   *::after` with `!important`, which already covers both transitions
+   above; a second block would be a second place the preference is
+   honoured, and global-tokens.test.ts fails the build on exactly that.
+
+   The JS side still needs its own answer, because a timeout is a separate
+   clock from a transition — see `exitDelayMs` in src/lib/sheet.ts. The
+   overlay does not need one: it removes its node synchronously on close
+   rather than waiting out an exit animation. */
