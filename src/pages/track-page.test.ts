@@ -199,6 +199,63 @@ describe('defect 1 — the play control is a button, not a glyph under a scrim',
   })
 })
 
+describe('the detail page can queue — owner, 2026-08-07', () => {
+  // "on track details page...no way to add it to queue." Every ROW surface
+  // has had `+Q` since M6b, and the spec's §4 says "+ queue is a companion
+  // to play, everywhere play appears". This page was the one place play
+  // appeared without it.
+  const transport = () => block('<div class="transport">', '</div>')
+
+  it('the action group reads Play · Download · Queue, in that order', () => {
+    const t = transport()
+    // Matched on the CLOSING tag of each control, not on the visible word:
+    // the word also appears inside `aria-label`s ("Play …", "Add … to the
+    // queue") and inside `href`s, so a bare substring finds the wrong
+    // occurrence and orders three attributes instead of three controls.
+    const order = ['Play</a>', 'Download\n', 'Queue</button>'].map((s) => t.indexOf(s.trim()))
+    expect(order.every((i) => i > -1), `missing one of Play/Download/Queue: ${t}`).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('it is the same `button.queueadd` contract every row uses', () => {
+    // site.ts finds this by ONE selector and reads ONE attribute; a
+    // different class or a missing data-file-id is a control that silently
+    // does nothing, with no build error.
+    const t = transport()
+    expect(t).toContain('class="queueadd btn-secondary"')
+    expect(t).toContain(`data-file-id="${FILE_ID}"`)
+  })
+
+  it('it does NOT copy the queue metadata — the play link is the source', () => {
+    // site.ts's delegation calls playLinkFor(fileId) and scrapes artist,
+    // title, duration, bpm and key off `a.play[data-track-id]`. That link
+    // is directly above this button and already carries all five. A copy
+    // here would be a second source for one queue entry, and the two would
+    // eventually disagree.
+    const t = transport()
+    const btn = t.slice(t.indexOf('class="queueadd'))
+    for (const attr of ['data-artist', 'data-title', 'data-duration', 'data-bpm', 'data-key']) {
+      expect(btn, `the button must not carry ${attr}`).not.toContain(attr)
+    }
+  })
+
+  it('ships hidden, because the queue has no server fallback', () => {
+    const t = transport()
+    const btn = t.slice(t.indexOf('class="queueadd'))
+    expect(btn.slice(0, btn.indexOf('>'))).toContain('hidden')
+  })
+
+  it('is a <button>, so astro-forms has nothing to enforce here', () => {
+    const t = transport()
+    expect(t.slice(t.indexOf('class="queueadd'))).not.toContain('<form')
+    expect(t).toContain('type="button"')
+  })
+
+  it('names the track, since the glyph is aria-hidden', () => {
+    expect(transport()).toMatch(/aria-label="Add [^"]+ to the queue"/)
+  })
+})
+
 describe('survive-list contracts on this page', () => {
   it('#7 — a.play keeps its class and all six data attributes', () => {
     // site.ts scrapes these off THIS element. A rename or a move to a

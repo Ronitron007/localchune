@@ -21,6 +21,18 @@ import { isUuid, jsonError, parseTagForm, rpcError } from '../../../../lib/uploa
  * round trip. On failure: JSON `{error}`, same vocabulary as every other
  * /api route (rpcError/jsonError) — a hand-edited or replayed form still
  * gets a real error instead of a bodyless 500.
+ *
+ * TWO ANSWERS, ONE ROUTE — owner, 2026-08-07: adding and removing a tag
+ * must not reload the page. `Accept: application/json` gets `{ok: true}`
+ * instead of the 303; anything else keeps the redirect, which is the
+ * no-JS path and stays exactly as it was. Same content negotiation
+ * `/api/crates` already uses for the crate picker, and the same reason:
+ * one endpoint, one set of rules, two transports.
+ *
+ * The BODY stays `application/x-www-form-urlencoded` on both paths.
+ * `request.formData()` is the only parser here, and giving the fetch path
+ * a JSON body would be a second parse of the same three fields — see
+ * CLAUDE.md on the ten routes that branch on the urlencoded type.
  */
 export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
   if (!locals.member) return jsonError(401, 'unauthenticated', 'sign in again')
@@ -43,5 +55,11 @@ export const POST: APIRoute = async ({ params, request, locals, redirect }) => {
       : await locals.supabase.rpc('tag_add', { p_file: id, p_tag: parsed.value.tag })
   if (error) return rpcError(error)
 
+  // Negotiated on ACCEPT, not on content-type: the body is urlencoded on
+  // both paths (see the header), so content-type cannot tell a fetch from
+  // a form here the way it can on /api/track/[id]/like.
+  if ((request.headers.get('accept') ?? '').includes('application/json')) {
+    return Response.json({ ok: true }, { headers: { 'cache-control': 'private, no-store' } })
+  }
   return redirect(`/track/${id}`, 303)
 }

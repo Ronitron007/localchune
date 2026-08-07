@@ -19,6 +19,7 @@
 // page, drops their own private crates too (crate_list() would otherwise
 // still include those, tagged is_mine).
 import Shell from '../../layouts/Shell.astro'
+import CrateStack from '../../components/CrateStack.astro'
 import TrackHead from '../../components/TrackHead.astro'
 import TrackRow from '../../components/TrackRow.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../../lib/org-api'
@@ -98,6 +99,10 @@ const joined = new Date(member.joined_at).toISOString().slice(0, 10)
         <ul class="cratelist">
           {crates.map((c) => (
             <li class="cratecard">
+              {/* The same crate object /crates and the home feed draw —
+                  one component, so a member's crate cannot look like a
+                  different kind of thing on their own profile. */}
+              <CrateStack artFileIds={c.art_file_ids} name={c.name} />
               <a href={crateHref(c.id)}>{c.name}</a>
               <div class="explain">{formatCrateMeta(c)}</div>
             </li>

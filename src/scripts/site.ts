@@ -11,8 +11,17 @@ import {
   velocityPxPerMs, type SheetRow, type SheetRowInput,
 } from '../lib/sheet'
 import {
-  addToCrate, createCrate, DuplicateCrateItemError, SessionExpiredError, toggleLike,
+  addToCrate, createCrate, editTag, DuplicateCrateItemError, SessionExpiredError, toggleLike,
 } from '../lib/org-api'
+import {
+  planTagAdd, tagAddFailedMessage, tagAddedMessage, tagDuplicateMessage,
+  tagRefusalMessage, tagRemoveFailedMessage, tagRemovedMessage,
+} from '../lib/tag-edit'
+import {
+  CRATE_NAME_MAX, NEW_CRATE_ID, NEW_CRATE_LABEL, NO_CRATES_LABEL, addFailedMessage,
+  addedMessage, cratePickerRows, createdNotAddedMessage, duplicateMessage,
+  normalizeCrateName, type CrateOption,
+} from '../lib/crate-picker'
 import { createPlayMeter } from '../lib/play-meter'
 import { artFallback, artMediumUrl, artThumbUrl, LIKE_ICON, likeActionLabel, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
@@ -55,6 +64,7 @@ const label = document.getElementById('player-label')
 const link = document.getElementById('player-link') as HTMLAnchorElement | null
 const artistEl = document.getElementById('player-artist')
 const likeForm = document.getElementById('player-like') as HTMLFormElement | null
+const crateBtn = document.getElementById('player-crate') as HTMLButtonElement | null
 const toggle = document.getElementById('player-toggle') as HTMLButtonElement | null
 const nextBtn = document.getElementById('player-next') as HTMLButtonElement | null
 const time = document.getElementById('player-time')
@@ -149,7 +159,38 @@ function setNowPlaying(title: string, artistName: string | null, fileId: string 
  * is empty, and a bail means the browser would POST natively to whatever
  * `action` says.
  */
+/**
+ * THE CRATE CONTROL IN THE BAR, pointed at the same track as the ♥.
+ *
+ * It carries the file id on a data attribute and nothing else: the click
+ * delegation further down reads it and opens the ONE picker. No crate
+ * logic here, for the same reason there is no like logic in the function
+ * below it.
+ *
+ * Called from setPlayerLike, and deliberately so. "Does the bar know what
+ * is playing" is ONE fact, and the ♥ and the crate are the two controls
+ * that depend on it — arming them from two call sites is how one of them
+ * ends up pointed at the previous track. The name it takes is the track's,
+ * for the accessible label; a control that says "Add to a crate" on every
+ * track is a control a screen-reader user cannot tell apart from the one
+ * in the row they just left.
+ */
+function setPlayerCrate(fileId: string | null, title: string): void {
+  if (crateBtn === null) return
+  if (fileId === null) {
+    crateBtn.dataset.fileId = ''
+    crateBtn.hidden = true
+    return
+  }
+  crateBtn.dataset.fileId = fileId
+  crateBtn.setAttribute('aria-label', title === '' ? 'Add to a crate' : `Add ${title} to a crate`)
+  crateBtn.hidden = false
+}
+
 function setPlayerLike(fileId: string | null, liked: boolean, count: number, title: string): void {
+  // Before the null guard below: the crate control exists whether or not
+  // the ♥'s markup does, and the two must arm and disarm together.
+  setPlayerCrate(fileId, title)
   if (likeForm === null) return
   const btn = likeForm.querySelector('button.likebtn')
   const glyph = likeForm.querySelector('.likeglyph')
@@ -1578,7 +1619,14 @@ document.addEventListener('click', (e) => {
  */
 function revealQueueControls(): void {
   document.querySelectorAll<HTMLElement>(
-    'button.queueadd[hidden], button.crateplay[hidden], button.rowmenu[hidden]',
+    'button.queueadd[hidden], button.crateplay[hidden], button.rowmenu[hidden],' +
+    // The track page's "+ New crate…" trigger. Server-rendered rather than
+    // built by the picker, because that page's add-to-crate block is a real
+    // no-JS <select> form rather than a JS-built menu — so the modal's entry
+    // point there is markup, and markup that would do nothing without JS
+    // ships hidden like everything else here. The block's own "Create one"
+    // link to /crates stays the path for a member with JS off.
+    'button.cratepick-new[hidden]',
   ).forEach((el) => { el.hidden = false })
   // The row menu is the whole control set below 640px, so the cells it
   // replaces are hidden only once it is real. Without JS this class is
@@ -1784,7 +1832,6 @@ async function submitCrateOrder(container: HTMLElement) {
  * later open, so mid-typed "new crate…" text or a disabled button from an
  * in-flight request never gets clobbered by a redundant re-render.
  */
-type CrateOption = { id: string; name: string }
 let crateListPromise: Promise<CrateOption[]> | null = null
 
 function loadCrateList(): Promise<CrateOption[]> {
@@ -1801,16 +1848,29 @@ function loadCrateList(): Promise<CrateOption[]> {
   return crateListPromise
 }
 
-/** Replaces one picker's `.cratepick-menu` with real crate buttons plus an inline "new crate…" form. */
+/**
+ * Replaces one picker's `.cratepick-menu` with real crate buttons plus the
+ * "+ New crate…" trigger.
+ *
+ * THE INLINE CREATE FORM IS GONE, AND THAT IS THE OWNER'S CHANGE. This
+ * menu used to end in a text input and a Create button, typed into a
+ * ~14rem popover hanging off a table row. The owner asked for the create
+ * step to be a MODAL, on every add-to-crate surface — so what is left here
+ * is a button that opens the one modal, and the modal is the same one the
+ * row ⋮'s sheet and the player bar open. Nothing was lost with no JS: this
+ * whole menu is built BY JS, and /crates' server-rendered create form is
+ * and always was the no-JS path.
+ */
 function renderCratePickMenu(details: HTMLElement, crates: CrateOption[]) {
   const menu = details.querySelector('.cratepick-menu')
   if (!menu) return
+  const fileId = details instanceof HTMLElement ? details.dataset.fileId ?? '' : ''
   menu.textContent = ''
 
   if (crates.length === 0) {
     const p = document.createElement('p')
     p.className = 'explain'
-    p.textContent = 'No crates yet.'
+    p.textContent = `${NO_CRATES_LABEL}.`
     menu.appendChild(p)
   } else {
     const list = document.createElement('ul')
@@ -1828,38 +1888,19 @@ function renderCratePickMenu(details: HTMLElement, crates: CrateOption[]) {
     menu.appendChild(list)
   }
 
-  const form = document.createElement('form')
-  form.className = 'cratepick-new'
-  const input = document.createElement('input')
-  input.type = 'text'
-  input.name = 'name'
-  input.placeholder = 'new crate…'
-  input.maxLength = 80
-  const submit = document.createElement('button')
-  submit.type = 'submit'
-  submit.className = 'btn-secondary'
-  submit.textContent = 'Create'
-  form.appendChild(input)
-  form.appendChild(submit)
-  menu.appendChild(form)
-}
-
-/**
- * True when `details` is open with unsent text in its "new crate…" input —
- * the one case `populateCratePickers` must leave alone rather than clobber
- * with a fresh `renderCratePickMenu` (which blows away the input's value by
- * rebuilding the form from scratch). Left un-populated, it picks back up
- * next time it is toggled shut and open again.
- */
-function hasUnsentDraft(details: HTMLElement): boolean {
-  if (!(details instanceof HTMLDetailsElement) || !details.open) return false
-  const input = details.querySelector<HTMLInputElement>('form.cratepick-new input[name="name"]')
-  return input !== null && input.value.trim() !== ''
+  const create = document.createElement('button')
+  create.type = 'button'
+  create.className = 'cratepick-new btn-secondary'
+  // The sheet's own create row says the same words from the same
+  // constant — one label, four surfaces.
+  create.textContent = `+ ${NEW_CRATE_LABEL}`
+  create.dataset.fileId = fileId
+  create.setAttribute('aria-haspopup', 'dialog')
+  menu.appendChild(create)
 }
 
 function populateCratePickers(crates: CrateOption[]) {
   document.querySelectorAll<HTMLElement>('details.cratepick:not([data-populated])').forEach((details) => {
-    if (hasUnsentDraft(details)) return
     renderCratePickMenu(details, crates)
     details.dataset.populated = 'true'
   })
@@ -1909,6 +1950,43 @@ document.addEventListener('astro:after-swap', () => {
  * so a stale menu (crate deleted mid-session, session expired) reads
  * distinctly from an ordinary failure.
  */
+/**
+ * ONE ADD, FOR EVERY SURFACE. `addToCrate()` is called here and nowhere
+ * else in this file, and every path that puts a track in a crate — a
+ * picker menu's option button, the row ⋮'s crate sheet, the player bar's
+ * crate control, the create modal's second step — arrives through this
+ * function.
+ *
+ * That is not tidiness. The three status branches below are a real
+ * distinction a member depends on: "already in Warmups" (the crate has it),
+ * "Session ended" (nothing happened and signing in fixes it) and a generic
+ * failure are three different next actions. A second copy of this on the
+ * player bar would have carried two of the three, and the surface that
+ * carried the wrong one would be whichever one nobody re-read.
+ *
+ * Optimistic UX is deliberately absent: a fresh add has no prior state to
+ * roll back to, so disable-while-in-flight is the whole affordance. The
+ * caller owns the disabling, because only the caller knows which control
+ * it was.
+ *
+ * Resolves true when the track is in the crate, false otherwise — the
+ * modal needs the answer, the menus do not.
+ */
+async function addFileToCrate(crateId: string, fileId: string, crateName: string): Promise<boolean> {
+  try {
+    await addToCrate(crateId, fileId)
+    setStatus(addedMessage(crateName))
+    return true
+  } catch (err) {
+    setStatus(err instanceof DuplicateCrateItemError
+      ? duplicateMessage(crateName)
+      : err instanceof SessionExpiredError
+        ? 'Session ended — reload to sign in.'
+        : err instanceof Error ? err.message : addFailedMessage(crateName))
+    return false
+  }
+}
+
 document.addEventListener('click', (e) => {
   const button = (e.target as Element).closest?.('button.cratepick-option')
   if (!(button instanceof HTMLButtonElement)) return
@@ -1921,88 +1999,355 @@ document.addEventListener('click', (e) => {
 
   button.disabled = true
   void (async () => {
-    try {
-      await addToCrate(crateId, fileId)
-      setStatus(`added to ${crateName}`)
-      if (details instanceof HTMLDetailsElement) details.open = false
-    } catch (err) {
-      setStatus(err instanceof DuplicateCrateItemError
-        ? `already in ${crateName}`
-        : err instanceof SessionExpiredError
-          ? 'Session ended — reload to sign in.'
-          : err instanceof Error ? err.message : 'Could not add to crate.')
-    } finally {
-      button.disabled = false
-    }
+    const ok = await addFileToCrate(crateId, fileId, crateName)
+    if (ok && details instanceof HTMLDetailsElement) details.open = false
+    button.disabled = false
   })()
 })
 
 /**
- * The picker's inline "new crate…" input — createCrate() then addToCrate()
- * chained, same two-step the brief describes. A fresh crate can never
- * already contain this file, so there is no duplicate branch to handle
- * here the way the button handler above needs one. On success every picker
- * on the page is invalidated and re-populated (not just this one) so the
- * new crate shows up as an option everywhere, not only in the row it was
- * created from — except one currently open with its own unsent "new
- * crate…" text, which `populateCratePickers`'s `hasUnsentDraft` check
- * leaves alone rather than clobbers; it re-populates on that picker's next
- * toggle instead.
+ * THE "+ New crate…" MODAL — the owner's ask, 2026-08-07, and the one
+ * dialog in the app.
  *
- * The two awaits are in separate try/catches on purpose: if createCrate
- * throws, nothing was created server-side, so the generic message below is
- * accurate. If it succeeds but addToCrate then throws, the crate DOES exist
- * server-side even though this file was never added to it — the cache is
- * already stale at that point, so it is invalidated here too (lazily; the
- * next open refetches), and the status message says so explicitly. A user
- * who only sees "could not add" and retries by re-typing the same name
- * would mint a second crate via createCrate's own auto-suffix ("name (2)")
- * instead of reusing the one that already exists — the message steers them
- * to the picker list instead.
+ * It replaces the text input that used to sit at the bottom of every
+ * picker popover. Same two server steps as before (createCrate then
+ * addToCrate), same message for each outcome; what changed is that a
+ * member now types the name into a focused, trapped panel with a real
+ * 44px field instead of into a ~14rem popover hanging off a table row on
+ * a phone.
+ *
+ * BUILT ON `openActionSheet`'s `body`, not on `<dialog>`. See the
+ * SheetOptions comment for the full argument: one scrim, one Escape, one
+ * swipe, one trap, one z-index — a second modal primitive is a second set
+ * of all five.
+ *
+ * THE TWO AWAITS ARE IN SEPARATE try/catch BLOCKS, and that has always
+ * been load-bearing. If createCrate throws, nothing exists server-side and
+ * a generic message is accurate. If it SUCCEEDS and addToCrate then fails,
+ * an empty crate exists that the member never sees in a stale picker — so
+ * the cache is invalidated on that branch too, and the message says the
+ * crate was made. A member who reads only "could not add" and retypes the
+ * same name mints a second crate through crate_create's own "name (2)"
+ * suffix.
+ *
+ * `fileId` may be null: the modal is then a plain "make a crate", which is
+ * what a picker opened with nothing playing would offer. Every current
+ * caller has a track, but the create step does not need one and pretending
+ * it does would have put a second modal in the app the first time
+ * something wanted the other half.
  */
+function openNewCrateModal(fileId: string | null, returnFocusTo: HTMLElement | null): void {
+  const form = document.createElement('form')
+  form.className = 'cratenew'
+  // NO `method` ATTRIBUTE, and no action. This form is never submitted to
+  // the network — the handler below preventDefault()s and fetches — so it
+  // is not a `<form method="post">` and the data-astro-reload rule
+  // (CLAUDE.md, astro-forms.test.ts) has nothing to attach to. The
+  // ELEMENT is still a form because Enter-to-submit in a single-field
+  // dialog is the behaviour a member expects, and only a form gives it.
+  const labelEl = document.createElement('label')
+  labelEl.className = 'cratenew-label'
+  const labelText = document.createElement('span')
+  labelText.textContent = 'Crate name'
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.name = 'name'
+  input.placeholder = 'Peak time, Sunday morning, …'
+  input.maxLength = CRATE_NAME_MAX
+  input.required = true
+  input.autocomplete = 'off'
+  labelEl.appendChild(labelText)
+  labelEl.appendChild(input)
+
+  const actions = document.createElement('div')
+  actions.className = 'cratenew-actions'
+  const submit = document.createElement('button')
+  submit.type = 'submit'
+  submit.className = 'btn'
+  submit.textContent = fileId === null ? 'Create' : 'Create and add'
+  actions.appendChild(submit)
+
+  form.appendChild(labelEl)
+  form.appendChild(actions)
+
+  const close = openActionSheet({
+    title: NEW_CRATE_LABEL,
+    rows: [],
+    body: form,
+    returnFocusTo,
+  })
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault()
+    const name = normalizeCrateName(input.value)
+    if (name === null) { input.focus(); return }
+    submit.disabled = true
+    input.disabled = true
+
+    void (async () => {
+      let crateId: string
+      try {
+        crateId = await createCrate(name)
+      } catch (err) {
+        setStatus(err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : err instanceof Error ? err.message : 'Could not create crate.')
+        submit.disabled = false
+        input.disabled = false
+        return
+      }
+
+      // The crate exists from here on, whatever happens next — so the
+      // cached list is stale on BOTH branches below and is invalidated
+      // before either of them decides what to say.
+      invalidateCratePickerCache()
+      close()
+      if (fileId === null) {
+        setStatus(`created ${name}`)
+      } else {
+        try {
+          await addToCrate(crateId, fileId)
+          setStatus(addedMessage(name))
+        } catch (err) {
+          setStatus(err instanceof SessionExpiredError
+            ? 'Session ended — reload to sign in.'
+            : createdNotAddedMessage(name))
+        }
+      }
+      // Repopulate rather than merely invalidate: the new crate must be a
+      // visible option in every picker on the page immediately, which is
+      // the "without a full reload" half of the owner's ask.
+      void loadCrateList().then(populateCratePickers)
+    })()
+  })
+}
+
+/**
+ * The picker menu's "+ New crate…" button. `data-file-id` is stamped on
+ * the button at render time rather than read back off the `<details>`,
+ * because the search overlay builds its rows into a portal where the
+ * ancestor chain is its own — one attribute is cheaper than a second
+ * lookup path that only one surface would exercise.
+ */
+document.addEventListener('click', (e) => {
+  const button = (e.target as Element).closest?.('button.cratepick-new')
+  if (!(button instanceof HTMLButtonElement)) return
+  e.preventDefault()
+  const details = button.closest('details.cratepick')
+  if (details instanceof HTMLDetailsElement) details.open = false
+  openNewCrateModal(button.dataset.fileId || null, button)
+})
+
+/* ============================================================
+   TAGS WITHOUT A PAGE RELOAD — owner, 2026-08-07
+   ============================================================
+   Both `form.tagform` elements on /track/[id] were plain native POSTs: a
+   full server round trip and re-render for one chip, which on a phone
+   throws the member back to the top of a long page every time they add a
+   tag. Tagging is the one thing on that page a member does five times in
+   a row.
+
+   THIS IS THE ♥'s PATTERN, NOT A NEW ONE. `form.likeform` on the same page
+   is already a delegated capture-phase submit that repaints optimistically,
+   POSTs in the background and rolls back on failure, with the plain form as
+   the no-JS path. Everything below is that, for a chip instead of a glyph:
+
+     · the forms keep `method="post"`, their real `action` and
+       `data-astro-reload` — astro-forms.test.ts enforces the last one
+       repo-wide, and it is the correct fallback rather than a formality;
+     · no inline handlers (survive-list #6: an `onclick=` in this bundle
+       403s the deploy through Cloudflare's API WAF);
+     · the RULES live in src/lib/tag-edit.ts and are `tag_add`'s own —
+       whitespace collapse, 32 characters, lower-cased key, a repeat is a
+       no-op rather than an error, and the 20 cap counted only for a NEW
+       key. An optimistic chip that says something the server will not
+       store is worse than the reload it replaced.
+
+   ONE delegation for both intents. The remove button lives in its own tiny
+   form beside each chip and the add form is at the bottom of the section;
+   they differ by the `intent` field, which is the same thing the ROUTE
+   branches on. */
+
+/** The `<li>` a chip and its remove form share, on /track/[id]. */
+function tagItemOf(form: HTMLFormElement): HTMLElement | null {
+  const li = form.closest('li')
+  return li instanceof HTMLElement ? li : null
+}
+
+/** Every tag currently on the page, in display form — what the DOM has. */
+function tagsOnPage(list: Element): string[] {
+  return [...list.querySelectorAll('.tagchip')].map((el) => el.textContent?.trim() ?? '')
+}
+
+/**
+ * A chip and its remove control, built to match what the server renders.
+ *
+ * The remove form is a REAL form with the same action and the same
+ * `data-astro-reload` the server-rendered ones carry, so a chip added
+ * optimistically can be removed by the same delegation — and, if JS were
+ * to fail between the two, by the browser.
+ */
+function tagChipEl(display: string, action: string): HTMLLIElement {
+  const li = document.createElement('li')
+  const chip = document.createElement('span')
+  chip.className = 'tagchip'
+  chip.textContent = display
+  li.appendChild(chip)
+
+  const form = document.createElement('form')
+  form.className = 'tagform'
+  form.method = 'post'
+  form.action = action
+  form.setAttribute('data-astro-reload', '')
+  for (const [name, value] of [['intent', 'remove'], ['tag_key', display]]) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = name
+    input.value = value
+    form.appendChild(input)
+  }
+  const btn = document.createElement('button')
+  btn.type = 'submit'
+  btn.className = 'btn-danger btn-icon'
+  btn.setAttribute('aria-label', `Remove tag ${display}`)
+  // A NODE, not a string of markup — the same rule the ♥ follows. `close`
+  // is the set's own mark; `×` is U+00D7 and iOS may emoji-render it.
+  btn.appendChild(iconEl('close', { size: 14 }))
+  form.appendChild(btn)
+  li.appendChild(form)
+  return li
+}
+
 document.addEventListener('submit', (e) => {
-  const form = (e.target as Element).closest?.('form.cratepick-new')
+  const form = (e.target as Element).closest?.('form.tagform')
   if (!(form instanceof HTMLFormElement)) return
-  const details = form.closest('details.cratepick')
-  const fileId = details instanceof HTMLElement ? details.dataset.fileId : undefined
-  const input = form.querySelector('input[name="name"]')
-  if (!fileId || !(input instanceof HTMLInputElement)) return
+  const action = form.getAttribute('action')
+  const section = form.closest('.tags')
+  const list = section?.querySelector('.tageditor')
+  if (!action || !(list instanceof HTMLElement)) return
+
+  const fileId = action.match(/\/api\/track\/([^/]+)\/tags/)?.[1]
+  if (fileId === undefined) return
+
+  const intent = form.querySelector<HTMLInputElement>('input[name="intent"]')?.value === 'remove'
+    ? 'remove' : 'add'
+
+  if (intent === 'remove') {
+    const display = form.querySelector<HTMLInputElement>('input[name="tag_key"]')?.value ?? ''
+    const li = tagItemOf(form)
+    if (display === '' || li === null) return
+    e.preventDefault()
+
+    // OPTIMISTIC, WITH SOMETHING TO ROLL BACK TO — unlike a crate add,
+    // which has no prior state. The node is detached and kept, then put
+    // back at the same index if the server refuses.
+    const at = [...list.children].indexOf(li)
+    li.remove()
+    void (async () => {
+      try {
+        await editTag(fileId, 'remove', display)
+        setStatus(tagRemovedMessage(display))
+        if (list.children.length === 0) showTagsEmpty(section as HTMLElement, true)
+      } catch (err) {
+        list.insertBefore(li, list.children[at] ?? null)
+        setStatus(err instanceof SessionExpiredError
+          ? 'Session ended — reload to sign in.'
+          : tagRemoveFailedMessage(display))
+      }
+    })()
+    return
+  }
+
+  const input = form.querySelector<HTMLInputElement>('input[name="tag"]')
+  if (input === null) return
   e.preventDefault()
 
-  const name = input.value.trim()
-  if (name === '') return
-  const submit = form.querySelector('button[type="submit"]')
-  if (submit instanceof HTMLButtonElement) submit.disabled = true
+  const plan = planTagAdd(input.value, tagsOnPage(list))
+  if (!plan.ok) { setStatus(tagRefusalMessage(plan.reason)); input.focus(); return }
+  if (plan.action === 'duplicate') {
+    // `tag_add` would no-op. Saying so beats a silent success, and it beats
+    // a request that changes nothing.
+    setStatus(tagDuplicateMessage(plan.display))
+    input.value = ''
+    input.focus()
+    return
+  }
+
+  const li = tagChipEl(plan.display, action)
+  list.appendChild(li)
+  showTagsEmpty(section as HTMLElement, false)
+  // CLEARED AND STILL FOCUSED. Tagging is a burst — five tags in a row —
+  // and the whole point of not reloading is that the caret never leaves.
+  input.value = ''
+  input.focus()
 
   void (async () => {
-    let crateId: string
     try {
-      crateId = await createCrate(name)
+      await editTag(fileId, 'add', plan.display)
+      setStatus(tagAddedMessage(plan.display))
     } catch (err) {
+      li.remove()
+      if (list.children.length === 0) showTagsEmpty(section as HTMLElement, true)
       setStatus(err instanceof SessionExpiredError
         ? 'Session ended — reload to sign in.'
-        : err instanceof Error ? err.message : 'Could not create crate.')
-      if (submit instanceof HTMLButtonElement) submit.disabled = false
-      return
-    }
-
-    try {
-      await addToCrate(crateId, fileId)
-      setStatus(`added to ${name}`)
-      input.value = ''
-      if (details instanceof HTMLDetailsElement) details.open = false
-      invalidateCratePickerCache()
-      void loadCrateList().then(populateCratePickers)
-    } catch (err) {
-      invalidateCratePickerCache()
-      setStatus(err instanceof SessionExpiredError
-        ? 'Session ended — reload to sign in.'
-        : `"${name}" was created, but adding the track failed — pick it from the list to retry`)
-    } finally {
-      if (submit instanceof HTMLButtonElement) submit.disabled = false
+        : tagAddFailedMessage(plan.display))
     }
   })()
 }, true)
+
+/**
+ * "No tags yet." is server-rendered when the file has none, and the whole
+ * point of this feature is that the page never re-renders — so the line has
+ * to appear and disappear with the list. It is created on demand rather
+ * than shipped `hidden`, because a file that already has tags should not
+ * carry markup for a state it is not in.
+ */
+function showTagsEmpty(section: HTMLElement | null, show: boolean): void {
+  if (section === null) return
+  const existing = section.querySelector('p.explain')
+  if (show && existing === null) {
+    const p = document.createElement('p')
+    p.className = 'explain'
+    p.textContent = 'No tags yet.'
+    // insertBefore rather than h2.after(): the Workers type definitions in
+    // this project shadow the DOM's `after`/`append` with a streaming
+    // signature, so neither type-checks here — the same reason
+    // openActionSheet builds its panel with appendChild.
+    const h2 = section.querySelector('h2')
+    if (h2 !== null) section.insertBefore(p, h2.nextSibling)
+  } else if (!show && existing !== null) {
+    existing.remove()
+  }
+}
+
+/**
+ * THE PLAYER BAR'S CRATE CONTROL — owner, 2026-08-07: the add-to-crate
+ * button "right alongside the like button", acting on whatever is playing
+ * from whatever page a member is on.
+ *
+ * A delegation rather than a bound listener, like everything else in this
+ * file, even though `.playerbar` is `transition:persist`ed and the node
+ * genuinely does survive a swap. Consistency is the point: every control
+ * in this bundle is found by a selector at click time, so none of them can
+ * be the one that quietly stopped being re-bound.
+ *
+ * It opens the SAME picker the row ⋮ opens, and hands it a plain add
+ * rather than a click on some other control — the bar has no row, so there
+ * is no `button.cratepick-option` to press. `addFileToCrate` is where both
+ * paths meet.
+ */
+document.addEventListener('click', (e) => {
+  const button = (e.target as Element).closest?.('button.playercrate')
+  if (!(button instanceof HTMLButtonElement)) return
+  const fileId = button.dataset.fileId
+  if (!fileId) return
+  e.preventDefault()
+  openCratePicker({
+    fileId,
+    from: button,
+    onCrate: (crateId, crateName) => { void addFileToCrate(crateId, fileId, crateName) },
+  })
+})
 
 /**
  * Player-resume, restore half. Runs once, at script init. Populates the
@@ -2216,6 +2561,27 @@ interface SheetOptions {
   onChoose?: (id: string, row: SheetRow) => void
   /** Focus returns here on close — the ⋮ that opened it. */
   returnFocusTo?: HTMLElement | null
+  /**
+   * A MODAL INSTEAD OF A MENU — the owner's "+ New crate…" dialog, and
+   * the only thing that separates the two.
+   *
+   * Given a node, it replaces the row list: the panel becomes a dialog
+   * with a form in it rather than a list of choices. Everything else is
+   * IDENTICAL by construction — one scrim, one Escape, one swipe-down,
+   * one focus trap, one z-index, one body-scroll lock, one
+   * `astro:before-swap` teardown, one safe-area inset. That is the whole
+   * argument for building the modal here rather than on `<dialog>`:
+   * `showModal()` would give a focus trap and Escape for free and then
+   * owe us a scrim, a mount animation, a swipe and a swap teardown of
+   * its own — a SECOND dismissal behaviour, which is precisely what
+   * §5.2 says this component exists to prevent. The spec already names
+   * the crate picker as one of the sheet's four jobs; the create step is
+   * the same job one row further in.
+   *
+   * `rows` is ignored when this is present. Both would mean a panel that
+   * is a menu and a form at once, and there is no such thing.
+   */
+  body?: HTMLElement
 }
 
 const prefersReducedMotion = (): boolean =>
@@ -2295,10 +2661,13 @@ export function openActionSheet(opts: SheetOptions): () => void {
   head.appendChild(heading)
 
   // The ROW LIST is the scroller, not the panel — a panel that scrolls
-  // takes its own header and handle out of reach.
+  // takes its own header and handle out of reach. A modal's form body is
+  // the scroller for the same reason: with a keyboard up on a phone the
+  // panel is short and the field must stay reachable.
   const list = document.createElement('div')
-  list.className = 'sheet-list'
-  for (const row of rows) list.appendChild(sheetRowEl(row))
+  list.className = opts.body ? 'sheet-body' : 'sheet-list'
+  if (opts.body) list.appendChild(opts.body)
+  else for (const row of rows) list.appendChild(sheetRowEl(row))
 
   // appendChild rather than the variadic append(): the Workers type
   // definitions in this project shadow Element.append with a streaming
@@ -2344,8 +2713,18 @@ export function openActionSheet(opts: SheetOptions): () => void {
     // the rows in the panel, so a combined query would open every sheet
     // with focus on "Close". The first thing a keyboard or screen-reader
     // user meets should be the first choice, not the exit.
+    //
+    // A MODAL TRAPS ITS FORM, not a row list. The same ordering rule
+    // applies for the same reason: the field first, the exit last.
+    // `:not([disabled])` matters here in a way it never did for rows —
+    // the modal's submit button disables itself while the request is in
+    // flight, and Tab must not land on a control that cannot be used.
     return [
-      ...panel.querySelectorAll<HTMLElement>('.sheet-row:not([aria-disabled="true"])'),
+      ...panel.querySelectorAll<HTMLElement>(
+        '.sheet-row:not([aria-disabled="true"]),' +
+        '.sheet-body input:not([disabled]),' +
+        '.sheet-body button:not([disabled])',
+      ),
       handle,
     ]
   }
@@ -2391,6 +2770,13 @@ export function openActionSheet(opts: SheetOptions): () => void {
 
   panel.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') return // a mouse drags nothing here
+    // A TEXT FIELD OWNS ITS OWN DRAG. In the modal variant the scroller
+    // holds an <input>, and a finger dragged across it is a member
+    // selecting text or moving the caret — stealing that to dismiss the
+    // panel would make the field unusable on the device the sheet exists
+    // for. scrollTop is 0 in a short modal, so the check below would not
+    // have caught it.
+    if ((e.target as Element | null)?.closest?.('input, textarea')) return
     // A drag that starts inside the scrolling list must be allowed to
     // scroll it; only a list already at its top can pull the sheet down.
     if (list.contains(e.target as Node) && list.scrollTop > 0) return
@@ -2545,27 +2931,38 @@ const cellText = (row: Element, cls: string): string | undefined => {
 }
 
 /**
- * The second sheet: which crate. Reached only from the first one, and it
- * closes the first by opening — one sheet at a time, because a stack of
- * sheets on a phone is a member who cannot tell what dismissing one will
- * reveal.
+ * THE CRATE PICKER, and there is exactly one of it.
+ *
+ * Opened from the row ⋮'s sheet (where it is the second sheet, closing the
+ * first by opening — one sheet at a time, because a stack of sheets on a
+ * phone is a member who cannot tell what dismissing one will reveal) and
+ * from the player bar's crate button, which has no row at all.
+ *
+ * The rows come from `cratePickerRows` in src/lib/crate-picker.ts, so the
+ * sheet, the inline `.cratepick-menu` popovers and the create modal cannot
+ * disagree about what a picker contains or what the create row is called.
+ *
+ * `onCrate` is how the two callers differ, and it is the ONLY way they
+ * differ. A row hands back a closure that clicks its own
+ * `button.cratepick-option` — so the row's existing delegation does the
+ * add, with the row's own in-flight disabling — while the player bar,
+ * which owns no such button, calls `addFileToCrate` directly. Both end up
+ * in the same function; see its comment for why that matters.
  */
-function openCrateSheet(row: HTMLElement, from: HTMLElement): void {
+function openCratePicker(opts: {
+  fileId: string | null
+  from: HTMLElement
+  onCrate: (crateId: string, crateName: string) => void
+}): void {
   void loadCrateList().then((crates) => {
     populateCratePickers(crates)
     openActionSheet({
       title: 'Add to a crate',
-      returnFocusTo: from,
-      rows: crates.length === 0
-        ? [{ id: 'none', label: 'No crates yet — make one on the track page', disabled: true }]
-        : crates.map((c) => ({ id: c.id, label: c.name, icon: 'crate' as const })),
-      onChoose: (id) => {
-        // The row's OWN option button, clicked. addToCrate() is called in
-        // exactly one place in this file and this is not it.
-        const opt = row.querySelector<HTMLButtonElement>(
-          `details.cratepick button.cratepick-option[data-crate-id="${CSS.escape(id)}"]`,
-        )
-        opt?.click()
+      returnFocusTo: opts.from,
+      rows: cratePickerRows(crates),
+      onChoose: (id, row) => {
+        if (id === NEW_CRATE_ID) { openNewCrateModal(opts.fileId, opts.from); return }
+        opts.onCrate(id, row.label)
       },
     })
   })
@@ -2622,7 +3019,20 @@ function openRowSheet(btn: HTMLElement): void {
       // the delegation that owns the ♥ would never see it and the form
       // would POST as a full navigation instead.
       if (id === 'like') like?.requestSubmit()
-      if (id === 'crate') openCrateSheet(row, btn)
+      // The row's OWN option button gets clicked — the sheet never calls
+      // the crate API itself. `hasCrates` above is what guarantees the
+      // button exists to be found.
+      if (id === 'crate') {
+        openCratePicker({
+          fileId,
+          from: btn,
+          onCrate: (crateId) => {
+            row.querySelector<HTMLButtonElement>(
+              `details.cratepick button.cratepick-option[data-crate-id="${CSS.escape(crateId)}"]`,
+            )?.click()
+          },
+        })
+      }
       // requestSubmit for the same reason the ♥ uses it: submit() fires no
       // submit event, so the delegated confirm() that guards this form
       // would never run and the POST would go unguarded.

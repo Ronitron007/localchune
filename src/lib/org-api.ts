@@ -153,6 +153,41 @@ export async function createCrate(name: string): Promise<string> {
   return body.id
 }
 
+/**
+ * POST /api/track/:id/tags, the same route the page's two `form.tagform`
+ * elements post to — same urlencoded body, same three fields, and
+ * `Accept: application/json` for the `{ok:true}` answer instead of the
+ * 303. One endpoint and one set of server rules for both transports; see
+ * that route's header.
+ *
+ * `intent` is 'add' or 'remove' exactly as `parseTagForm` reads it, and
+ * the remove path sends the tag's DISPLAY text as `tag_key` because
+ * `tag_remove` re-derives the normalised key from it — no extra column
+ * exists just to round-trip a delete.
+ *
+ * Same SessionExpiredError/Error convention as toggleLike and addToCrate:
+ * middleware redirects a dead session to /login and fetch follows it, so a
+ * non-JSON response means "signed out", never a tag failure.
+ */
+export async function editTag(
+  fileId: string, intent: 'add' | 'remove', tag: string,
+): Promise<void> {
+  const body = intent === 'remove'
+    ? new URLSearchParams({ intent: 'remove', tag_key: tag })
+    : new URLSearchParams({ intent: 'add', tag })
+  const res = await fetch(`/api/track/${fileId}/tags`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: body.toString(),
+  })
+  const type = res.headers.get('content-type') ?? ''
+  if (!type.includes('application/json')) throw new SessionExpiredError()
+
+  const parsed = (await res.json()) as { ok?: boolean; error?: string; message?: string }
+  if (res.ok) return
+  throw new Error(parsed.message ?? parsed.error ?? `request failed (${res.status})`)
+}
+
 /** Mirrors crate_list()'s (migration 27) row shape, column for column. */
 export type CrateCard = {
   id: string
@@ -166,6 +201,15 @@ export type CrateCard = {
   /** Pool-visible items only, ms. Never null. */
   total_duration_ms: number
   updated_at: string
+  /**
+   * Migration 35 — up to four ARTWORKED file ids in crate position order,
+   * for CrateStack.astro's stacked sleeves. The RPC never returns null
+   * (an empty crate gets `{}`), but it is optional here so a card
+   * rendered from an older cached response degrades to the empty tile
+   * instead of throwing. Art is addressed by convention from a file id
+   * (`derived/<id>/thumb.jpg`), so no key is needed — see track-format.ts.
+   */
+  art_file_ids?: string[] | null
 }
 
 /** /crates.astro's and /crate/[id]'s only link builder for a crate. */

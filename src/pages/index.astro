@@ -16,6 +16,7 @@
 // here" and "could not find out" are different facts, and only the
 // database — not this page — gets to say which one happened.
 import Shell from '../layouts/Shell.astro'
+import CrateStack from '../components/CrateStack.astro'
 import FeedRow from '../components/FeedRow.astro'
 import { crateHref, formatCrateMeta } from '../lib/org-api'
 import { feedTrackToPoolTrack, type FeedTrack, type PoolTrack } from '../lib/pool-api'
@@ -48,6 +49,10 @@ type FeedCrate = {
   track_count: number
   total_duration_ms: number
   made_public_at: string | null
+  /** Migration 35 — up to four artworked file ids, crate order. Never
+   *  null from the RPC; optional here so a card rendered against an older
+   *  response degrades to the empty tile rather than throwing. */
+  art_file_ids?: string[] | null
 }
 const crateCards = (crates.error ? [] : (crates.data ?? [])) as FeedCrate[]
 
@@ -95,6 +100,11 @@ const publicDate = (c: FeedCrate): string | null =>
       <ul class="cratelist">
         {crateCards.map((c) => (
           <li class="cratecard">
+            {/* OWNER, 2026-08-07: a crate is drawn as a crate — the first
+                track's sleeve with up to three more stacked behind it.
+                `art_file_ids` is migration 35's; a crate with no artwork
+                degrades to the system empty tile inside the component. */}
+            <CrateStack artFileIds={c.art_file_ids} name={c.name} />
             <a href={crateHref(c.id)}>{c.name}</a>
             {/* M6b parity with /crates cards: hidden until site.ts unhides
                 it — the queue is client state with no server fallback. */}

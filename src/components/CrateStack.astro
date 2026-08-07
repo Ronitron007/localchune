@@ -1,0 +1,78 @@
+---
+// src/components/CrateStack.astro
+// localchune — MIT licensed. See LICENSE.
+// NOTE: the distributed combination is AGPL-3.0 because the analysis
+// worker includes Essentia. LICENSE explains why.
+//
+// A CRATE, DRAWN AS A CRATE — owner, 2026-08-07: "crates should actually
+// look like crates... instead of a crate having an album art it has the
+// first tracks album art followed by other 2-3 tracks album art stacked
+// behind it... like how one would see when looking from a straight
+// perspective."
+//
+// So: the first track's sleeve in front, up to three more peeking out
+// behind it, offset up and to the right. STRAIGHT ON — no rotation, no
+// fanning, no perspective transform. Records in a crate seen from the
+// front are parallel rectangles at 90 degrees to each other, which is the
+// same geometry this whole system is built on (§0.2), and a tilted sleeve
+// would be the only rotated object in the app.
+//
+// DEPTH COMES FROM THE BORDER LADDER, NOT FROM SHADOW. §4.3 rations
+// shadow to ONE resting shadow per view, on the page's hero object, and a
+// list of twelve crate cards is the exact "black rectangle collapse" that
+// rule exists to prevent — twelve stacks times four sleeves would be
+// forty-eight shadows on one screen. Each sleeve gets a 1px --line edge
+// and an opaque --bg fill instead, so the one in front OCCLUDES the ones
+// behind it. Occlusion is what actually reads as depth; a shadow only
+// hints at it.
+//
+// THE BACK SLEEVES ARE aria-hidden AND THE FRONT ONE HAS AN EMPTY ALT.
+// The stack is one object with one meaning ("this crate"), and the card's
+// own link text already names it. Four <img alt="Cover of…"> would make a
+// screen reader read four covers nobody asked about before reaching the
+// crate's name.
+import { artThumbUrl, artThumb2xUrl } from '../lib/track-format'
+import { crateStackIds, SLEEVE_PX } from '../lib/crate-art'
+
+interface Props {
+  /** crate_list()/feed_new_crates() art_file_ids — see migration 35. */
+  artFileIds?: readonly string[] | null
+  /** Names the crate in the empty tile's label. */
+  name: string
+}
+const { artFileIds, name } = Astro.props
+const ids = crateStackIds(artFileIds)
+const base = import.meta.env.PUBLIC_ART_BASE_URL
+---
+{ids.length === 0 ? (
+  /* THE EMPTY CRATE, and it is a system empty tile rather than a fake
+     stack. `.thumb-empty` is the same tile a track row with no cover
+     draws, so "nothing to show" looks the same everywhere. One tile, not
+     four: a stack of four blanks would claim the crate has four tracks. */
+  <span class="cratestack is-empty" role="img" aria-label={`${name} — no artwork yet`}>
+    <span class="cratestack-sleeve thumb-empty" aria-hidden="true"></span>
+  </span>
+) : (
+  /* DOM ORDER IS BACK-TO-FRONT, which is why there is no z-index here.
+     The sleeves are absolutely positioned siblings, so the LAST one paints
+     on top — and the last one is index 0, the crate's first track. Painting
+     order does the whole job, and the z-index ladder (§1.6) stays for
+     things that actually cross stacking contexts.
+
+     `--i` is the depth, counted from the front. The CSS turns it into the
+     offset and the inset; nothing here computes a pixel. */
+  <span class="cratestack" aria-hidden="true">
+    {[...ids].reverse().map((fileId, revIndex) => (
+      <img
+        class="cratestack-sleeve"
+        style={`--i:${ids.length - 1 - revIndex}`}
+        src={artThumbUrl(base, fileId)}
+        srcset={`${artThumb2xUrl(base, fileId)} 2x`}
+        alt=""
+        width={SLEEVE_PX}
+        height={SLEEVE_PX}
+        loading="lazy"
+      />
+    ))}
+  </span>
+)}
