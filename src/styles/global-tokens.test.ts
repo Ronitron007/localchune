@@ -166,6 +166,25 @@ describe('the button doctrine', () => {
     expect(body).not.toMatch(/transition:[^;]*transform/)
   })
 
+  // THE COST OF HAVING NO GLOBAL `button` RESET. This file resets exactly
+  // one thing about a bare <button> — `button + button`'s margin — so a
+  // control that takes no `.btn` tier keeps the UA sheet's grey
+  // `buttonface` fill and its outset border. The transport was the one
+  // control in the bar that never stripped them by hand, and it rendered
+  // as two grey boxes beside the ♥ and the crate, which do strip them
+  // (.likebtn, .rowmenu, .playerbar .playercrate all carry this same
+  // four-line reset). Asserted here, not on `.playerbar .playertoggle`,
+  // because "no UA chrome" is part of what a transport control IS — it
+  // has to hold for `[data-transport]` wherever the next one is mounted,
+  // not only for the two buttons that happen to live in the bar today.
+  it('the transport strips the UA button chrome', () => {
+    const body = ruleBody('.playertoggle, [data-transport]')
+    expect(body, 'grey buttonface fill').toMatch(/background:\s*none/)
+    expect(body, 'grey outset border').toMatch(/border:\s*0/)
+    expect(body, 'UA button padding').toMatch(/padding:\s*0/)
+    expect(body, 'UA buttontext colour').toMatch(/color:\s*inherit/)
+  })
+
   it('the three tiers lift on hover and sink on active', () => {
     expect(decls).toMatch(/:hover[^{]*\{[^}]*box-shadow: var\(--lift-1\)/)
     // The sink must be declared AFTER the lift or equal specificity puts

@@ -716,6 +716,29 @@ button + button { margin-left: var(--pad-1); }
    Under 100ms, opacity only, no travel. global-tokens.test.ts fails the
    build if any `transform: translate` rule ever names these selectors. */
 .playertoggle, [data-transport] {
+  /* NO UA CHROME, and it is here because this file has no global `button`
+     reset. The only rule that names a bare `button` is `button + button`'s
+     margin, so a control that takes no `.btn` tier keeps the UA sheet's
+     grey `buttonface` fill and its outset border. Every other icon-only
+     control strips them by hand — `.likebtn`, `.rowmenu`, `.searchrow
+     .rowmenu`, `.playerbar .playercrate` all carry these same four lines.
+     The transport never did, so ▶ and ⏭ painted as two grey boxes beside
+     a bare ♥ and a bare crate in an otherwise borderless monochrome bar.
+
+     On THIS selector rather than on `.playerbar .playertoggle`, because
+     "no chrome" is part of what a transport control is: the next
+     `[data-transport]` mounted anywhere gets it without having to
+     remember. The bar's own rule keeps the 44px floor and the grid
+     placement, which are the things that really are about the bar.
+
+     `border: 0` does not cost the focus ring. The global `:focus-visible`
+     draws with `box-shadow: var(--focus-ring)` and only tints
+     `border-color` on top; the three siblings above already rely on
+     exactly that. */
+  background: none;
+  border: 0;
+  color: inherit;
+  padding: 0;
   transition: opacity 80ms linear, background var(--dur-fast) ease;
 }
 .playertoggle:active, [data-transport]:active { opacity: 0.6; }
