@@ -4,20 +4,34 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// M6c Task 2: moved off "/" — the home feed lives there now
-// (src/pages/index.astro). This page is unchanged apart from the address;
-// poolHref() (pool-api.ts) is the only place that knew the old URL, so
-// every sort/filter/cursor link and FilterBar's own action already follow
-// it here for free.
+// POOL.1 — THE POOL PAGE IS THE SEARCH PAGE.
 //
-// The pool is server-rendered. Zero islands. This page parses its own URL,
-// calls pool_list() once, and renders everything — a filtered URL is the
-// complete filter state and every view is shareable. View-source shows the
-// rows; no client fetch renders anything.
+// Owner: "the pool page is essentially just the search ... On searching, it
+// is a page ... replacing pool completely ... think of apple music search."
+// So there is no overlay any more (src/lib/search-overlay.ts is deleted and
+// the nav's magnifier is an honest link to here). One surface:
+//
+//   empty box  -> the whole pool, browsable, paginated, facets live
+//   typed box  -> ranked, typo-tolerant, `128`/`8A`-aware results
+//   either way -> the same chips narrow it, which is the entire point
+//
+// ONE ROW PER RECORDING. Owner decision, overturning M6c's "files survive
+// merges under the winner track". 1,716 stored files are 901 recordings, so
+// ~815 rows here were second encodes of a track already listed. The other
+// encodes are on `/track/[id]`, which lists every file on the recording —
+// they are one tap away, not gone.
+//
+// STILL SERVER-RENDERED, AND STILL ZERO ISLANDS. The page parses its own
+// URL, calls pool_list() once and renders everything, so view-source shows
+// the rows and a filtered URL is the complete filter state. The instant
+// results site.ts fetches while a member types are the SAME components
+// rendered by /partials/pool-rows — a progressive enhancement over this
+// page, never a replacement for it. With JS off, every chip is a
+// `<details>` with a native control in it and the Search button submits.
 import Shell from '../layouts/Shell.astro'
 import FilterBar from '../components/FilterBar.astro'
 import TrackTable from '../components/TrackTable.astro'
-import { PAGE_SIZE, parsePoolQuery, poolListArgs, type PoolTrack } from '../lib/pool-api'
+import { PAGE_SIZE, parsePoolQuery, poolPageArgs, type PoolTrack } from '../lib/pool-api'
 
 const query = parsePoolQuery(Astro.url.searchParams)
 const rawCursor = Astro.url.searchParams.get('cursor')
@@ -33,10 +47,14 @@ const cursor = rawCursor !== null && rawCursor.length > 36 ? rawCursor : null
 // is also why each result keeps its OWN error branch below. That per-result
 // branch is what preserves survive-list #16: a failed pool_uploaders must
 // read as "the database is unreachable", never as "you have nothing".
+//
+// POOL.1: `p_collapse => true` on BOTH calls. The facet has to count the
+// same question the list asks, or "ana (412)" sits above a list of
+// recordings and names a number from somewhere else.
 const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
 const [{ data, error }, { data: uploaderRows, error: uploaderError }] = await Promise.all([
-  rpc('pool_list', poolListArgs(query, cursor, PAGE_SIZE)),
-  rpc('pool_uploaders'),
+  rpc('pool_list', poolPageArgs(query, cursor, PAGE_SIZE)),
+  rpc('pool_uploaders', { p_collapse: true }),
 ])
 if (error) console.error('pool_list failed:', error.message)
 const tracks = (data ?? []) as PoolTrack[]
@@ -51,7 +69,33 @@ const uploaders = uploaderRows ?? []
 const poolEmpty = uploaders.length === 0
 ---
 <Shell title="localchune">
-  <h1>Pool</h1>
-  <FilterBar query={query} uploaders={uploaders} />
-  <TrackTable tracks={tracks} query={query} nextCursor={nextCursor} poolEmpty={poolEmpty} />
+  {/* `data-poolpage` is the hook site.ts reads to know instant search is on
+      this document — one attribute rather than a `location.pathname` test,
+      which is the check sheet-single-source.test.ts already bans elsewhere
+      for the same reason: a page-name test is a rule that cannot be moved.
+
+      The <h1> is gone. A page whose first element is a search field does
+      not need a heading that says "Pool" above it, and on a 375px screen
+      that heading cost a line of the results. `Shell`'s <title> and the
+      nav's aria-current still name the page for a screen reader. */}
+  <div class="poolpage" data-poolpage>
+    <FilterBar query={query} uploaders={uploaders} />
+    {/* THE ONE THING THE SWAP CANNOT REPLACE. A live region that is
+        replaced together with its content does not announce — the node the
+        screen reader was watching is gone — so the announcement lives here,
+        outside `section.tracktable`, and site.ts copies the SERVER's own
+        count string into it after each instant swap. One place decides what
+        "12 tracks (filtered)" says.
+
+        A SECOND aria-live REGION, and survive-list #12 names #player-label
+        as the app's one. That rule exists because the player's name and
+        artist were about to become two regions describing ONE change. This
+        describes a different subject, on one page, and `polite` QUEUES — a
+        track advancing mid-search reads after the count rather than racing
+        it. Without it, a member using a screen reader gets no signal at all
+        that typing changed anything, which is the worse failure. Empty on
+        first render on purpose: nothing has changed yet. */}
+    <p class="poolstatus" role="status" aria-live="polite"></p>
+    <TrackTable tracks={tracks} query={query} nextCursor={nextCursor} poolEmpty={poolEmpty} />
+  </div>
 </Shell>

@@ -234,13 +234,14 @@ export function renderIcon(name: IconName, opts: IconOptions = {}): string {
 
 /**
  * The same glyph as a DOM node, for the controls that are built at runtime
- * — the action sheet's rows, the search overlay's results, and the like
+ * — the action sheet's rows (including POOL.1's filter chips) and the like
  * heart site.ts repaints on every toggle.
  *
- * It replaces two byte-identical `svgIcon` helpers that had been copied
- * into site.ts and search-overlay.ts. They also called `classList.add`
- * with no matching rule: `.icon` was SCOPED to Icon.astro, so a runtime
- * icon silently got none of its layout. `.icon` is a global rule now.
+ * It replaced two byte-identical `svgIcon` helpers that had been copied
+ * into site.ts and the since-retired search overlay. They also called
+ * `classList.add` with no matching rule: `.icon` was SCOPED to Icon.astro,
+ * so a runtime icon silently got none of its layout. `.icon` is a global
+ * rule now.
  */
 export function iconEl(name: IconName, opts: IconOptions = {}): SVGSVGElement {
   const { size = 16, filled = false, class: className } = opts

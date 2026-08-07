@@ -108,14 +108,20 @@ const credits = `${creditsRemaining(m.access_expires_at)} credits`
     <form id="signout" method="post" action="/auth/signout" data-astro-reload><button type="submit" class="btn-secondary">Sign out</button></form>
   </div>
 
-  {/* THE SEARCH ICON IS REAL NOW — and it stays an anchor, deliberately.
+  {/* THE SEARCH ICON IS A LINK TO THE SEARCH PAGE, AND THAT IS THE WHOLE
+      IMPLEMENTATION NOW.
 
-      It used to be a shortcut to /pool's `q` box and nothing else. With
-      JS, site.ts cancels this click and opens the search overlay
-      (src/lib/search-overlay.ts, loaded lazily on that first click).
-      Without JS the click is not cancelled and it navigates to /pool,
-      where the server-rendered filter form still works — the same
-      no-JS story the nav's ⋮ tells with its <details>.
+      It has been three things. First a shortcut to /pool's `q` box that
+      pointed at a different page's filter. Then an anchor whose click
+      site.ts cancelled to open a lazily-imported full-screen overlay.
+      POOL.1 deletes the second layer: the owner's directive is "on
+      searching, it is a page ... replacing pool completely", and /pool IS
+      that page — search field pinned at the top, filters composing with it.
+
+      So the JS interception is gone and what is left is the anchor's own
+      href, which was already the overlay's no-JS fallback. One search
+      surface, one row grammar, one set of results semantics, and 2.8 KB of
+      lazily-loaded chunk that nobody has to load.
 
       A <button> here would have been a control that does nothing for a
       member with no JavaScript, which is the one thing this codebase

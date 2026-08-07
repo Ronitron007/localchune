@@ -131,6 +131,54 @@ describe('candidateArgs — the pool_list call, built in one place', () => {
   it('caps at 200 — the same ceiling pool_list clamps to server-side', () => {
     expect(CANDIDATE_LIMIT).toBe(200)
   })
+
+  /* ── MIGRATION 37: THE CANDIDATE SOURCE MUST NOT MOVE ────────────────
+   *
+   * POOL.1 gave `pool_list` two new arguments so /pool could list one row
+   * per RECORDING and rank a typed query. This route calls the same
+   * function and must keep asking the same question, because a silent
+   * change here is the "wrong song plays" failure class — the member does
+   * not see a queue being built, so a wrong candidate set is discovered as
+   * "it played something odd" days later.
+   *
+   * Both are pinned as ABSENCES rather than as `false` / `'substring'`:
+   * the server defaults are what this route relies on, and naming them
+   * here would make a future default change look harmless in this file.
+   */
+  it('names NEITHER new pool_list argument, so it keeps the server defaults', () => {
+    const args = candidateArgs({ key: '8A', bpm: 128 }, CANDIDATE_LIMIT)
+    expect(Object.keys(args)).not.toContain('p_collapse')
+    expect(Object.keys(args)).not.toContain('p_q_mode')
+  })
+
+  it('does not collapse to recordings, and that is deliberate', () => {
+    // `track_face_file()` picks the PREFERRED ENCODE of a recording, so
+    // collapsing here would change WHICH FILE the auto-queue streams — a
+    // 320 silently becoming a FLAC — not merely how many rows it sees.
+    // The duplicate-encode risk it would remove is bounded: the strategies
+    // already exclude what is queued. Changing this is a product decision
+    // with an owner on it, and it starts by editing this test.
+    expect(candidateArgs({ key: null, bpm: null }, 10).p_collapse).toBeUndefined()
+  })
+
+  it('never asks for fuzzy mode — it sends no text at all', () => {
+    // `p_q` is null here (asserted above), so fuzzy would be meaningless.
+    // It is pinned anyway: fuzzy mode routes a `^[0-9]{2,3}$` word to a
+    // tempo window, and this route's whole job is tempo windows.
+    expect(candidateArgs({ key: '8A', bpm: 128 }, 10).p_q_mode).toBeUndefined()
+  })
+
+  it('builds its own object rather than going through poolListArgs', () => {
+    // Two builders, on purpose. `poolListArgs` serves pages that have a
+    // PoolQuery; this route has a seed and a limit. Sharing one would mean
+    // a change made for /pool arriving here by inheritance, which is
+    // exactly the shape of the failure above.
+    const keys = Object.keys(candidateArgs({ key: null, bpm: null }, 10)).sort()
+    expect(keys).toEqual([
+      'p_bpm_max', 'p_bpm_min', 'p_cursor', 'p_half_double', 'p_harmonic',
+      'p_key', 'p_limit', 'p_q', 'p_sort', 'p_tier_min', 'p_uploader',
+    ])
+  })
 })
 
 describe('parseCandidateQuery — the route\'s validator, total and never throwing', () => {

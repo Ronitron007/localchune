@@ -23,14 +23,20 @@
 //
 //   1. The ⋮ is rendered from ONE Astro component. Any other .astro file
 //      that types the class itself is a second source.
-//   2. The runtime copy (search-overlay.ts cannot import .astro) agrees
-//      with it on the three attributes the delegation and assistive tech
-//      actually depend on.
+//   2. THERE IS NO RUNTIME COPY LEFT. POOL.1 retired the search overlay:
+//      /pool is the search page, and its instant results are an Astro
+//      PARTIAL rendering the same TrackRow.astro the server-rendered page
+//      renders. This used to be a "the runtime copy agrees" assertion,
+//      which is a weaker property than "there is no runtime copy" — so it
+//      is now the absence that is pinned, plus the partial that made the
+//      absence possible.
 //   3. The SHEET has one builder and one opener. No surface may branch a
-//      sheet of its own.
-import { readFileSync, readdirSync } from 'node:fs'
+//      sheet of its own. POOL.1's filter chips are the fifth caller and
+//      add no sixth primitive.
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { withoutComments } from './source-scan'
 
 const SRC = new URL('../', import.meta.url).pathname
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
@@ -40,6 +46,16 @@ function astroFiles(dir: string): string[] {
     const full = join(dir, e.name)
     if (e.isDirectory()) return astroFiles(full)
     return e.name.endsWith('.astro') ? [full] : []
+  })
+}
+
+/** Source only — a `.test.ts` naming the pattern it forbids is not a
+ *  second implementation of it. */
+function tsFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = join(dir, e.name)
+    if (e.isDirectory()) return tsFiles(full)
+    return e.name.endsWith('.ts') && !e.name.endsWith('.test.ts') ? [full] : []
   })
 }
 
@@ -75,14 +91,28 @@ describe('the ⋮ has exactly one source', () => {
     }
   })
 
-  it('the runtime copy agrees with the component', () => {
-    // search-overlay.ts builds result rows in JS and cannot import an
-    // .astro file. It only has to agree on what the delegation and
-    // assistive tech read — the class, the popup role, and a name.
-    const overlay = read('lib/search-overlay.ts')
-    expect(overlay).toContain("'rowmenu'")
-    expect(overlay).toContain('aria-haspopup')
-    expect(overlay).toContain('aria-label')
+  it('no module builds a ⋮ at runtime any more', () => {
+    // The search overlay was the one place that had to. POOL.1 deleted it,
+    // so the strongest available assertion is that nothing recreated it.
+    expect(existsSync(join(SRC, 'lib/search-overlay.ts')),
+      'the overlay is retired — /pool is the search page').toBe(false)
+    const offenders = tsFiles(SRC)
+      .filter((f) => /createElement\(\s*'button'\s*,\s*'rowmenu'|className\s*=\s*'rowmenu'/
+        .test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(SRC.length))
+    expect(offenders, 'render <RowMenu /> from a partial instead').toEqual([])
+  })
+
+  it('the instant results are the SAME row, because they are the same component', () => {
+    // This is what replaced the runtime builder, and it is the reason the
+    // assertion above can be an absence. /pool fetches this partial while a
+    // member types and swaps its <section> in; the partial renders
+    // TrackTable -> TrackRow, so a searched row and a browsed row cannot
+    // differ by so much as an attribute.
+    const partial = read('pages/partials/pool-rows.astro')
+    expect(partial).toContain('export const partial = true')
+    expect(partial).toContain('<TrackTable')
+    expect(read('components/TrackTable.astro')).toContain('<TrackRow')
   })
 })
 
@@ -134,11 +164,19 @@ describe('every row that opens the sheet carries what the sheet reads', () => {
     expect(src).toContain('class="queueadd')
   })
 
-  it('the search overlay builds the same three', () => {
-    const overlay = read('lib/search-overlay.ts')
-    for (const hook of ['likeform', 'likebtn', 'cratepick', 'queueadd']) {
-      expect(overlay).toContain(hook)
-    }
+  it('a searched row carries them because it IS the pool row', () => {
+    // The overlay used to rebuild all four hooks by hand and this
+    // assertion checked the copy. There is no copy: /pool's instant
+    // results render TrackRow through an Astro partial, so the row above
+    // is literally the row a search returns. Pinned through the partial so
+    // that swapping it for a JSON route and a JS renderer fails here.
+    const partial = read('pages/partials/pool-rows.astro')
+    expect(partial).toContain('<TrackTable')
+    // `withoutComments` because THIS FILE'S HEADER AND THE PARTIAL'S BOTH
+    // NAME THE THING THEY FORBID — the partial's opening block explains
+    // that it exists so nobody writes `document.createElement` rows again.
+    // Sixth time in this repo; src/lib/source-scan.ts keeps the list.
+    expect(withoutComments(partial)).not.toContain('createElement')
   })
 
   it('the crate row adds ONE contextual entry, and by data not by page', () => {

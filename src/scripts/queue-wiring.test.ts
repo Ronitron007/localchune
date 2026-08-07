@@ -535,27 +535,29 @@ describe('Escape reaches the drawer last, on purpose', () => {
   })
 
   it('listens in the BUBBLE phase, so the capture handlers run first', () => {
-    // The sheet and the search overlay both listen with capture: true and
-    // both preventDefault() on Escape. A capture listener on `document`
-    // runs before every bubble listener on it, which is what makes
-    // defaultPrevented an exact answer to "is something in front of me".
+    // The sheet listens with capture: true and preventDefault()s Escape. A
+    // capture listener on `document` runs before every bubble listener on
+    // it, which is what makes defaultPrevented an exact answer to "is
+    // something in front of me". (The search overlay was the second such
+    // panel; POOL.1 retired it — /pool is the search page now — and the
+    // rule is unchanged because it was never about that panel.)
     const listener = code.lastIndexOf("document.addEventListener('keydown'", at)
     expect(code.slice(listener, at)).not.toContain('true')
   })
 
   it('asks nothing above it whether it is open', () => {
-    // search-overlay.ts is a deliberate DYNAMIC import (search-bundle
-    // .test.ts). A static one here, to answer one keystroke, would pull
-    // the whole overlay into every page's entry chunk — and the handler
-    // does not need it: the phase already answers the question. The same
-    // goes for isSheetOpen(), which is cheap but would be a second thing
-    // to remember the next time a panel is added.
+    // The handler does not need to: the phase already answers the
+    // question. isSheetOpen() is cheap but would be a second thing to
+    // remember the next time a panel is added — and a panel WAS added and
+    // then removed since this was written, without touching this handler,
+    // which is the property being pinned.
     const handler = code.slice(at, code.indexOf('\n})', at))
     for (const probe of ['isSearchOpen', 'isSheetOpen', 'sheet-panel']) {
       expect(handler, 'defaultPrevented already answers this').not.toContain(probe)
     }
-    // …and the overlay is still not statically imported anywhere.
-    expect(code).not.toMatch(/^import .*search-overlay/m)
+    // POOL.1: the overlay is gone entirely, so the strongest form of the
+    // old "not STATICALLY imported" rule is that it is not imported at all.
+    expect(code).not.toContain('search-overlay')
   })
 })
 

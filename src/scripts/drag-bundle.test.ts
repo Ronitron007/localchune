@@ -138,7 +138,39 @@ describe('the drag library is in a chunk of its own', () => {
     // in it, which is what made the previous two raises pure noise. The
     // library is 8,870 B gzip / ~30 KB raw and does not minify away, so the
     // regression this guards is still enormous next to the headroom.
-    expect(entryMin.length).toBeLessThan(60_000)
+    //
+    // POOL.1 SET IT, ON THE MERGED TREE, AND 60,000 WAS MEASURED BEFORE THE
+    // MERGE. Two branches raised this line in the same hour and neither
+    // number described the tree they landed in — the merge-order lesson
+    // search-report.md already recorded ("two green CIs are not evidence
+    // about a tree neither one built"). Measured here, together:
+    //
+    //                            site.js(min)   overlay   shared chunk
+    //   PR #55 alone                  60,000*         —            —
+    //   POOL.1 alone                  57,690          —            —
+    //   both, this tree               60,640          —            —
+    //
+    // POOL.1 also RETIRED the search overlay, and the accounting is worth
+    // stating because site.js looks like it grew more than it did: before
+    // POOL.1 there was a 7,434 B `chunk-*.js` that existed ONLY because
+    // site.ts and search-overlay.ts shared icons, sheet, pool-api and
+    // track-format, plus a 7,106 B overlay chunk. Every page already paid
+    // for the shared one. With one consumer left esbuild folds it back in,
+    // so what a member downloads on first paint moved by roughly +1.4 KB
+    // while the app as a whole lost the 7,106 B overlay.
+    //
+    // 68,000: 7.4 KB of headroom, and a static import of the library still
+    // trips it by 23 KB (60,640 + 30,632 = 91,272).
+    expect(entryMin.length).toBeLessThan(68_000)
+  })
+
+  it('and the unminified entry stays loosely bounded too', () => {
+    // A SECOND, SLACK CEILING on the RAW output, so it cannot grow without
+    // bound while the minified number stays flat — a thousand lines of dead
+    // commented-out code would do exactly that and the budget above would
+    // not notice. Deliberately generous: prose is free in production and
+    // this repo pays for its rules in comments on purpose.
+    expect(entry.length).toBeLessThan(140_000)
   })
 
   it('the lazy chunk really is the whole library, not a stub', () => {

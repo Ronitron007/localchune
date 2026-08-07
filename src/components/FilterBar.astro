@@ -4,79 +4,268 @@
 // NOTE: the distributed combination is AGPL-3.0 because the analysis
 // worker includes Essentia. LICENSE explains why.
 //
-// The filter state IS the URL. Submitting reloads the page; the Filter
-// button is the no-JS path and the search box auto-submits after a typing
-// pause via the site script (data-autosubmit). Sort is NOT a form field —
-// it is the column headers — but the current sort persists across a filter
-// submit through the hidden input. `cursor` is deliberately absent: a new
-// filter starts at page one.
+// POOL.1 — THE SEARCH FIELD AND ONE ROW OF CHIPS. Owner: "we are going to
+// compress all the filters into a single filter section ... think of apple
+// music search."
+//
+// WHAT THIS REPLACES. Five stacked fieldsets and labels — Search, BPM with
+// two number boxes and a half/double checkbox, Key with a 24-option select
+// and a harmonic checkbox, Min quality, Uploader, a genre facet, a Filter
+// button and a Clear link — laid out `flex-wrap` at 375px. The audit
+// measured ~300px of chrome before the first track, on a 667px screen. It
+// is one 44px field and one 44px scrolling chip row now.
+//
+// THE CHIP IS A `<details>`, AND THAT IS THE NO-JS STORY — the same shape
+// AppNav's ⋮ already ships and the owner has already reviewed. With JS,
+// site.ts cancels the summary's click and opens the bottom sheet, reading
+// the real controls out of `.chip-menu`. Without JS the click is not
+// cancelled, `[open]` lands, and the native `<select>`/`<input>` inside is
+// right there with its own submit button. Nothing here is a control that
+// does nothing without JavaScript.
+//
+// THE VALUE LIVES IN THE NATIVE CONTROL, NEVER IN A HIDDEN MIRROR. The
+// sheet writes `select.value` / `input.checked` and calls
+// `form.requestSubmit()`; the form is what serialises. A hidden input
+// beside each control would be a second copy of the filter state, and the
+// two would eventually disagree about what the page is showing — which is
+// the one failure a filter UI cannot recover from, because the member can
+// see the chip and cannot see the input.
+//
+// THE CHIP LABEL IS DERIVED HERE, SERVER-SIDE, from the same PoolQuery the
+// RPC was called with. So the chips describe the rows beneath them by
+// construction, including on a shared link and on a page with JS disabled.
 import GenreFacet from './GenreFacet.astro'
-import { DEFAULT_SORT, type PoolQuery } from '../lib/pool-api'
+import Icon from './Icon.astro'
+import { impliedSort, type PoolQuery, type PoolSort } from '../lib/pool-api'
 
-interface Props { query: PoolQuery; uploaders: { member_id: string; uploader_name: string; track_count: number }[] }
+interface Props {
+  query: PoolQuery
+  uploaders: { member_id: string; uploader_name: string; track_count: number }[]
+}
 const { query, uploaders } = Astro.props
+
 const ALL_KEYS = Array.from({ length: 12 }, (_, i) => i + 1).flatMap((n) => [`${n}A`, `${n}B`])
+
+const SORT_LABELS: Record<PoolSort, string> = {
+  relevance: 'Best match',
+  added_desc: 'Newest',
+  bpm_asc: 'Tempo',
+  key_asc: 'Key',
+  artist_asc: 'Artist',
+  duration_asc: 'Length',
+  tier_desc: 'Quality',
+  downloads_desc: 'Downloads',
+  likes_desc: 'Likes',
+  plays_desc: 'Plays',
+}
+
+// The BPM chip reads as a range because that is what it is. One bound set
+// is a half-open range and says so, rather than showing a number that
+// looks like an exact match.
+const bpmLabel =
+  query.bpmMin !== null && query.bpmMax !== null ? `${query.bpmMin}–${query.bpmMax}`
+  : query.bpmMin !== null ? `${query.bpmMin}+`
+  : query.bpmMax !== null ? `≤${query.bpmMax}`
+  : null
+
+const keyLabel = query.key === null ? null : query.harmonic ? `${query.key}+` : query.key
+const tierLabel = query.tierMin === null ? null : `T${query.tierMin}+`
+const uploaderLabel = uploaders.find((u) => u.member_id === query.uploader)?.uploader_name ?? null
+// `relevance` is the implied sort of a typed query and `added_desc` the
+// implied sort of an empty one, so neither is worth a chip value when it
+// is the one the page would have used anyway.
+const sortLabel = query.sort === impliedSort(query.q) ? null : SORT_LABELS[query.sort]
+
+const anyFilter = bpmLabel !== null || keyLabel !== null || tierLabel !== null
+  || uploaderLabel !== null || sortLabel !== null
 ---
-{/* M6c Task 2: submits to /pool now — "/" is the home feed. */}
-<form class="filterbar" method="get" action="/pool" role="search" data-autosubmit>
-  {query.sort !== DEFAULT_SORT && <input type="hidden" name="sort" value={query.sort} />}
+{/* `id` is what lets the sheet find this form from the portal it lives in,
+    and what `poolsearch` names for site.ts's delegations. GET, so the
+    filter state IS the URL and every view is shareable — unchanged from
+    the form this replaces. */}
+<form
+  id="poolform"
+  class="poolsearch"
+  method="get"
+  action="/pool"
+  role="search"
+  data-poolsearch
+>
+  {/* THE FIELD, PINNED. `type="search"` for the platform clear button and
+      the search keyboard; `enterkeyhint` so the phone's return key says
+      "search" rather than "go". Autocorrect off — a DJ types artist names
+      the dictionary has never seen, and "Mochakk" becoming "Mocha" is a
+      search that silently answers a different question. */}
+  <div class="poolsearch-field">
+    <Icon name="search" size={20} />
+    <input
+      type="search"
+      name="q"
+      value={query.q}
+      placeholder="Artists, songs, 128, 8A"
+      aria-label="Search the pool"
+      enterkeyhint="search"
+      autocomplete="off"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck={false}
+    />
+  </div>
 
-  <label class="f-search">
-    <span>Search</span>
-    <input type="search" name="q" value={query.q} placeholder="artist, title or filename" />
-  </label>
+  {/* ONE ROW. It scrolls sideways rather than wrapping: a second line of
+      chips is the ~300px of stacked chrome this page exists to have
+      removed, arriving again in a nicer costume. */}
+  <div class="filterchips" role="group" aria-label="Filters">
+    <details class="chip" data-filterchip="Key">
+      <summary class="chip-btn" aria-haspopup="dialog">
+        <span class="chip-label">Key</span>
+        {keyLabel !== null && <span class="chip-value">{keyLabel}</span>}
+      </summary>
+      <div class="chip-menu">
+        <label>
+          <span>Camelot key</span>
+          <select name="key" aria-label="Camelot key">
+            <option value="">Any key</option>
+            {ALL_KEYS.map((k) => <option value={k} selected={query.key === k}>{k}</option>)}
+          </select>
+        </label>
+        <label title="Also matches one step either way around the wheel and the relative major or minor.">
+          <input type="checkbox" name="harmonic" value="1" checked={query.harmonic} />
+          <span>Harmonic neighbours</span>
+        </label>
+        <button type="submit" class="btn">Apply</button>
+      </div>
+    </details>
 
-  <fieldset class="f-bpm">
-    <legend>BPM</legend>
-    <input type="number" name="bpm_min" min="0" max="1000" inputmode="numeric"
-      aria-label="Minimum BPM" value={query.bpmMin ?? ''} />
-    <span>–</span>
-    <input type="number" name="bpm_max" min="0" max="1000" inputmode="numeric"
-      aria-label="Maximum BPM" value={query.bpmMax ?? ''} />
-    <label title="A 174 bpm drum & bass track is an 87 bpm track to a DJ. With this on, either query finds it.">
-      <input type="checkbox" name="half_double" value="1" checked={query.halfDouble} />
-      <span>half / double</span>
-    </label>
-  </fieldset>
+    <details class="chip" data-filterchip="BPM">
+      <summary class="chip-btn" aria-haspopup="dialog">
+        <span class="chip-label">BPM</span>
+        {bpmLabel !== null && <span class="chip-value num">{bpmLabel}</span>}
+      </summary>
+      <div class="chip-menu">
+        <label>
+          <span>From</span>
+          <input type="number" name="bpm_min" min="0" max="1000" inputmode="numeric"
+            aria-label="Minimum BPM" value={query.bpmMin ?? ''} />
+        </label>
+        <label>
+          <span>To</span>
+          <input type="number" name="bpm_max" min="0" max="1000" inputmode="numeric"
+            aria-label="Maximum BPM" value={query.bpmMax ?? ''} />
+        </label>
+        <label title="A 174 bpm drum & bass track is an 87 bpm track to a DJ. With this on, either query finds it.">
+          <input type="checkbox" name="half_double" value="1" checked={query.halfDouble} />
+          <span>Half / double</span>
+        </label>
+        <button type="submit" class="btn">Apply</button>
+      </div>
+    </details>
 
-  <fieldset class="f-key">
-    <legend>Key</legend>
-    <select name="key" aria-label="Camelot key">
-      <option value="">any</option>
-      {ALL_KEYS.map((k) => <option value={k} selected={query.key === k}>{k}</option>)}
-    </select>
-    <label title="Also matches one step either way around the wheel and the relative major or minor.">
-      <input type="checkbox" name="harmonic" value="1" checked={query.harmonic} />
-      <span>harmonic</span>
-    </label>
-  </fieldset>
+    <details class="chip" data-filterchip="Quality">
+      <summary class="chip-btn" aria-haspopup="dialog">
+        <span class="chip-label">Quality</span>
+        {tierLabel !== null && <span class="chip-value">{tierLabel}</span>}
+      </summary>
+      <div class="chip-menu">
+        <label>
+          <span>Minimum tier</span>
+          <select name="tier_min" aria-label="Minimum quality tier">
+            <option value="">Any quality</option>
+            {[1, 2, 3, 4, 5].map((t) => (
+              <option value={t} selected={query.tierMin === t}>Tier {t}+</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" class="btn">Apply</button>
+      </div>
+    </details>
 
-  <label class="f-tier">
-    <span>Min quality</span>
-    <select name="tier_min">
-      <option value="">any</option>
-      {[1, 2, 3, 4, 5].map((t) => (
-        <option value={t} selected={query.tierMin === t}>Tier {t}+</option>
-      ))}
-    </select>
-  </label>
+    <details class="chip" data-filterchip="Uploader">
+      <summary class="chip-btn" aria-haspopup="dialog">
+        <span class="chip-label">Uploader</span>
+        {uploaderLabel !== null && <span class="chip-value">{uploaderLabel}</span>}
+      </summary>
+      <div class="chip-menu">
+        <label>
+          <span>Uploaded by</span>
+          <select name="uploader" aria-label="Uploader">
+            <option value="">Anyone</option>
+            {uploaders.map((u) => (
+              <option value={u.member_id} selected={query.uploader === u.member_id}>
+                {u.uploader_name} ({u.track_count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" class="btn">Apply</button>
+      </div>
+    </details>
 
-  <label class="f-uploader">
-    <span>Uploader</span>
-    <select name="uploader">
-      <option value="">anyone</option>
-      {uploaders.map((u) => (
-        <option value={u.member_id} selected={query.uploader === u.member_id}>
-          {u.uploader_name} ({u.track_count})
-        </option>
-      ))}
-    </select>
-  </label>
+    {/* SORT IS A CHIP NOW, AND IT IS STILL THE COLUMN HEADERS TOO. Above
+        640px the table's `<th>` links remain the fast way to re-sort; below
+        it the table has no headers at all (they are `display: none`), so
+        before POOL.1 a phone could not change the sort order of the pool by
+        any means. `relevance` is only offered when there is something to
+        rank — the RPC degrades it to added_desc otherwise, and a chip that
+        silently means something else is worse than a missing chip. */}
+    <details class="chip" data-filterchip="Sort">
+      <summary class="chip-btn" aria-haspopup="dialog">
+        <span class="chip-label">Sort</span>
+        {sortLabel !== null && <span class="chip-value">{sortLabel}</span>}
+      </summary>
+      <div class="chip-menu">
+        <label>
+          <span>Order by</span>
+          {/* THE IMPLIED SORT CARRIES `value=""`, AND THAT IS WHAT KEEPS
+              THE URL HONEST. A select always submits something, so a
+              `value="relevance"` default would glue `&sort=relevance` to
+              every search URL — and leave it there after the box is
+              cleared, where it means added_desc and the chip would read
+              "Best match" over a list sorted by date. An empty value and a
+              missing one are the same thing to `parsePoolQuery`. */}
+          <select name="sort" aria-label="Sort order">
+            <option value="" selected={query.sort === impliedSort(query.q)}>
+              {SORT_LABELS[impliedSort(query.q)]}
+            </option>
+            {(Object.keys(SORT_LABELS) as PoolSort[])
+              .filter((s) => s !== impliedSort(query.q))
+              // Relevance ranks a query. With an empty box the RPC degrades
+              // it to added_desc, and a chip that silently means something
+              // else is worse than a chip that is not there.
+              .filter((s) => s !== 'relevance' || query.q !== '')
+              .map((s) => (
+                <option value={s} selected={query.sort === s}>{SORT_LABELS[s]}</option>
+              ))}
+          </select>
+        </label>
+        <button type="submit" class="btn">Apply</button>
+      </div>
+    </details>
 
-  <GenreFacet families={[]} />
+    {/* A LINK, LEFT AS A LINK — it navigates, it does not act, and it is
+        the one control that has to work when every other one is confusing
+        the member. Rendered only when there is something to clear, so the
+        row is four chips wide on a first visit rather than five. */}
+    {(anyFilter || query.q !== '') && <a class="chip chip-reset" href="/pool">Clear</a>}
 
-  <button type="submit" class="btn">Filter</button>
-  {/* Task 8: a link, left as a link — the plan's sweep applies button
-      classes to buttons/submits only; Clear navigates, it does not act. */}
-  <a class="f-reset" href="/pool">Clear</a>
+    {/* THE M8 SLOT, KEPT. `families` is always [] until the Discogs
+        vocabulary exists, so this renders zero bytes today — but it keeps
+        its call site inside the chip row, which is where a genre facet now
+        belongs. Whoever lands M8 restyles its fieldset as a sixth chip and
+        touches nothing else. Deleting the call site would have made an M8
+        data task into an M8 layout task again. */}
+    <GenreFacet families={[]} />
+  </div>
+
+  {/* The no-JS submit. `hidden` is wrong here — this must be visible and
+      usable without JavaScript — so it is the LAST child and site.ts hides
+      it by adding `has-instant` to <html>, the same way `has-rowmenu`
+      already gates the row controls the sheet replaces. */}
+  <button type="submit" class="btn poolsearch-go">Search</button>
+
+  {/* Sort arrives as a `<select>` inside the Sort chip, so nothing here is
+      a hidden mirror — but a cursor must NOT survive a filter change: a
+      keyset cursor is only valid inside the sort and predicate that minted
+      it. It is simply never rendered, which is how the old form dropped it
+      too. */}
 </form>
