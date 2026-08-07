@@ -31,6 +31,23 @@ Design complete, implementation not started.
 Running cost at ~2,000 tracks: **≈$10-15/month**, of which $5 is Cloudflare Workers
 Paid. See PRD §10.
 
+## Maintenance you run by hand
+
+`scripts/art-derivatives.sh` builds the two art sizes the analysis container
+does not write yet — `derived/<file_id>/thumb-2x.jpg` (128 px, retina rows)
+and `derived/<file_id>/medium.jpg` (≤512 px, the track hero) — from the
+cover art R2 already holds. It downloads no audio and re-analyses nothing.
+
+**Run it after a batch of uploads.** A file analysed since the last run has
+only the 64 px thumb, and the pages fall back to it until the sweep fills the
+gap. Re-running is cheap and safe: the skip test is one HEAD per track, so a
+sweep over an already-complete library builds nothing.
+
+```
+scripts/art-derivatives.sh --dry-run   # what it would build
+scripts/art-derivatives.sh             # build the missing ones
+```
+
 ## Core model
 
 - **track** — a canonical, format-agnostic recording identity. One `track_id`

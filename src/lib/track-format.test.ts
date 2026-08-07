@@ -131,6 +131,48 @@ describe('artThumbUrl', () => {
   })
 })
 
+import { artFallback, artMediumUrl, artThumb2xUrl } from './track-format'
+
+describe('artThumb2xUrl / artMediumUrl', () => {
+  it('names the two derivative keys the backfill writes', () => {
+    expect(artThumb2xUrl('https://art.example.com', 'abc'))
+      .toBe('https://art.example.com/derived/abc/thumb-2x.jpg')
+    expect(artMediumUrl('https://art.example.com', 'abc'))
+      .toBe('https://art.example.com/derived/abc/medium.jpg')
+  })
+  it('strips trailing slashes like the thumb builder does', () => {
+    expect(artMediumUrl('https://art.example.com//', 'abc'))
+      .toBe('https://art.example.com/derived/abc/medium.jpg')
+  })
+  it('falls back to the signed route when the env base is unset', () => {
+    expect(artThumb2xUrl(undefined, 'abc')).toBe('/api/track/abc/art?full=1')
+    expect(artMediumUrl(undefined, 'abc')).toBe('/api/track/abc/art?full=1')
+  })
+  /* The key grammar matters: src/lib/r2.ts only signs a derived key whose
+     basename is [a-z0-9][a-z0-9-]*, so `thumb@2x.jpg` would be unsignable
+     and the hyphen is not cosmetic. */
+  it('uses key names the signer will accept', () => {
+    const re = /^derived\/[0-9a-f-]{36}\/[a-z0-9][a-z0-9-]{0,31}\.[a-z0-9]{2,5}$/
+    const id = '00e18c90-7419-451f-9908-e6ba5ab1f247'
+    for (const url of [artThumb2xUrl('https://a.example', id), artMediumUrl('https://a.example', id)]) {
+      expect(url.replace('https://a.example/', '')).toMatch(re)
+    }
+  })
+})
+
+describe('artFallback', () => {
+  it('drops the srcset when a 2x candidate is missing', () => {
+    expect(artFallback(true, false)).toBe('drop-srcset')
+    expect(artFallback(true, true)).toBe('drop-srcset')
+  })
+  it('sends the hero to the signed full-size original', () => {
+    expect(artFallback(false, true)).toBe('signed-full')
+  })
+  it('leaves a plain failed thumb alone — there is nothing better to show', () => {
+    expect(artFallback(false, false)).toBe('none')
+  })
+})
+
 import { likeActionLabel, likeGlyph, trackHref } from './track-format'
 
 /* The player bar's ♥ and its title link. site.ts writes these into the DOM

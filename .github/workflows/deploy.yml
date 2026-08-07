@@ -58,6 +58,17 @@ jobs:
         env:
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
+          # NOT a secret, and deliberately literal rather than a repo secret.
+          # It is a public CDN hostname that ships inside every page's HTML,
+          # and an ABSENT secret expands to the empty string in silence --
+          # which is exactly the failure being fixed here. Until this line
+          # existed, a CI deploy baked an undefined value, `artThumbUrl` fell
+          # back to the signed per-track route, and PR #25 was undone: 100
+          # Worker invocations and 100 uncacheable redirects on every pool
+          # page, plus full-size originals rendered into 28 px thumbs. It
+          # never fired only because every deploy so far ran from a laptop
+          # that had .env. Same reasoning as the literal account id below.
+          PUBLIC_ART_BASE_URL: https://art.butternutcrack.com
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

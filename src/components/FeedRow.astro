@@ -21,7 +21,7 @@
 // alone. No like toggle here on purpose — the feed is read-only; toggling
 // lives on the track page and the pool table.
 import KeyChip from './KeyChip.astro'
-import { artThumbUrl, formatBpm } from '../lib/track-format'
+import { artThumb2xUrl, artThumbUrl, formatBpm } from '../lib/track-format'
 import type { PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack }
@@ -53,7 +53,7 @@ const label = `${artist} — ${track.display_title}`
     aria-label={`Add ${track.display_title} to the queue`}
   >+Q</button>
   {track.has_thumb
-    ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} alt="" width="28" height="28" loading="lazy" />
+    ? <img class="thumb" src={artThumbUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} srcset={`${artThumb2xUrl(import.meta.env.PUBLIC_ART_BASE_URL, track.file_id)} 2x`} alt="" width="28" height="28" loading="lazy" />
     : <span class="thumb-empty" aria-hidden="true"></span>}
   <span class="feedrow-body">
     <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
