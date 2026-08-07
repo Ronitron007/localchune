@@ -1717,19 +1717,26 @@ body.queueopen .uploadchip-slot {
    control out of the card; `overflow-wrap` is what handles the name that
    cannot wrap at all — `.memberhero h1` already carries it, for the same
    reason and in the same words: this is a string a member chose. */
-/* FIVE CHILDREN, FIVE AREAS, AND NO TWO SHARE ONE. The PRIVATE chip gets
-   a column of its own rather than `grid-area: name; justify-self: end` —
+/* SIX CHILDREN, SIX AREAS, AND NO TWO SHARE ONE. The PRIVATE chip gets a
+   column of its own rather than `grid-area: name; justify-self: end` —
    two items in one cell STACK, which would have re-created this very bug
    the moment a private crate had a long name. `crate-card.test.ts`
-   asserts the areas are distinct so the shortcut cannot come back. */
+   asserts the areas are distinct so the shortcut cannot come back.
+
+   `dl` is the crate download link (PR #49, merged while this branch was
+   open). It arrived as a SIXTH child with no area, and an unplaced grid
+   item auto-flows into an implicit row — so the icon dropped onto a line
+   of its own under the card. A named cell beside the action is where its
+   author drew it. Any future child of this card needs the same: the test
+   above fails on a child with no `grid-area`. */
 .cratecard {
   border: 1px solid var(--faint);
   padding: var(--pad-1) var(--pad-2);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   grid-template-areas:
-    "art name  chip act"
-    "art meta  meta act";
+    "art name  chip act dl"
+    "art meta  meta act dl";
   align-items: center;
   gap: 0 var(--pad-2);
 }
@@ -1738,6 +1745,7 @@ body.queueopen .uploadchip-slot {
 .cratecard > .privatechip { grid-area: chip; margin-left: 0; }
 .cratecard > .explain { grid-area: meta; margin-top: 0.15em; overflow-wrap: anywhere; }
 .cratecard > .queueadd { grid-area: act; }
+.cratecard > .cratedownload { grid-area: dl; }
 /* The `hidden` this control ships with is honoured by `.queueadd[hidden]`
    up beside `.likeform[hidden]` — for the class, once, rather than per
    surface. Without it the tier's own `display: inline-flex` beats the UA
@@ -1760,10 +1768,13 @@ body.queueopen .uploadchip-slot {
     grid-template-areas:
       "art name chip"
       "art meta meta"
-      "act act  act";
+      "act act  dl";
     row-gap: var(--pad-1);
   }
   .cratecard > .queueadd { justify-self: start; }
+  /* The download icon ends the action row rather than starting a fourth
+     one: it is a 44px icon and the row has the width for it. */
+  .cratecard > .cratedownload { justify-self: end; }
 }
 
 /* --- the crate's stacked sleeves (owner, 2026-08-07) ---
