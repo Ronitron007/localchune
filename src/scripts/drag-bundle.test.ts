@@ -68,10 +68,6 @@ beforeAll(async () => {
     name: f.path.split('/').pop() ?? '',
     text: f.text,
   }))
-}
-
-beforeAll(async () => {
-  const files = await bundle(false)
   entry = files.find((f) => f.name === 'site.js')?.text ?? ''
   others = files.filter((f) => f.name !== 'site.js')
 

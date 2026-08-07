@@ -30,8 +30,15 @@ const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
 
 const overlay = withoutComments(read('lib/overlay.ts'))
 const site = withoutComments(read('scripts/site.ts'))
-const search = withoutComments(read('lib/search-overlay.ts'))
 const css = withoutComments(read('styles/global.css'))
+
+// POOL.1 RETIRED THE SEARCH OVERLAY — the third consumer this file was
+// written to unify is gone, not un-unified. `/pool` is the search page now,
+// so the sheet and the queue drawer are the two consumers left and both
+// live in site.ts. Every assertion below keeps its exact meaning; it simply
+// has one fewer file to check. The `.searchoverlay-scrim` name stays in the
+// forbidden list on purpose: a rule about what nobody may reintroduce does
+// not stop applying when the last user of the name goes away.
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -47,9 +54,14 @@ describe('the scrim has one builder', () => {
     expect(overlay).toContain("'scrim'")
   })
 
-  it('both existing consumers were converted rather than left alone', () => {
-    expect(site).toContain('scrimEl()')
-    expect(search).toContain('scrimEl()')
+  it('every existing consumer was converted rather than left alone', () => {
+    // Both of them are in site.ts: the bottom action sheet (`scrimEl()`)
+    // and the queue drawer (`scrimEl('queuescrim')`, which takes an extra
+    // class because it is the one scrim that does not cover the bar).
+    // Counting the calls is what stops "converted" meaning "one of the two",
+    // and matching the OPEN PAREN rather than `()` is what stops it missing
+    // the one that takes an argument.
+    expect(site.match(/scrimEl\(/g)?.length).toBeGreaterThanOrEqual(2)
   })
 
   it('nothing types a scrim class of its own any more', () => {
@@ -96,21 +108,20 @@ describe('the page lock is counted, and shared', () => {
     expect(offenders, 'call lockPage() from src/lib/overlay.ts').toEqual([])
   })
 
-  it('all three consumers release what they take', () => {
-    for (const [name, source] of [['site.ts', site], ['search-overlay.ts', search]] as const) {
+  it('every consumer releases what it takes', () => {
+    for (const [name, source] of [['site.ts', site]] as const) {
       expect(source, `${name} must lock`).toContain('lockPage(')
       expect(source, `${name} must release`).toMatch(/release\w*\(\)/)
     }
   })
 
   it('the drawer is the only one that keeps a subtree live', () => {
-    // The sheet and the search overlay cover the whole viewport, so their
-    // scrim already blocks every pointer and `null` is correct. The queue
-    // drawer deliberately leaves the player bar usable, which is the one
-    // thing a scrim cannot express — hence `inert` on everything else.
+    // The sheet covers the whole viewport, so its scrim already blocks
+    // every pointer and `null` is correct. The queue drawer deliberately
+    // leaves the player bar usable, which is the one thing a scrim cannot
+    // express — hence `inert` on everything else.
     expect(site).toContain('lockPage(null)')
     expect(site).toContain('lockPage(bar)')
-    expect(search).toContain('lockPage(null)')
   })
 
   it('uses `inert` rather than a hand-rolled focus trap', () => {
