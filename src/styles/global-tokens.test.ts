@@ -206,3 +206,26 @@ describe('the tap floor and the bar height', () => {
     expect(decls).toMatch(/\.uploadchip-slot \{[^}]*bottom: calc\(var\(--bar-h\)/)
   })
 })
+
+describe('count runs are separated, not merely spaced', () => {
+  // OWNER, from the live app: "♥ 1 0 plays" reads as "10 plays". Two
+  // numbers a gap apart are one number to the eye, and a gap is the only
+  // thing that ever separated them. Every place the app prints a run of
+  // counts gets an explicit middle dot, generated so no template repeats
+  // it and no surface can forget it.
+  const runs = ['.signals', '.feedrow-meta', '.stats']
+
+  /** Every selector that opens a rule declaring the middle dot. */
+  function separatorSelectors(): string {
+    const rules = [...decls.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter(([, , body]) => /content:\s*'·'/.test(body ?? ''))
+    expect(rules.length, 'exactly one rule prints the separator').toBe(1)
+    return rules[0]?.[1] ?? ''
+  }
+
+  for (const sel of runs) {
+    it(`${sel} prints a separator between adjacent items`, () => {
+      expect(separatorSelectors()).toContain(`${sel} > * + *::before`)
+    })
+  }
+})

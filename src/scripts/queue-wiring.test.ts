@@ -282,7 +282,14 @@ describe('the player bar\'s ♥ and title link', () => {
     // toggleLike call site would mean the bar grew a private code path, and
     // the two would drift on rollback, on error reporting, or on both.
     expect(count(/toggleLike\(/g)).toBe(1)
-    expect(count(/form\.likeform/g)).toBe(1)
+    // ONE SUBMIT DELEGATION, not one mention. This used to count every
+    // occurrence of the class, which was the same number until Task 3.3's
+    // row sheet needed to FIND a row's like form in order to
+    // requestSubmit() it — a use that strengthens the invariant rather
+    // than breaking it, since it routes the sheet back through this very
+    // delegation. What must stay unique is the handler, so that is what
+    // is counted now.
+    expect(count(/closest\?\.\('form\.likeform'\)/g)).toBe(1)
   })
 
   it('writes the bar\'s ♥ from exactly two places, and names them', () => {
@@ -360,5 +367,59 @@ describe('the default method costs nothing', () => {
 
   it('passes that port to regenerate rather than a second implementation', () => {
     expect(code).toMatch(/regenerate\(getState\(\),\s*candidatePort\)/)
+  })
+})
+
+describe('a row is the play control — the whole row, not a glyph', () => {
+  // OWNER, 2026-08-06: "list rows lose the play button — whole-row tap
+  // plays, matching the queue drawer's grammar." The drawer has worked
+  // that way since M6b (`.queuerow-play` spans the row); the pool table,
+  // the feed and the crate page each shipped a 14x18px glyph instead.
+  //
+  // THE SELECTOR CONTRACT DID NOT MOVE, and that is what these assert.
+  // The play link still carries every attribute site.ts scrapes to build
+  // a queue (survive-list #7); the row merely gained a way to reach it.
+  // A rework that moved those attributes onto the row would have rewritten
+  // scrapeRows, playLinkFor and scrapeOne — three functions whose failure
+  // mode is a queue of nameless entries, which the crate route has already
+  // paid for once.
+  it('still resolves the play link by its own class and data attribute', () => {
+    expect(code).toContain('a.play[data-track-id]')
+  })
+
+  it('resolves a tap anywhere in the row to that same link', () => {
+    const at = code.indexOf('function playLinkFromTap')
+    expect(at, 'the resolution lives in one named function').toBeGreaterThan(-1)
+    const fn = code.slice(at, code.indexOf('\n}', at) + 2)
+    expect(fn).toContain('a.play[data-track-id]')
+    expect(fn).toContain('data-play-row')
+  })
+
+  it('reaches every row action through the control that already exists', () => {
+    // TASK 3.3. The row's ⋮ sheet adds NO second code path for queueing,
+    // liking or crate-adding: each row clicks or submits the control the
+    // row already carries, so the one delegation that has always served
+    // that action still serves it. A sheet with its own toggleLike() call
+    // is two implementations of one feature and they drift.
+    const at = code.indexOf('function openRowSheet')
+    expect(at, 'the row sheet is one named function').toBeGreaterThan(-1)
+    const fn = code.slice(at, code.indexOf('\nfunction ', at + 10))
+    expect(fn).toContain('button.queueadd')
+    expect(fn).toContain('form.likeform')
+    // Exactly one toggleLike call in the whole file — the delegation's.
+    expect(count(/toggleLike\(/g)).toBe(1)
+  })
+
+  it('lets an inner control win its own tap', () => {
+    // The heart, the queue-add, the three-dot, the title and artist links,
+    // the download link, the crate picker. Without this the row would
+    // swallow every one of them and a member could never open a track
+    // page from a list.
+    const at = code.indexOf('const ROW_TAP_EXEMPT')
+    expect(at, 'the exempt list is one named constant').toBeGreaterThan(-1)
+    const line = code.slice(at, code.indexOf('\n', at))
+    for (const tag of ['a', 'button', 'input', 'select', 'label', 'summary']) {
+      expect(line).toMatch(new RegExp(`(^|[^-\\w])${tag}([^-\\w]|$)`))
+    }
   })
 })

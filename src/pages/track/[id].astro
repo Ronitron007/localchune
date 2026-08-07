@@ -137,11 +137,24 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
       {t.state === 'stored' && (
         <>
           <p class="transport">
+            {/* data-artist + data-title, NOT data-label — and this is a
+                bug fix, not a rename. site.ts's `scrapeOne` reads
+                dataset.artist and dataset.title and has never read
+                dataset.label; `entryLabel()` rebuilds the "Artist — Title"
+                string from the two. So this link, which carried only the
+                joined label, queued an entry whose title was the empty
+                string: playing from a track page put a BLANK NAME in the
+                player bar, the drawer and the lock screen. /review's
+                ComparePanel had the same shape and the same bug. */}
             <a
               class="play"
               href={`/track/${t.file_id}`}
               data-track-id={t.file_id}
-              data-label={title}
+              data-artist={t.display_artist ?? undefined}
+              data-title={t.display_title}
+              data-duration={t.duration_ms ?? undefined}
+              data-bpm={t.bpm ?? undefined}
+              data-key={t.key_camelot ?? undefined}
             >▶ Play</a>
             {' '}
             <a href={`/api/track/${t.file_id}/download`}>↓ Download</a>
@@ -171,10 +184,14 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
           upload_count is a live count(*) over file_claims — see that
           migration's header for why these are two different mechanisms
           under one format-agnostic-by-design plan. */}
+      {/* The separator is no longer typed here. Every count run in the app
+          (.signals, .feedrow-meta, this one) gets its middle dot from one
+          generated rule in global.css — see the "COUNT RUNS" block there
+          for the owner report that caused it. Each count is its own
+          element so that rule has an adjacent sibling to hang the dot on. */}
       <p class="stats">
-        downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}
-        {' · '}
-        brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}
+        <span class="signal">downloaded {t.download_count} time{t.download_count === 1 ? '' : 's'}</span>
+        <span class="signal">brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}</span>
       </p>
     </header>
 

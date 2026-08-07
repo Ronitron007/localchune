@@ -52,6 +52,7 @@ import {
 const audio = document.getElementById('player-audio') as HTMLAudioElement | null
 const label = document.getElementById('player-label')
 const link = document.getElementById('player-link') as HTMLAnchorElement | null
+const artistEl = document.getElementById('player-artist')
 const likeForm = document.getElementById('player-like') as HTMLFormElement | null
 const toggle = document.getElementById('player-toggle') as HTMLButtonElement | null
 const nextBtn = document.getElementById('player-next') as HTMLButtonElement | null
@@ -87,17 +88,41 @@ function setStatus(text: string): void {
   label.textContent = text
 }
 
-function setNowPlaying(text: string, fileId: string | null): void {
+/**
+ * The name, as two lines: the title as the anchor, the artist under it.
+ *
+ * OWNER-CONFIRMED LAYOUT, 2026-08-06. It used to be one joined
+ * "Artist — Title" in a `nowrap` span at `flex: 1 1 6rem`, which on a
+ * phone truncated to the artist and three characters of the title — the
+ * half a member does not need. Two lines ellipsize independently.
+ *
+ * The two arguments are the entry's own `display_title` and
+ * `display_artist`, which is the same pair Media Session sends to the
+ * lock screen. NOTHING SPLITS THE JOINED STRING BACK APART: a title with
+ * an em dash in it would make that a guess, and the separate fields have
+ * been on the entry all along.
+ *
+ * Both nodes are captured once at module load and re-appended here,
+ * because setStatus() writes textContent and textContent removes every
+ * child — the same reason `link` has always been captured rather than
+ * re-queried.
+ */
+function setNowPlaying(title: string, artistName: string | null, fileId: string | null): void {
   if (label === null) return
   label.textContent = ''
   if (link === null || fileId === null) {
-    label.textContent = text
+    label.textContent = title
     return
   }
-  link.textContent = text
+  link.textContent = title
   link.href = trackHref(fileId)
   link.hidden = false
   label.appendChild(link)
+  if (artistEl === null) return
+  const named = artistName !== null && artistName !== ''
+  artistEl.textContent = named ? artistName : ''
+  artistEl.hidden = !named
+  if (named) label.appendChild(artistEl)
 }
 
 /**
@@ -157,6 +182,11 @@ let seeking = false
 // stay DOM-free per play-meter.ts's testability contract.
 let currentFileId: string | null = null
 let currentTitle = ''
+/** The two lines the bar shows, kept apart. `currentTitle` above stays the
+ *  JOINED string, because that is what player memory serialises and what
+ *  the ♥'s aria-label reads — neither wants two fields. */
+let currentName = ''
+let currentArtist: string | null = null
 
 /**
  * M6a Task 4 — anti-scrub play counting. One meter for the one persisted
@@ -417,6 +447,11 @@ function claimCurrent(): QueueEntry | null {
   if (entry === null) return null
   currentFileId = entry.file_id
   currentTitle = entryLabel(entry)
+  // The same two fields Media Session sends to the lock screen, kept for
+  // the bar's two-line stack. Read from the entry, never split back out
+  // of `currentTitle`.
+  currentName = entry.display_title
+  currentArtist = entry.display_artist
   return entry
 }
 
@@ -537,7 +572,7 @@ async function startCurrent(startAt: number): Promise<void> {
   // truncated play falls back to plain text for the one track it decorates,
   // and the link returns on the next one.
   if (lastTruncation === null) {
-    setNowPlaying(currentTitle, fileId)
+    setNowPlaying(currentName, currentArtist, fileId)
   } else {
     setStatus(`${currentTitle} · ${truncationLine(lastTruncation)}`)
   }
@@ -672,6 +707,8 @@ function handleAdvance(event: QueueEvent): void {
     // autoplay, not a failure.
     currentFileId = null
     currentTitle = ''
+    currentName = ''
+    currentArtist = null
     clearLookahead()
     clearPlayerMemory()
     updateMediaSession()
@@ -967,6 +1004,14 @@ function setDrawerOpen(open: boolean): void {
   if (drawer === null || drawerToggle === null) return
   drawer.hidden = !open
   drawerToggle.setAttribute('aria-expanded', String(open))
+  // OWNER-APPROVED OPEN STATE, from a mock: the button inverts to solid
+  // ink and its glyph becomes a ✕, so the control that opened the drawer
+  // is visibly the one that closes it. The FILL is CSS off aria-expanded
+  // — this line only owns the glyph and the accessible name, because a
+  // button reading "☰ QUEUE" while it means "close" is a lie a screen
+  // reader would repeat.
+  drawerToggle.textContent = open ? '✕ QUEUE' : '☰ QUEUE'
+  drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
   document.body.classList.toggle('queueopen', open)
   syncDrawerHeight()
   // One of §5's two triggers for the deferred tail. The other is in
@@ -1215,9 +1260,51 @@ if (audio) {
  * safe but could look broken. The drawer's CLEAR button is the always-
  * available manual path (clear, then play, no prompt).
  */
+/**
+ * Everything inside a row that owns its own tap: the ♥ form's button, the
+ * queue-add, the three-dot, the title and artist links to /track/[id],
+ * the download link, the crate picker's disclosure. Written as one list
+ * so a control added to a row tomorrow is exempt by being a control,
+ * rather than by someone remembering to add it here.
+ */
+const ROW_TAP_EXEMPT = 'a, button, input, select, textarea, label, summary'
+
+/**
+ * WHICH PLAY LINK A TAP MEANS — owner directive, 2026-08-06: "list rows
+ * lose the play button; whole-row tap plays, matching the queue drawer's
+ * grammar." The drawer has read that way since M6b, where
+ * `.queuerow-play` spans the row; every other list shipped a 14x18px
+ * glyph, which the audit ranked as offender #2.
+ *
+ * THE SELECTOR CONTRACT DOES NOT MOVE. `a.play[data-track-id]` is still
+ * the element carrying data-artist/-title/-duration/-bpm/-key, still the
+ * thing `scrapeRows` collects in rendered order, still the no-JS path to
+ * the track page. It has become the artwork rather than a glyph, and the
+ * row has gained a way to reach it — that is the entire change. Moving
+ * those attributes onto the row would have meant rewriting scrapeRows,
+ * playLinkFor and scrapeOne at once, and their shared failure mode is a
+ * queue of nameless entries, which the crate route has already paid for.
+ *
+ * Returns null when the tap belongs to something else, which is most
+ * taps: a row is mostly other controls.
+ */
+function playLinkFromTap(target: Element): HTMLAnchorElement | null {
+  const direct = target.closest?.('a.play[data-track-id]')
+  if (direct instanceof HTMLAnchorElement) return direct
+  const row = target.closest?.('[data-play-row]')
+  if (!(row instanceof HTMLElement)) return null
+  // An inner control BELONGING TO THIS ROW wins. The containment test is
+  // load-bearing: closest() climbs past the row, so a row nested inside
+  // some future <a> would otherwise never play.
+  const own = target.closest?.(ROW_TAP_EXEMPT)
+  if (own instanceof Element && row.contains(own)) return null
+  const a = row.querySelector('a.play[data-track-id]')
+  return a instanceof HTMLAnchorElement ? a : null
+}
+
 document.addEventListener('click', (e) => {
-  const a = (e.target as Element).closest?.('a.play[data-track-id]')
-  if (!(a instanceof HTMLAnchorElement) || audio === null) return
+  const a = playLinkFromTap(e.target as Element)
+  if (a === null || audio === null) return
   e.preventDefault()
   const trackId = a.dataset.trackId
   if (trackId === undefined) return
@@ -1363,8 +1450,13 @@ document.addEventListener('click', (e) => {
  * again on a soft navigation.
  */
 function revealQueueControls(): void {
-  document.querySelectorAll<HTMLElement>('button.queueadd[hidden], button.crateplay[hidden]')
-    .forEach((el) => { el.hidden = false })
+  document.querySelectorAll<HTMLElement>(
+    'button.queueadd[hidden], button.crateplay[hidden], button.rowmenu[hidden]',
+  ).forEach((el) => { el.hidden = false })
+  // The row menu is the whole control set below 640px, so the cells it
+  // replaces are hidden only once it is real. Without JS this class is
+  // never added and every row keeps every control it always had.
+  document.documentElement.classList.add('has-rowmenu')
 }
 revealQueueControls()
 document.addEventListener('astro:after-swap', revealQueueControls)
@@ -1900,7 +1992,7 @@ async function restorePlayer() {
     return
   }
   const body = (await res.json()) as
-    { url?: string; liked?: boolean; like_count?: number; title?: string }
+    { url?: string; liked?: boolean; like_count?: number; title?: string; artist?: string | null }
   if (!res.ok || !body.url) {
     // Deleted / no longer visible / not yet available — nothing to resume.
     clearPlayerMemory()
@@ -1919,7 +2011,13 @@ async function restorePlayer() {
    * for a file whose display_title is genuinely empty.
    */
   currentTitle = typeof body.title === 'string' && body.title !== '' ? body.title : entry.title
-  setNowPlaying(currentTitle, entry.file_id)
+  // The route already returns display_title and display_artist as separate
+  // fields (see its own header — four free columns off the pool_get row it
+  // presigned from), so the resumed bar gets the same two-line stack a
+  // click does, from the same source, without a second request.
+  currentName = typeof body.title === 'string' && body.title !== '' ? body.title : entry.title
+  currentArtist = typeof body.artist === 'string' && body.artist !== '' ? body.artist : null
+  setNowPlaying(currentName, currentArtist, entry.file_id)
   /**
    * THE RESUMED TRACK'S ♥, AT ZERO EXTRA REQUESTS — the whole reason the
    * like state rides on this response rather than a fetch of its own.
@@ -2163,9 +2261,15 @@ export function openActionSheet(opts: SheetOptions): () => void {
   }
 
   function focusables(): HTMLElement[] {
-    return [...panel.querySelectorAll<HTMLElement>(
-      '.sheet-row:not([aria-disabled="true"]), .sheet-handle',
-    )]
+    // ROWS FIRST, HANDLE LAST — deliberately not one selector list.
+    // querySelectorAll returns DOCUMENT order, and the handle precedes
+    // the rows in the panel, so a combined query would open every sheet
+    // with focus on "Close". The first thing a keyboard or screen-reader
+    // user meets should be the first choice, not the exit.
+    return [
+      ...panel.querySelectorAll<HTMLElement>('.sheet-row:not([aria-disabled="true"])'),
+      handle,
+    ]
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -2267,3 +2371,174 @@ export function openActionSheet(opts: SheetOptions): () => void {
 
 /** True while a sheet is on screen. */
 export const isSheetOpen = (): boolean => openSheet !== null
+
+/* ============================================================
+   THE NAV'S ⋮ — TASK 3.2
+   ============================================================
+   Every destination, as a 44px row, built BY READING THE NAV rather than
+   from a list in this file. That is the whole design: AppNav omits
+   /review and /admin for a member (a disabled link is a promise with no
+   delivery date), and reading the rendered anchors means the omission
+   needs no counterpart here. Nothing in this bundle knows what an owner
+   is, and src/components/app-nav.test.ts asserts it stays that way.
+
+   THE TRIGGER IS A <summary>, AND CANCELLING IT IS THE POINT. The sheet
+   is JS-only; below 640px these links are the only navigation there is.
+   So the markup ships a <details> whose open state reveals the same links
+   as a stacked column, and this handler preventDefault()s the click —
+   with JS the disclosure never opens, without JS it is the whole menu.
+   No `hidden` attribute, so no flash of the wrong nav on first paint. */
+document.addEventListener('click', (e) => {
+  const summary = (e.target as Element).closest?.('.navmenu-btn')
+  if (!(summary instanceof HTMLElement)) return
+  e.preventDefault()
+
+  const nav = summary.closest('.appnav')
+  if (nav === null) return
+  const who = nav.querySelector('.who')?.textContent?.trim() ?? 'Menu'
+  const credits = nav.querySelector('.credits')?.textContent?.trim() ?? null
+  const signout = nav.querySelector<HTMLFormElement>('#signout')
+
+  const links = [...nav.querySelectorAll<HTMLAnchorElement>('a[data-navlink]')]
+  const rows: SheetRowInput[] = [
+    // The wordmark is Home on the bar. On a phone it is a weak
+    // affordance, so the sheet names it — a 44px row costs nothing.
+    { id: 'home', label: 'Home', href: '/' },
+    ...links.map((a): SheetRowInput => ({
+      id: a.pathname,
+      // firstChild, not textContent: the Review link carries a badge
+      // <span> and `textContent` would render the row as "Review3".
+      label: (a.firstChild?.textContent ?? a.textContent ?? '').trim(),
+      href: a.getAttribute('href') ?? undefined,
+      meta: a.dataset.navmeta,
+    })),
+  ]
+  if (credits !== null) rows.push({ id: 'credits', label: credits, disabled: true })
+  if (signout !== null) rows.push({ id: 'signout', label: 'Sign out', danger: true })
+
+  openActionSheet({
+    title: who,
+    rows,
+    returnFocusTo: summary,
+    onChoose: (id) => {
+      // ONE sign-out code path. requestSubmit() fires a real submit
+      // event, so ClientRouter reads the form's own data-astro-reload
+      // opt-out and stands aside — a fetch here would clear the cookies
+      // without the full document load that tears down every persisted
+      // island with them (survive-list #11). form.submit() would skip the
+      // event entirely and skip the opt-out with it.
+      if (id === 'signout') signout?.requestSubmit()
+    },
+  })
+}, true)
+
+/* ============================================================
+   THE ROW'S ⋮ — TASK 3.3
+   ============================================================
+   Six controls that are 8-30px in a dense row become six 44px rows in a
+   sheet, plus the eight metadata columns the mobile card drops. That is
+   the owner's "three dot menus" in one component, and it is what lets the
+   card be two lines of text instead of two lines and a strip of buttons.
+
+   NO SECOND CODE PATH FOR ANYTHING. Every action row reaches the control
+   the ROW ALREADY CARRIES — `button.queueadd` gets clicked, `form.likeform`
+   gets requestSubmit()ed, a crate choice clicks that row's own
+   `button.cratepick-option`. So the one delegation that has always served
+   each action still serves it, with its own status message, its own
+   optimistic repaint and its own error branch. A sheet that called the
+   like API itself would be a second implementation of a feature that
+   already has one, and two implementations of one feature drift.
+
+   The METADATA is read from the row's own cells. They are `display: none`
+   below 640px, not absent — one DOM, one template — and textContent reads
+   through `display: none` perfectly well. So the sheet carries no copy of
+   any value and the row carries no bytes for the sheet. */
+
+/** Cell class → the label the sheet gives it. Order is the sheet's order. */
+const ROW_META: ReadonlyArray<readonly [string, string]> = [
+  ['bpm', 'BPM'], ['key', 'Key'], ['duration', 'Length'], ['quality', 'Quality'],
+  ['uploader', 'Uploader'], ['added', 'Added'], ['plays', 'Plays'],
+  ['downloads', 'Downloads'],
+]
+
+const cellText = (row: Element, cls: string): string | undefined => {
+  const t = row.querySelector(`.${cls}`)?.textContent?.trim()
+  return t === undefined || t === '' ? undefined : t
+}
+
+/**
+ * The second sheet: which crate. Reached only from the first one, and it
+ * closes the first by opening — one sheet at a time, because a stack of
+ * sheets on a phone is a member who cannot tell what dismissing one will
+ * reveal.
+ */
+function openCrateSheet(row: HTMLElement, from: HTMLElement): void {
+  void loadCrateList().then((crates) => {
+    populateCratePickers(crates)
+    openActionSheet({
+      title: 'Add to a crate',
+      returnFocusTo: from,
+      rows: crates.length === 0
+        ? [{ id: 'none', label: 'No crates yet — make one on the track page', disabled: true }]
+        : crates.map((c) => ({ id: c.id, label: c.name, icon: 'crate' as const })),
+      onChoose: (id) => {
+        // The row's OWN option button, clicked. addToCrate() is called in
+        // exactly one place in this file and this is not it.
+        const opt = row.querySelector<HTMLButtonElement>(
+          `details.cratepick button.cratepick-option[data-crate-id="${CSS.escape(id)}"]`,
+        )
+        opt?.click()
+      },
+    })
+  })
+}
+
+function openRowSheet(btn: HTMLElement): void {
+  const row = btn.closest<HTMLElement>('[data-play-row]')
+  if (row === null) return
+  const play = row.querySelector<HTMLAnchorElement>('a.play[data-track-id]')
+  const fileId = play?.dataset.trackId
+  if (play === null || fileId === undefined) return
+
+  const like = row.querySelector<HTMLFormElement>('form.likeform')
+  const likeBtn = like?.querySelector<HTMLButtonElement>('button.likebtn')
+  const liked = likeBtn?.getAttribute('aria-pressed') === 'true'
+  const queueadd = row.querySelector<HTMLButtonElement>('button.queueadd')
+  const hasCrates = row.querySelector('details.cratepick') !== null
+
+  openActionSheet({
+    title: play.dataset.title ?? 'Track',
+    returnFocusTo: btn,
+    rows: [
+      { id: 'play', label: 'Play', icon: 'play' },
+      queueadd !== null && { id: 'queue', label: 'Add to queue', icon: 'queue-add' },
+      like !== null && {
+        id: 'like', label: liked ? 'Unlike' : 'Like', icon: 'heart', pressed: liked,
+        meta: likeBtn?.querySelector('.likecount')?.textContent?.trim(),
+      },
+      hasCrates && { id: 'crate', label: 'Add to a crate…', icon: 'crate' },
+      { id: 'download', label: 'Download', icon: 'download', href: `/api/track/${fileId}/download` },
+      { id: 'open', label: 'Open track page', href: `/track/${fileId}` },
+      ...ROW_META.map(([cls, label]) => {
+        const value = cellText(row, cls)
+        return value === undefined ? null : { id: cls, label, meta: value, disabled: true }
+      }),
+    ],
+    onChoose: (id) => {
+      if (id === 'play') play.click()
+      if (id === 'queue') queueadd?.click()
+      // requestSubmit, never submit(): submit() fires no submit event, so
+      // the delegation that owns the ♥ would never see it and the form
+      // would POST as a full navigation instead.
+      if (id === 'like') like?.requestSubmit()
+      if (id === 'crate') openCrateSheet(row, btn)
+    },
+  })
+}
+
+document.addEventListener('click', (e) => {
+  const btn = (e.target as Element).closest?.('button.rowmenu')
+  if (!(btn instanceof HTMLButtonElement)) return
+  e.preventDefault()
+  openRowSheet(btn)
+}, true)

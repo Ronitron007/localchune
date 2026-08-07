@@ -98,7 +98,23 @@ const { title, center = false } = Astro.props
         to the current page, which is a dead link on every page but one.
         site.ts sets both together, and hides it again whenever the region
         shows a status message or the queue runs dry — §"no dead link". */}
-    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a></span>
+    {/* TWO LINES, NOT ONE JOINED STRING — owner-confirmed layout, 2026-08-06.
+        The title is the link (that is the shipped feature, restyled rather
+        than removed); the artist is its own smaller, muted line below it,
+        with no em-dash join. Both ellipsize independently, which is what a
+        6rem flex basis and one nowrap span could never do: a joined
+        "Artist — Title" truncated to the artist and three characters of
+        the title, which is the half a member does not need.
+
+        The two lines are written from the QUEUE ENTRY's own display_title
+        and display_artist — the same pair Media Session already sends to
+        the lock screen. Nothing parses the joined string back apart; a
+        title containing an em dash would make that a guess, and the
+        correct fields were there all along.
+
+        aria-live stays on this SPAN and both lines are written inside one
+        synchronous call, so a change announces once. */}
+    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><span id="player-artist" class="nowplayingartist" hidden></span></span>
     {/* THE ♥, for whatever is playing.
         A REAL POST FORM in the exact shape TrackRow.astro's pool cell and
         track/[id].astro's .signals block already use — form.likeform >

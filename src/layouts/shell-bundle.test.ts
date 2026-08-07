@@ -65,19 +65,35 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
   it('renders the transport row: name, ♥, then play/pause, ⏭, seek and clock', () => {
     // The queue shipped with no on-page skip control at all — the only way to
     // reach the next track was the lock screen, which does not exist on a
-    // desktop. Order is asserted because the mobile `order` rules in
-    // global.css are written against this DOM order.
+    // desktop.
     //
-    // `player-link` and `player-like` join the list here rather than being
-    // excluded from the regex, and that is the point of asserting a whole
-    // array: the ♥ sits with the NAME (both are `order: 1` on a phone, and
-    // equal order values fall back to DOM order), not with the transport
-    // cluster. Moving it below #player-toggle would fail this line.
+    // ORDER IS STILL ASSERTED, but the reason changed. It used to be that
+    // global.css's mobile `order` rules were written against this DOM
+    // order; the bar is a grid now, and grid areas do not care. What the
+    // array protects today is the READING order for a screen reader and
+    // for a no-CSS render: name, then the artist under it, then the ♥ that
+    // is about that name, then the transport. That is also the order the
+    // owner-confirmed mock draws.
+    //
+    // `player-artist` is inside #player-label with the link, because both
+    // lines are the region's content and the region is the app's ONE
+    // aria-live element (survive-list #12). A second live region for the
+    // artist would race this one.
     const ids = [...shell.matchAll(/id="(player-[a-z]+)"/g)].map((m) => m[1])
     expect(ids).toEqual([
-      'player-label', 'player-link', 'player-like',
+      'player-label', 'player-link', 'player-artist', 'player-like',
       'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio',
     ])
+  })
+
+  it('keeps both name lines inside the one aria-live region', () => {
+    // survive-list #12. Not "near" it — INSIDE it, so one synchronous
+    // write of both lines announces once.
+    const region = shell.slice(shell.indexOf('id="player-label"'))
+    const closed = region.slice(0, region.indexOf('</span></span>') + 14)
+    expect(closed).toContain('id="player-link"')
+    expect(closed).toContain('id="player-artist"')
+    expect(closed).toContain('aria-live="polite"')
   })
 
   it('ships the skip button hidden, like every other JS-only control', () => {
