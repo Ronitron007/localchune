@@ -114,6 +114,33 @@ wants router-mediated submit someday, it must ALSO make its endpoint accept
 `multipart/form-data` — ten API routes currently branch on the urlencoded
 type alone.
 
+## iOS haptics — direct taps only, and there is no `haptic()` to call
+
+`src/lib/haptics.ts` gives the four player-bar controls a system tick on iOS
+by nesting a transparent, still-native `<input type=checkbox switch>` inside
+each one. Design and full reasoning:
+`docs/superpowers/specs/2026-08-07-ios-safari-haptics-design.md`.
+
+The three rules that look like tidy-up targets and are not:
+
+- **`opacity: 0` only, never `appearance: none`.** The native rendering IS
+  the haptic; un-nativing the control removes the tick and nothing else
+  changes, so it fails silently.
+- **No script-triggered haptics exist.** Apple patched `.click()`-driven
+  haptics in **iOS 26.5** (~May 2026) — only a real finger tap on the native
+  control fires now. Auto-advance, upload-complete and error paths cannot
+  have a tick at any price. The libraries that still ship the old trick
+  (`lochie/web-haptics`, 2.7k stars) are broken and unmaintained.
+- **Transport controls only, never list rows.** The overlay is an `input`,
+  and `input` is in `ROW_TAP_EXEMPT` (`site.ts`) — inside a
+  `[data-play-row]`, `playLinkFromTap` would read every whole-row tap as an
+  inner control and rows would stop playing, on iOS and nowhere else.
+
+`src/lib/haptics.test.ts` enforces all three by reading the source, plus the
+rule that `haptics.ts` has exactly one importer. The tick itself is
+un-unit-testable — no simulator has a Taptic Engine — so the only evidence is
+a physical iPhone on iOS 17.4+ against the deployed URL.
+
 ## Queues
 
 `localchune-analyze` carries `{file_id, r2_key, analysis_version}` from the
