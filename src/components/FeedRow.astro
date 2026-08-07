@@ -23,12 +23,11 @@
 import Icon from './Icon.astro'
 import KeyChip from './KeyChip.astro'
 import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
-import type { PoolTrack } from '../lib/pool-api'
+import { artistHref, type PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack }
 const { track } = Astro.props
 const artist = track.display_artist ?? 'Unknown artist'
-const label = `${artist} — ${track.display_title}`
 ---
 {/* data-play-row and the artwork-as-play-link: TrackRow.astro's exact
     rework, for the same owner directive and by the same mechanism. The
@@ -59,7 +58,22 @@ const label = `${artist} — ${track.display_title}`
     aria-label={`Add ${track.display_title} to the queue`}
   ><Icon name="queue-add" size={16} /></button>
   <span class="feedrow-body">
-    <a class="feedrow-title" href={`/track/${track.file_id}`}>{label}</a>
+    {/* TWO LINKS ON ONE LINE, not one link over a joined string. The label
+        was `${artist} — ${title}` in a single anchor pointing at the track,
+        so the artist half of every feed row was unreachable — the one
+        place a member is most likely to want an act's other tracks.
+
+        Still one visual line: `.feedrow-title` keeps the ellipsis and the
+        nowrap, and the two anchors inside it carry the underline. The
+        artist is plain text when `display_artist` is null, for the same
+        reason as TrackRow's cell — "Unknown artist" is not an artist. */}
+    <span class="feedrow-title">
+      {track.display_artist === null
+        ? artist
+        : <a href={artistHref(track.display_artist)}>{artist}</a>}
+      {' — '}
+      <a href={`/track/${track.file_id}`}>{track.display_title}</a>
+    </span>
     <span class="feedrow-meta">
       <KeyChip camelot={track.key_camelot} open={track.key_open} musical={track.key_musical} />
       <span class="num">{formatBpm(track.bpm, track.ibi_std_ms)}</span>

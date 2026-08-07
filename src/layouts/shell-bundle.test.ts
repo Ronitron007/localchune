@@ -89,8 +89,13 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
   it('keeps both name lines inside the one aria-live region', () => {
     // survive-list #12. Not "near" it — INSIDE it, so one synchronous
     // write of both lines announces once.
+    // Sliced to the FIRST `</span>` after the region opens, which closes
+    // the region itself: both children are anchors now, so there is no
+    // nested <span> in between. It used to search for `</span></span>`,
+    // which stopped matching the moment the artist line became a link to
+    // the act's page — a false red about markup that was still correct.
     const region = shell.slice(shell.indexOf('id="player-label"'))
-    const closed = region.slice(0, region.indexOf('</span></span>') + 14)
+    const closed = region.slice(0, region.indexOf('</span>') + 7)
     expect(closed).toContain('id="player-link"')
     expect(closed).toContain('id="player-artist"')
     expect(closed).toContain('aria-live="polite"')

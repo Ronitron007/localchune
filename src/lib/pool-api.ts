@@ -156,6 +156,77 @@ export function poolListArgs(
   }
 }
 
+/* ═══════════════════════════ ARTIST PAGES, STRING-KEYED ══════════════
+ *
+ * THERE IS NO ARTIST TABLE, AND THIS DELIBERATELY DOES NOT ADD ONE.
+ *
+ * `display_artist` is a DERIVED text column (migration 11): a tag lookup
+ * over artist/ARTIST/TPE1/albumartist/ALBUMARTIST, falling back to the
+ * "Artist - Title" split of the filename, else NULL. Two files by the same
+ * act agree only as far as their tags agree, and nothing reconciles
+ * "Bicep" with "BICEP" beyond case.
+ *
+ * So an artist here is A STRING, and the route is keyed by it. The whole
+ * data path is `pool_list(p_q => name)` — the substring search it already
+ * has, over the pool it already filters — plus an exact, case-insensitive
+ * match applied to the rows that come back. No migration, no new RPC, no
+ * new grant, and nothing to keep in sync with `pool_visible_states()`:
+ * tombstones, unclaimed uploads and every other visibility rule are
+ * enforced once, in the function that already enforces them.
+ *
+ * WHAT THIS COSTS, stated rather than discovered later. `p_q` is a
+ * substring match across artist, title, filename AND tags, and the server
+ * clamps `p_limit` to 200. A page therefore sees at most 200 CANDIDATES
+ * before the exact filter runs, so an artist whose name is also a common
+ * substring of other tracks' titles could be truncated. At the pool's
+ * present scale (hundreds of tracks) that cannot bite; it is why
+ * `ARTIST_CANDIDATE_LIMIT` is named here rather than inlined, so the
+ * bound is one edit when it does.
+ *
+ * THE M7 UPGRADE PATH. When canonical artist ids arrive, this becomes a
+ * join and the route key becomes an id. The two functions below are the
+ * whole seam: `artistHref` stops encoding a name and starts naming an id,
+ * `matchesArtist` disappears into the query. Nothing else in the app
+ * knows how an artist page is addressed — every caller builds its href
+ * through `artistHref`, which is the reason it exists as a function
+ * instead of a template literal at five call sites.
+ */
+
+/** `pool_list` clamps `p_limit` to 200; asking for more is silently less. */
+export const ARTIST_CANDIDATE_LIMIT = 200
+
+/**
+ * The route for an artist name.
+ *
+ * ENCODED, and the member-page precedent is why: `4b1424e` fixed exactly
+ * this bug for member links, where an email-fallback username containing
+ * a `.` or a `+` produced an href that resolved somewhere else. An artist
+ * name is far more hostile than a username — it is whatever a tag says,
+ * and `AC/DC` alone would silently become a two-segment path.
+ */
+export function artistHref(name: string): string {
+  return `/artist/${encodeURIComponent(name)}`
+}
+
+/**
+ * Does this row's `display_artist` name that artist?
+ *
+ * Case-insensitive and whitespace-trimmed, because the tags are written by
+ * hand and "Bicep", "bicep" and "Bicep " are one act. Deliberately NOT
+ * fuzzy beyond that: `pool_list` already returned these rows on a
+ * SUBSTRING match, so "Bicep" would otherwise collect "Bicep Remix" and
+ * every track whose title merely contains the word. The RPC widens; this
+ * narrows back to exact.
+ *
+ * A NULL artist never matches. There is no page for the "Unknown artist"
+ * bucket — it is not one artist, it is every file whose tags failed, and
+ * listing them together would assert a relationship that does not exist.
+ */
+export function matchesArtist(displayArtist: string | null, name: string): boolean {
+  if (displayArtist === null) return false
+  return displayArtist.trim().toLowerCase() === name.trim().toLowerCase()
+}
+
 /**
  * The pool page's only link builder. Sort links restart paging on purpose —
  * a keyset cursor is only valid within the sort that minted it, so a sort

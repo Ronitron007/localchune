@@ -16,6 +16,7 @@ import {
 import { createPlayMeter } from '../lib/play-meter'
 import { artFallback, artMediumUrl, artThumbUrl, LIKE_ICON, likeActionLabel, trackHref } from '../lib/track-format'
 import { PLAYER_MEMORY_KEY, isStale, makeEntry, parseEntry, serializeEntry } from '../lib/player-memory'
+import { artistHref } from '../lib/pool-api'
 import { fetchCandidates } from '../lib/queue-candidates'
 import {
   confirmMessage, reduce, regenerate, requiresClearConfirm,
@@ -121,6 +122,12 @@ function setNowPlaying(title: string, artistName: string | null, fileId: string 
   if (artistEl === null) return
   const named = artistName !== null && artistName !== ''
   artistEl.textContent = named ? artistName : ''
+  // The artist line is a LINK now, so the bar can reach an act's page from
+  // whatever is playing. Same "no dead link" rule the title above obeys:
+  // an anchor with no href resolves to the current page, so the attribute
+  // is REMOVED between tracks rather than set to an empty string.
+  if (named) artistEl.setAttribute('href', artistHref(artistName))
+  else artistEl.removeAttribute('href')
   artistEl.hidden = !named
   if (named) label.appendChild(artistEl)
 }

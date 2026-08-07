@@ -116,7 +116,7 @@ const { title, center = false } = Astro.props
 
         aria-live stays on this SPAN and both lines are written inside one
         synchronous call, so a change announces once. */}
-    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><span id="player-artist" class="nowplayingartist" hidden></span></span>
+    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><a id="player-artist" class="nowplayingartist" hidden></a></span>
     {/* THE ♥, for whatever is playing.
         A REAL POST FORM in the exact shape TrackRow.astro's pool cell and
         track/[id].astro's .signals block already use — form.likeform >

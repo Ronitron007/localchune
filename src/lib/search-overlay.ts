@@ -60,6 +60,7 @@ import { SessionExpiredError } from './org-api'
 import {
   fetchSearch, isAbortError, isSearchable, type SearchResult,
 } from './search-api'
+import { artistHref } from './pool-api'
 import { artThumb2xUrl, artThumbUrl, formatBpm, keyTooltip, LIKE_ICON } from './track-format'
 import { formatDuration } from './format'
 
@@ -137,7 +138,17 @@ function rowEl(r: SearchResult): HTMLElement {
   const titleLink = el('a', 'searchrow-title', r.display_title)
   titleLink.href = `/track/${r.file_id}`
   text.appendChild(titleLink)
-  text.appendChild(el('span', 'searchrow-artist', artist))
+  // The artist line links to the act's page, exactly as the pool row's
+  // artist cell and the player bar's second line do. `artistHref` is the
+  // one place that knows how an artist page is addressed — see pool-api.
+  // Plain text when there is no artist: "Unknown artist" has no page.
+  if (r.display_artist === null) {
+    text.appendChild(el('span', 'searchrow-artist', artist))
+  } else {
+    const artistLink = el('a', 'searchrow-artist', artist)
+    artistLink.href = artistHref(r.display_artist)
+    text.appendChild(artistLink)
+  }
   row.appendChild(text)
 
   // ---- the chips a DJ scans. These class names are ALSO what

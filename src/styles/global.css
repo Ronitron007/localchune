@@ -1101,7 +1101,13 @@ img.art {
 .playerbar .nowplayingartist {
   font-size: var(--text-xs);
   color: var(--ink-55);
+  /* An <a> since the artist line became a link to the act's page. It keeps
+     the muted colour it had as a span — it is the second line of a name,
+     not a call to action, and the underline on hover is the whole
+     affordance it needs at this size. */
+  text-decoration: none;
 }
+.playerbar .nowplayingartist:hover { text-decoration: underline; }
 /* Play/pause and skip take no .btn tier (survive-list #8's transport
    exemption) so they never inherited the tier's geometry either. The floor
    applies to them as a control, not as a tier. */
@@ -1576,7 +1582,8 @@ body.queueopen .uploadchip-slot {
 
    Both routes share it: an artist page is the same shape with a
    string-keyed subject instead of a member. One recipe, two surfaces. */
-.memberdetail > * + * { margin-top: var(--pad-3); }
+.memberdetail > * + *,
+.artistdetail > * + * { margin-top: var(--pad-3); }
 
 .memberhero {
   border: var(--line-full);
@@ -1625,13 +1632,19 @@ body.queueopen .uploadchip-slot {
 .feedrow .play { flex: none; }
 .feedrow .feedrow-body { flex: 1 1 auto; }
 .feedrow-body { min-width: 0; display: flex; flex-direction: column; gap: 0.15em; }
+/* One line, TWO links: the artist and the title go to different places.
+   The ellipsis and the nowrap stay on the wrapper, because they have to
+   apply to the whole line rather than to either half — an anchor that
+   truncated itself would leave the em dash and the other anchor hanging
+   past it. The underline moves to the anchors, which is where a hover
+   target now is. */
 .feedrow-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-decoration: none;
 }
-.feedrow-title:hover { text-decoration: underline; }
+.feedrow-title a { text-decoration: none; color: inherit; }
+.feedrow-title a:hover { text-decoration: underline; }
 .feedrow-meta { display: flex; align-items: center; gap: var(--pad-1); color: var(--mid); }
 .feedrow-likes { color: var(--mid); }
 .privatechip {

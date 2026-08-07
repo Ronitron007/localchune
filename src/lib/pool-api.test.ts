@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  EMPTY_QUERY, feedTrackToPoolTrack, isDefaultQuery, parsePoolQuery, poolListArgs,
+  ARTIST_CANDIDATE_LIMIT, artistHref, EMPTY_QUERY, feedTrackToPoolTrack, isDefaultQuery,
+  matchesArtist, parsePoolQuery, poolListArgs,
   poolQueryToSearchParams, poolHref, type FeedTrack,
 } from './pool-api'
 
@@ -187,5 +188,79 @@ describe('feedTrackToPoolTrack', () => {
     expect(track.key_camelot).toBe(ROW.key_camelot)
     expect(track.like_count).toBe(ROW.like_count)
     expect(track.liked_by_me).toBe(ROW.liked_by_me)
+  })
+})
+
+/* ═══ artist pages, string-keyed ═══
+ *
+ * There is no artist table: `display_artist` is a derived text column, so
+ * an artist IS a string and the route is keyed by one. These two functions
+ * are the whole seam — when canonical ids land in M7, `artistHref` starts
+ * naming an id and `matchesArtist` disappears into the query, and no call
+ * site in the app changes because every link is built through the first. */
+
+describe('artistHref', () => {
+  it('points at the artist route', () => {
+    expect(artistHref('Bicep')).toBe('/artist/Bicep')
+  })
+
+  it('encodes a name that would otherwise become two path segments', () => {
+    // The member-page precedent (4b1424e) fixed exactly this for usernames.
+    // An artist name is far more hostile — it is whatever a tag says — and
+    // a slash is the case that silently resolves somewhere else entirely.
+    expect(artistHref('AC/DC')).toBe('/artist/AC%2FDC')
+  })
+
+  it('encodes the rest of what a tag can contain', () => {
+    expect(artistHref('Simon & Garfunkel')).toBe('/artist/Simon%20%26%20Garfunkel')
+    expect(artistHref('?#')).toBe('/artist/%3F%23')
+  })
+})
+
+describe('matchesArtist', () => {
+  it('matches regardless of case — tags are written by hand', () => {
+    expect(matchesArtist('Bicep', 'bicep')).toBe(true)
+    expect(matchesArtist('BICEP', 'Bicep')).toBe(true)
+  })
+
+  it('ignores surrounding whitespace on either side', () => {
+    expect(matchesArtist('Bicep ', 'Bicep')).toBe(true)
+    expect(matchesArtist('Bicep', ' Bicep')).toBe(true)
+  })
+
+  it('narrows the RPC back to EXACT — this is its whole job', () => {
+    // pool_list returned these rows on a SUBSTRING match across artist,
+    // title, filename and tags. Without this, /artist/Bicep would list
+    // every track whose title merely contains the word.
+    expect(matchesArtist('Bicep Remix', 'Bicep')).toBe(false)
+    expect(matchesArtist('Bicep', 'Bicep Remix')).toBe(false)
+    expect(matchesArtist('Two Bicep', 'Bicep')).toBe(false)
+  })
+
+  it('never matches a null artist — "Unknown artist" is not an artist', () => {
+    // It is not one act, it is every file whose tags failed and whose
+    // filename would not split. Listing them together would assert a
+    // relationship that does not exist, so there is no page for it.
+    expect(matchesArtist(null, 'Bicep')).toBe(false)
+    expect(matchesArtist(null, 'Unknown artist')).toBe(false)
+  })
+})
+
+describe('the artist page asks pool_list for the widest page it will give', () => {
+  it('names the RPC clamp rather than inlining a number', () => {
+    // pool_list clamps p_limit to 200; asking for more is silently less.
+    // Named here because it is the bound on how many CANDIDATES the exact
+    // filter gets to see, which is the one real limitation of the
+    // string-keyed approach.
+    expect(ARTIST_CANDIDATE_LIMIT).toBe(200)
+  })
+
+  it('passes the artist name through as the substring query', () => {
+    const args = poolListArgs({ ...EMPTY_QUERY, q: 'Bicep' }, null, ARTIST_CANDIDATE_LIMIT)
+    expect(args.p_q).toBe('Bicep')
+    expect(args.p_limit).toBe(200)
+    // No uploader filter: an artist page spans every uploader, which is
+    // exactly what makes it different from a member page.
+    expect(args.p_uploader).toBeNull()
   })
 })

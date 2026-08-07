@@ -27,7 +27,7 @@ import KeyChip from './KeyChip.astro'
 import QualityBadge from './QualityBadge.astro'
 import { artThumb2xUrl, artThumbUrl, formatBpm, LIKE_ICON } from '../lib/track-format'
 import { formatDuration } from '../lib/format'
-import type { PoolTrack } from '../lib/pool-api'
+import { artistHref, type PoolTrack } from '../lib/pool-api'
 
 interface Props { track: PoolTrack; reorderable?: boolean }
 const { track, reorderable = false } = Astro.props
@@ -152,8 +152,19 @@ const added = new Date(track.created_at).toISOString().slice(0, 10)
   {/* Task 8: artist and title are now independent columns — each still
       links to the track page, and the tag chips move to the title cell
       (they describe the track, not the artist). */}
+  {/* THE ARTIST CELL POINTS AT THE ARTIST. It linked to the TRACK page —
+      the same destination as the title cell beside it, so the row had two
+      adjacent links that did the same thing and no way to reach an act's
+      other tracks at all.
+
+      Only when there IS one: `display_artist` is null for a file whose
+      tags failed and whose filename would not split, and TrackRow shows
+      "Unknown artist" for that. There is no page for it — it is not one
+      artist, it is every failure — so the fallback stays plain text. */}
   <td class="artist">
-    <a href={`/track/${track.file_id}`}>{artist}</a>
+    {track.display_artist === null
+      ? artist
+      : <a href={artistHref(track.display_artist)}>{artist}</a>}
   </td>
   <td class="title">
     <a href={`/track/${track.file_id}`}>{track.display_title}</a>
