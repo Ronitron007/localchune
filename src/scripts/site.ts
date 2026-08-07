@@ -5,7 +5,6 @@
 
 import { debounce } from '../lib/debounce'
 import { formatDuration } from '../lib/format'
-import { attachHaptic } from '../lib/haptics'
 import { iconEl } from '../lib/icons'
 import {
   classifyGesture, exitDelayMs, nextFocusIndex, normalizeRows, shouldDismiss,
@@ -1169,31 +1168,6 @@ if (nextBtn !== null) {
   nextBtn.hidden = false
   nextBtn.addEventListener('click', skipToNext)
 }
-
-/** A SYSTEM HAPTIC TICK ON THE TRANSPORT — iOS only, direct taps only.
- *  docs/superpowers/specs/2026-08-07-ios-safari-haptics-design.md.
- *
- *  Each call appends a transparent, still-native <input type=checkbox switch>
- *  inside the control. The tap lands on that input, iOS plays its system
- *  tick, and the click bubbles to the button — so every handler above runs
- *  exactly as it did. No listener is registered here and none may be: a
- *  forwarded synthetic click re-enters the same document-level delegation
- *  ClientRouter watches, which is the "♥ → 404" shape described at the
- *  capture-phase comment below.
- *
- *  There is no imperative `haptic()` to call anywhere, deliberately. Apple
- *  removed script-triggered haptics in iOS 26.5 (~May 2026), so a tick now
- *  exists only where a finger actually lands — auto-advance, upload-complete
- *  and error paths cannot have one at any price.
- *
- *  THESE FOUR, AND NOT LIST ROWS. The overlay is an `input`, and `input` is
- *  in ROW_TAP_EXEMPT below — inside a [data-play-row], playLinkFromTap would
- *  read every whole-row tap as "an inner control owns this" and return null,
- *  so rows would silently stop playing on iOS and nowhere else. §3.1. */
-attachHaptic(toggle)
-attachHaptic(nextBtn)
-attachHaptic(drawerToggle)
-attachHaptic(likeForm?.querySelector('button.likebtn'))
 
 /** The art derivatives degrade instead of breaking — `artFallback` states
  *  the rule and is tested; this is only the DOM write. Capture phase,
