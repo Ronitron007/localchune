@@ -89,8 +89,29 @@ export function dedupPending(rpc: Rpc, limit: number): Promise<PendingRow[]> {
   return rpc<PendingRow[]>('dedup_pending', { p_limit: limit })
 }
 
-/** Mint one track per stored file that has none. Returns how many it made,
- *  so a caller can loop until it returns 0. */
+/** Mint one track per stored file that has none AND that the matcher can
+ *  never match (no fingerprint). Returns how many it made, so a caller can
+ *  loop until it returns 0.
+ *
+ *  Since migration 34 it no longer seeds MATCHABLE files. It used to, and
+ *  because a seeded file has a track_id it then fell out of the old
+ *  dedup_pending() for ever — the backstop erasing its own work list every
+ *  hour for any backlog past the Worker's 300-file cap. 690 production
+ *  files were stranded unexamined that way. */
 export function dedupSeedTracks(rpc: Rpc, limit: number): Promise<number> {
   return rpc<number>('dedup_seed_tracks', { p_limit: limit })
+}
+
+/**
+ * Stamp files.dedup_probed_at — "the matcher has examined these".
+ *
+ * CALLED AFTER ANY runDedup() THAT DID NOT THROW, including one that
+ * returned ok:false. An ok:false is a completed examination (no
+ * fingerprint, nothing to compare) and re-probing it every hour for ever
+ * would block the page behind it — dedup_pending() has to terminate. A
+ * THROWN effect is deliberately not marked: a database that was down has
+ * not examined anything, and that file must stay queued.
+ */
+export function dedupMarkProbed(rpc: Rpc, fileIds: string[]): Promise<number> {
+  return rpc<number>('dedup_mark_probed', { p_file_ids: fileIds })
 }

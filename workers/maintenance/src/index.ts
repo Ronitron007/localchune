@@ -4,7 +4,7 @@
 
 import { AwsClient } from 'aws4fetch'
 import { runDedup, summariseDedup } from '../../../src/lib/dedup'
-import { dedupPending, dedupSeedTracks, makeDedupDeps } from '../../../src/lib/dedup-rpc'
+import { dedupMarkProbed, dedupPending, dedupSeedTracks, makeDedupDeps } from '../../../src/lib/dedup-rpc'
 import { deletablePendingObjects, reconcile, type DbFile, type R2ObjectRow } from './reconcile'
 
 /**
@@ -359,6 +359,10 @@ export async function dedupSweep(env: Env): Promise<void> {
     // progress per page and stopping when there is none is what bounds that
     // — the seed below is what finally gets those rows an identity.
     let progress = 0
+    // Every file whose probe RAN — merged, no-match or ok:false alike. The
+    // stamp is what takes them out of dedup_pending(), so a page that is
+    // not marked is a page this loop reads again next hour, for ever.
+    const probed: string[] = []
     for (const row of page) {
       seen++
       try {
@@ -368,18 +372,46 @@ export async function dedupSweep(env: Env): Promise<void> {
         // saves a decompress, it is not load-bearing for correctness.
         const out = await runDedup(row.file_id, deps, null)
         for (const w of out.warnings ?? []) console.warn(w)
-        if (!out.ok) { unmatchable++; continue }
+        // An ok:false is a finished examination, not a failure — the file
+        // has no usable fingerprint and never will. It counts as progress
+        // and it gets stamped, or the page never drains.
+        probed.push(row.file_id)
         progress++
+        if (!out.ok) { unmatchable++; continue }
         matched++
         if (out.action === 'merged') merged++
         console.log(summariseDedup(row.file_id, out))
       } catch (err) {
-        // One bad file must not abandon the rest of the page. The row keeps
-        // its state, so the next hour tries again.
+        // One bad file must not abandon the rest of the page. NOT stamped:
+        // a thrown effect means the matcher did not get an answer, so the
+        // file must stay queued for the next hour.
         failed++
-        console.error(`dedup: ${row.file_id}: ${String(err)}`)
+        console.error(`dedup: FAILED ${row.file_id}: ${String(err)}`)
       }
     }
+    // One round trip per page, after the page, so a mid-page crash re-runs
+    // at most one page of probes rather than losing the whole run's marks.
+    if (probed.length > 0) {
+      try {
+        await dedupMarkProbed(call, probed)
+      } catch (err) {
+        // Loud, because this is the failure that would make the backstop
+        // spin on the same page for ever while reporting healthy counts.
+        console.error(
+          `dedup: ALARM — could not stamp ${probed.length} probed file(s); ` +
+          `they will be re-probed next hour: ${String(err)}`,
+        )
+        // AND STOP. The stamp is the only thing that advances the work
+        // list, so continuing would re-read the identical page and re-run
+        // the same offset sweeps until the per-run cap — real CPU spent on
+        // an answer already computed, and the page would still be there.
+        break
+      }
+    }
+    // Only when every row in the page THREW. An ok:false is progress now:
+    // it is stamped, so the next page read cannot return it again. Before
+    // the stamp existed this guard was the only thing standing between an
+    // all-unmatchable page and an infinite re-read.
     if (progress === 0) break
   }
 
@@ -390,10 +422,26 @@ export async function dedupSweep(env: Env): Promise<void> {
     if (n < SEED_PAGE) break
   }
 
-  console.log(
+  // How much work is STILL owed after this run. One extra round trip an
+  // hour, and it is the number whose absence let 690 files sit unexamined
+  // for nine days: every counter above reports what this run did, and a
+  // job that does nothing because its work list was silently emptied
+  // reports all zeros and looks exactly like a job with nothing to do.
+  let remaining = -1
+  try {
+    remaining = (await dedupPending(call, 200)).length
+  } catch (err) {
+    console.error(`dedup: could not read the remaining backlog: ${String(err)}`)
+  }
+
+  const line =
     `dedup: seen=${seen} matched=${matched} merged=${merged} ` +
-      `unmatchable=${unmatchable} failed=${failed} seeded=${seeded}`,
-  )
+    `unmatchable=${unmatchable} failed=${failed} seeded=${seeded} ` +
+    `backlog${remaining >= 200 ? '>=' : '='}${remaining}`
+  // console.error so it survives a log level that drops info, and so the
+  // one run that failed files is the one that stands out in a tail.
+  if (failed > 0) console.error(`${line} — ${failed} file(s) FAILED to match`)
+  else console.log(line)
 }
 
 /**
