@@ -1388,6 +1388,18 @@ body.queueopen .uploadchip-slot {
    Struck through and dimmed says "this was yours and it is gone" without
    needing a second line of copy. */
 .gonename { color: var(--mid); text-decoration: line-through; }
+
+/* The track page's delete control (migration 33). Last section on the
+   page, separated by a rule: the one irreversible action on /track/<id>
+   should not sit flush against the provenance list it follows, where a
+   thumb travelling down the page could reach it by accident. The button
+   itself carries .btn-danger and needs nothing here. */
+.dangerzone {
+  border-top: 1px solid var(--line);
+  margin-top: var(--pad-3);
+  padding-top: var(--pad-2);
+}
+.dangerzone .deleteform { margin-top: var(--pad-1); }
 .tags { margin-left: 0.5em; }
 .tagchip {
   border: 1px solid var(--faint);
