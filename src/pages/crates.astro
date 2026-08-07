@@ -31,6 +31,7 @@
 // 409 the route answers for one. The full-width, labelled version lives on
 // the crate page itself. See src/pages/api/crate/[id]/download.ts.
 import Shell from '../layouts/Shell.astro'
+import CrateStack from '../components/CrateStack.astro'
 import EmptyState from '../components/EmptyState.astro'
 import Icon from '../components/Icon.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../lib/org-api'
@@ -79,6 +80,9 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
           <ul class="cratelist">
             {mine.map((c) => (
               <li class="cratecard">
+                {/* OWNER, 2026-08-07: the crate's own artwork is the first
+                    track's sleeve with up to three stacked behind it. */}
+                <CrateStack artFileIds={c.art_file_ids} name={c.name} />
                 {/* /crate/[id] lands in Task 7 — until then this 404s,
                     which is expected and fine for this task. */}
                 <a href={crateHref(c.id)}>{c.name}</a>
@@ -116,6 +120,7 @@ const updatedDate = (c: CrateCard) => new Date(c.updated_at).toISOString().slice
           <ul class="cratelist">
             {pool.map((c) => (
               <li class="cratecard">
+                <CrateStack artFileIds={c.art_file_ids} name={c.name} />
                 <a href={crateHref(c.id)}>{c.name}</a>
                 <button
                   type="button"

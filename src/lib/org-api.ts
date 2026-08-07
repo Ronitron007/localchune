@@ -166,6 +166,15 @@ export type CrateCard = {
   /** Pool-visible items only, ms. Never null. */
   total_duration_ms: number
   updated_at: string
+  /**
+   * Migration 35 — up to four ARTWORKED file ids in crate position order,
+   * for CrateStack.astro's stacked sleeves. The RPC never returns null
+   * (an empty crate gets `{}`), but it is optional here so a card
+   * rendered from an older cached response degrades to the empty tile
+   * instead of throwing. Art is addressed by convention from a file id
+   * (`derived/<id>/thumb.jpg`), so no key is needed — see track-format.ts.
+   */
+  art_file_ids?: string[] | null
 }
 
 /** /crates.astro's and /crate/[id]'s only link builder for a crate. */

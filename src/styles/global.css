@@ -1674,8 +1674,137 @@ body.queueopen .uploadchip-slot {
   padding: 0;
   margin: var(--pad-1) 0 0;
 }
-.cratecard { border: 1px solid var(--faint); padding: var(--pad-1) var(--pad-2); }
-.cratecard .explain { margin-top: 0.15em; }
+/* THE CRATE CARD HAD NO LAYOUT, and that is the whole bug the owner
+   photographed: `+ QUEUE` sitting on the crate's title.
+
+   The rule was `border` and `padding` and nothing else, so the card's
+   three children — the title `<a>`, the 44px `.queueadd` button and the
+   `.explain` line — were laid out as INLINE CONTENT in one shared line
+   box. The button was therefore a WORD INSIDE THE TITLE'S SENTENCE, and
+   every symptom follows from that one fact:
+
+     · it lands wherever the title's last line ends, so a two-line crate
+       name puts a 44px control in the middle of the card, one text space
+       (measured: 4.0px) from the words;
+     · its atomic-inline box is 44px against the title's 23.2px line box,
+       so the line inflates around it and the title sits vertically
+       centred INSIDE the button's height — measured at 375px, title line
+       28.5–46.5 against a button of 17.0–61.0. The button's box encloses
+       the title's;
+     · a crate name that cannot break (one long token, which is a normal
+       way to name a crate) overflows the card entirely and drops the
+       button below it — reproduced in WebKit at 320, 343 and 375px;
+     · and the button ships `hidden`, which `.btn-secondary`'s
+       `display: inline-flex` defeats, so it painted before site.ts ever
+       revealed it.
+
+   A grid ends all four at once, at every width, because the title and the
+   control can no longer share a line box at any width. `min-width: 0` on
+   the text column is what lets a long name wrap instead of pushing the
+   control out of the card; `overflow-wrap` is what handles the name that
+   cannot wrap at all — `.memberhero h1` already carries it, for the same
+   reason and in the same words: this is a string a member chose. */
+/* FIVE CHILDREN, FIVE AREAS, AND NO TWO SHARE ONE. The PRIVATE chip gets
+   a column of its own rather than `grid-area: name; justify-self: end` —
+   two items in one cell STACK, which would have re-created this very bug
+   the moment a private crate had a long name. `crate-card.test.ts`
+   asserts the areas are distinct so the shortcut cannot come back. */
+.cratecard {
+  border: 1px solid var(--faint);
+  padding: var(--pad-1) var(--pad-2);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "art name  chip act"
+    "art meta  meta act";
+  align-items: center;
+  gap: 0 var(--pad-2);
+}
+.cratecard > .cratestack { grid-area: art; }
+.cratecard > a { grid-area: name; overflow-wrap: anywhere; }
+.cratecard > .privatechip { grid-area: chip; margin-left: 0; }
+.cratecard > .explain { grid-area: meta; margin-top: 0.15em; overflow-wrap: anywhere; }
+.cratecard > .queueadd { grid-area: act; }
+/* `hidden` honoured explicitly — the tier's own `display` beats the UA
+   sheet's `[hidden]`, which is why this control was on screen with JS
+   off. Same fix `.searchrow` and `.cratepick` already carry. */
+.cratecard > .queueadd[hidden] { display: none; }
+
+/* ON A PHONE THE ACTION TAKES ITS OWN ROW. `+ QUEUE` is ~110px of the
+   223px a 375px card has left after the sleeves, the padding and the
+   gaps — so beside the text it left the name and the meta line a ~130px
+   column, and "by rohan · 12 tracks · 48:31 · public since 2026-08-05"
+   became five lines. Measured in a real render before this rule.
+
+   A row of its own costs one 44px band and gives the title the width of
+   the card, which is §5.1's card grammar: artwork leads, then the text,
+   then the controls. `justify-self: start` because a full-width button
+   under a two-line title reads as a page-level action rather than as
+   this card's. */
+@media (max-width: 640px) {
+  .cratecard {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "art name chip"
+      "art meta meta"
+      "act act  act";
+    row-gap: var(--pad-1);
+  }
+  .cratecard > .queueadd { justify-self: start; }
+}
+
+/* --- the crate's stacked sleeves (owner, 2026-08-07) ---
+   The front sleeve sets the box; the ones behind it are absolutely
+   positioned inside it and stepped up and to the right. STRAIGHT ON: no
+   rotation, no fan, no perspective — parallel rectangles, which is the
+   same 90 degree geometry as everything else here.
+
+   NO SHADOW, and that is §4.3 rather than an omission. Twelve crate cards
+   times four sleeves is forty-eight shadows on one screen, which is the
+   black-rectangle collapse the ration exists to prevent. Depth is
+   OCCLUSION: every sleeve is an opaque --bg fill with a 1px --line edge,
+   so the front one hides the ones behind it. That is what actually reads
+   as a stack; a shadow only hints at it.
+
+   The extra height the stack needs is padding on the container, not
+   margin on the sleeves, so the card's `align-items: center` still
+   centres the whole object. */
+.cratestack {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 56px;
+  /* The front sleeve, plus the three steps behind it. Typed from the same
+     numbers src/lib/crate-art.ts exports — 56 + 3 x 5. */
+  height: 71px;
+}
+.cratestack-sleeve {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+/* `--i` is depth from the front, written by the component. Sleeve 0 sits
+   on the bottom-left corner; each one behind steps 5px up and 5px right.
+   DOM order is back-to-front, so the front sleeve paints last and no
+   z-index is needed — the ladder in §1.6 is for things that cross
+   stacking contexts, and four siblings do not. */
+.cratestack-sleeve { transform: translate(calc(var(--i, 0) * 5px), calc(var(--i, 0) * -5px)); }
+/* A sleeve behind the front one is scenery: it holds the stack up and
+   must not compete with the cover a member is actually looking at. */
+.cratestack-sleeve:not(:last-child) { filter: grayscale(1); opacity: 0.55; }
+/* The empty crate gets ONE system tile, not four blanks — four would
+   claim the crate has four tracks. It sits where the front sleeve does. */
+.cratestack.is-empty { height: 56px; }
+.cratestack.is-empty .cratestack-sleeve {
+  position: static;
+  display: block;
+  transform: none;
+}
 
 /* ═══ /member/[username] and /artist/[name] ════════════════════════════
    `.memberdetail` had NO RULE ANYWHERE — its single occurrence in the
