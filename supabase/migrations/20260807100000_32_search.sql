@@ -104,30 +104,47 @@ $$;
 -- supabase/tests/ingest_state_machine.sql caught it (23 of 25 tests ran).
 --
 -- So every function named by an index expression below is granted EXECUTE
--- to `authenticated`. NONE of the three reads a table: each is a pure
--- transform of arguments the caller must already hold, so the grant hands
--- over no data that the caller could not already see. In particular this
--- is NOT a re-grant of audio_analysis.raw_tags — migrations 20/28 took
--- that column grant away, `authenticated` still cannot select it, and the
--- pgTAP file for this migration re-proves that from the other side rather
--- than assuming it.
+-- to EVERY ROLE THAT WRITES THE INDEXED TABLE. That is two roles, and
+-- missing the second one cost a second CI run:
 --
--- The alternative was to leave them revoked and rely on every write to
--- `files` and `audio_analysis` arriving through a SECURITY DEFINER RPC —
--- which is true today and is exactly the kind of invariant that breaks
--- silently, years later, with an error message that names a text function
--- nobody remembers indexing.
+--   * `authenticated` — a member's own writes.
+--   * `service_role`  — and this is the one that matters in production.
+--     The maintenance Worker's hourly sweeper UPDATEs `public.files`
+--     directly (pending/uploading -> abandoned), and the analysis Worker
+--     writes `public.audio_analysis`. Both authenticate as `service_role`
+--     through PostgREST, NOT through a SECURITY DEFINER RPC. Without this
+--     grant the money job — the one that stops abandoned multipart uploads
+--     billing forever — would have started failing the moment this
+--     migration was applied to hosted, with an error naming a text
+--     function nobody would connect to a sweeper.
+--
+-- ingest_state_machine.sql found it because it does `set local role
+-- service_role` at line 166 and inserts a file at line 187. That test was
+-- not written to check this and caught it anyway.
+--
+-- NONE of the three functions reads a table: each is a pure transform of
+-- arguments the caller must already hold, so the grant hands over no data
+-- the caller could not already see. In particular this is NOT a re-grant
+-- of audio_analysis.raw_tags — migrations 20/28 took that column grant
+-- away, `authenticated` still cannot select it, and the pgTAP file for
+-- this migration re-proves that from the other side rather than assuming
+-- it.
+--
+-- The alternative was to leave them revoked and rely on every write
+-- arriving through a SECURITY DEFINER RPC — which is NOT true, as the
+-- sweeper above shows, and would have been exactly the kind of invariant
+-- that breaks silently in production months later.
 -- ============================================================
 revoke execute on function public.search_norm(text) from public, anon;
-grant  execute on function public.search_norm(text) to authenticated;
+grant  execute on function public.search_norm(text) to authenticated, service_role;
 
 -- Migration 11 revoked these from `authenticated` as a composition-unit
 -- hygiene measure, not as a data boundary. The audio_analysis indexes below
 -- name them, so the grant comes back for the reason above.
 revoke execute on function public.display_artist(jsonb, text) from public, anon;
-grant  execute on function public.display_artist(jsonb, text) to authenticated;
+grant  execute on function public.display_artist(jsonb, text) to authenticated, service_role;
 revoke execute on function public.display_title(jsonb, text) from public, anon;
-grant  execute on function public.display_title(jsonb, text) to authenticated;
+grant  execute on function public.display_title(jsonb, text) to authenticated, service_role;
 
 comment on function public.search_norm(text) is
   'Lowercase + unaccent, IMMUTABLE so it can carry an expression index.

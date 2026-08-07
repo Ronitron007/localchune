@@ -12,7 +12,7 @@
 -- by comparing THIS fixture's ids to each other, never by index.
 
 begin;
-select plan(40);
+select plan(44);
 
 insert into public.allowlist (email) values
   ('se1@gmail.com'), ('se2@gmail.com'), ('sex@gmail.com');
@@ -107,6 +107,33 @@ select ok( has_function_privilege('authenticated', 'public.display_artist(jsonb,
 select ok( has_function_privilege('authenticated', 'public.display_title(jsonb, text)', 'EXECUTE'),
            'authenticated may execute display_title -- likewise' );
 
+-- AND service_role, WHICH IS THE ONE THAT MATTERS IN PRODUCTION. The
+-- maintenance Worker's hourly sweeper UPDATEs public.files directly and the
+-- analysis Worker writes public.audio_analysis, both as service_role
+-- through PostgREST rather than through a definer RPC. Miss these three and
+-- the sweeper -- the job that stops abandoned multipart uploads billing
+-- forever -- starts failing with an error naming a text function.
+select ok( has_function_privilege('service_role', 'public.search_norm(text)', 'EXECUTE'),
+           'service_role may execute search_norm -- the sweeper writes files' );
+select ok( has_function_privilege('service_role', 'public.display_artist(jsonb, text)', 'EXECUTE'),
+           'service_role may execute display_artist -- the analysis Worker writes audio_analysis' );
+select ok( has_function_privilege('service_role', 'public.display_title(jsonb, text)', 'EXECUTE'),
+           'service_role may execute display_title -- likewise' );
+
+-- The behavioural proof, not just the ACL: a write as each role actually
+-- lands. An index expression is evaluated under the WRITING role, so these
+-- are the two statements that were failing before the grants existed.
+set local role service_role;
+select lives_ok(
+  $$ insert into public.files
+       (id, batch_id, uploaded_by, r2_key, original_filename, byte_size, container, state)
+     values ('00000000-0000-0000-0000-00000000aed1',
+             '00000000-0000-0000-0000-00000000aeba',
+             '00000000-0000-0000-0000-00000000ae01',
+             'audio/ae01/d1.mp3', 'Sweeper Wrote This.mp3', 100, 'mp3', 'pending') $$,
+  'service_role can insert into files -- the trigram index expression evaluates for it' );
+reset role;
+
 -- ...and the grant above is NOT a way back to raw_tags. Migration 20/28's
 -- boundary, re-proved from this file rather than assumed.
 select ok( not has_column_privilege('authenticated', 'public.audio_analysis', 'raw_tags', 'SELECT'),
@@ -128,10 +155,20 @@ select has_index('public', 'file_tags',      'file_tags_search_key_trgm',
 -- and never reaches the body's own `forbidden`. Both are 42501 and both
 -- are correct; pinning the MESSAGE here would pin WHICH of the two layers
 -- refuses anon, and either one refusing is the property under test.
+-- FOUR ARGUMENTS, WITH A NULL IN THE THIRD. pgTAP's three-argument
+-- throws_ok is (sql, errcode, ERRMSG) -- not (sql, errcode, description) --
+-- so the friendly sentence below was being compared against the error's
+-- message text and the test failed with
+-- "wanted: 42501: anon calling search_tracks raises 42501". A NULL errmsg
+-- checks the SQLSTATE alone, which is what is meant here: anon holds no
+-- EXECUTE at all, so the call dies at the ACL ("permission denied for
+-- function search_tracks") and never reaches the body's own `forbidden`.
+-- Both are 42501, both are correct, and pinning the message would pin
+-- WHICH layer refuses anon rather than THAT anon is refused.
 set local role anon;
 select throws_ok(
   $$ select * from public.search_tracks('mocha') $$,
-  '42501',
+  '42501', null,
   'anon calling search_tracks raises 42501' );
 
 -- An EXPIRED member is refused too: signed in is not the same as active.
