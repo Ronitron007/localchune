@@ -126,7 +126,10 @@ describe('there is one create modal, on the one overlay', () => {
     expect(body).toContain('openActionSheet({')
     // A second scrim, a second Escape handler or a second <dialog> here
     // would be a second dismissal behaviour — §5.2's whole warning.
-    for (const smell of ['sheet-scrim', 'showModal', 'createElement(\'dialog\')', 'keydown']) {
+    // `scrimEl` rather than the old `sheet-scrim`: the scrim is built by
+    // src/lib/overlay.ts now and the class name no longer appears in any
+    // module, so the old string had stopped being able to fail.
+    for (const smell of ['scrimEl', 'lockPage', 'showModal', 'createElement(\'dialog\')', 'keydown']) {
       expect(body, `the modal must not build its own ${smell}`).not.toContain(smell)
     }
   })

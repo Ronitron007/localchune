@@ -62,9 +62,30 @@ const { title, center = false } = Astro.props
         and src/layouts/shell-bundle.test.ts fails the build if that changes.
 
         It lives INSIDE the persisted player node so a ClientRouter navigation
-        moves it rather than recreating it — otherwise the drawer would close
-        itself on every filter submit and every sort click, which is exactly
-        the navigation a member does while building a queue.
+        moves it rather than recreating it.
+
+        THAT REASON CHANGED ON 2026-08-08 AND THE COMMENT HAS TO CHANGE WITH
+        IT. It used to read "otherwise the drawer would close itself on every
+        filter submit and every sort click, which is exactly the navigation a
+        member does while building a queue" — and that stopped being true the
+        moment the owner asked for a scrim ("the background page must not be
+        usable as with any queues"). A member cannot click a filter or a sort
+        with the drawer open any more; the page behind it is inert.
+
+        The persistence still earns its place, for three reasons that do not
+        depend on that one:
+          · a navigation that happens ANYWAY — the member closes the drawer,
+            clicks through, and the queue, the scroll position of its list
+            and the loaded drag module are all still there;
+          · a PROGRAMMATIC soft nav (a redirect, a form that routes) with the
+            drawer open must not destroy it mid-gesture;
+          · every element reference site.ts captured once at module load
+            stays valid, because <script src> modules evaluate once per
+            document and are never re-run on a swap. Recreating this node
+            would silently drop every listener bound to it.
+        site.ts re-applies the scrim, the `inert` flags and the scroll lock
+        on astro:after-swap, because those live on <body>, which IS
+        replaced.
 
         Zero <form> elements, and that is the honest position rather than a
         dodge: the queue is client state, so there is no server resource for a
@@ -105,35 +126,61 @@ const { title, center = false } = Astro.props
       </div>
       <div id="queue-sections" class="queuesections"></div>
     </div>
-    {/* THE STATUS REGION, AND NOW THE TITLE LINK.
-        #player-label keeps every job it had: it is the one aria-live region
-        the play, like, crate and queue handlers all report through, and
-        site.ts still writes plain text into it for a transient message
-        ("Session ended…", "Queue finished.", "added to <crate>").
+    {/* THE STATUS STRIP — OWNER, 2026-08-08, and it is a BUG FIX with a
+        shape rather than a feature.
 
-        The track NAME is different — it is the region's ordinary content,
-        and it is now the anchor below rather than a text node, so a member
-        can reach the track page from whatever page they are on without
-        losing playback (that is the whole point of the persisted bar; a
-        ClientRouter soft-nav moves this node instead of recreating it).
+        Reported with a screenshot: the bar read "already in It just goes
+        and goes" and never went away, with the track title and its link
+        GONE — so the track page could not be reached from the bar at all.
+        A second instance: "artist — song name — 21 of 100 pool", equally
+        permanent.
 
-        aria-live stays on the SPAN, not on the anchor. A live region is
-        watched for descendant mutations by default (aria-relevant is
-        "additions text"), so swapping the anchor's text announces exactly
-        as replacing the span's text always did — no second visually-hidden
-        region needed, and the visible label remains the link.
+        The cause was that #player-label below was BOTH the now-playing
+        identity AND the one aria-live status region. A status write did
+        `label.textContent = text`, which detaches every child including the
+        title anchor, and NOTHING ever put it back. The comment that used to
+        live here called those messages "transient"; they never were.
+
+        The owner's answer, and it is the better one: give the message its
+        own strip above the bar, let it leave on its own, and never let it
+        touch the title. The bug is now IMPOSSIBLE rather than fixed —
+        there is no code path from a status message to the identity, and
+        src/lib/player-label-single-source.test.ts fails the build if one
+        appears.
+
+        THIS IS THE APP'S ONE LIVE REGION NOW. aria-live moved OFF
+        #player-label and onto this strip, which is what survive-list #12
+        was always protecting: one region, so two announcements cannot race.
+        `role="status"` is the same promise spelled for older assistive
+        tech; the two together are redundant and deliberately so.
+
+        INERT MARKUP, hidden, and empty: site.ts writes the text, shows it,
+        and hides it again. It ships inside the persisted player node so a
+        soft navigation moves it like everything else here, and it is
+        ABSOLUTELY positioned above the bar so that showing a message
+        NEVER changes the bar's height — which would move the queue
+        drawer, the upload chip and the page's own bottom padding, all of
+        which are derived from --bar-h. */}
+    <div id="player-status" class="playerstatus" role="status" aria-live="polite" hidden><span id="player-status-text" class="playerstatus-text"></span></div>
+    {/* THE TITLE LINK AND THE ARTIST LINE — IDENTITY ONLY.
+
+        The track NAME is the anchor below rather than a text node, so a
+        member can reach the track page from whatever page they are on
+        without losing playback (that is the whole point of the persisted
+        bar; a ClientRouter soft-nav moves this node instead of recreating
+        it).
 
         The anchor ships `hidden` and with NO href: an empty href resolves
         to the current page, which is a dead link on every page but one.
-        site.ts sets both together, and hides it again whenever the region
-        shows a status message or the queue runs dry — §"no dead link". */}
-    {/* TWO LINES, NOT ONE JOINED STRING — owner-confirmed layout, 2026-08-06.
-        The title is the link (that is the shipped feature, restyled rather
-        than removed); the artist is its own smaller, muted line below it,
-        with no em-dash join. Both ellipsize independently, which is what a
-        6rem flex basis and one nowrap span could never do: a joined
-        "Artist — Title" truncated to the artist and three characters of
-        the title, which is the half a member does not need.
+        site.ts sets both together — §"no dead link".
+
+        TWO LINES, NOT ONE JOINED STRING — owner-confirmed layout,
+        2026-08-06. The title is the link; the artist is its own smaller,
+        muted line below it, with no em-dash join. Both ellipsize
+        independently, which is what a 6rem flex basis and one nowrap span
+        could never do: a joined "Artist — Title" truncated to the artist
+        and three characters of the title, which is the half a member does
+        not need.
 
         The two lines are written from the QUEUE ENTRY's own display_title
         and display_artist — the same pair Media Session already sends to
@@ -141,9 +188,15 @@ const { title, center = false } = Astro.props
         title containing an em dash would make that a guess, and the
         correct fields were there all along.
 
-        aria-live stays on this SPAN and both lines are written inside one
-        synchronous call, so a change announces once. */}
-    <span id="player-label" class="nowplaying" aria-live="polite"><a id="player-link" class="nowplayinglink" hidden></a><a id="player-artist" class="nowplayingartist" hidden></a></span>
+        EACH LINE WRAPS ITS TEXT IN A SPAN — owner, 2026-08-08: "also can
+        the track name also have a marquee." The anchor is the clipping box
+        and keeps its full width, so the whole line stays tappable and the
+        link's hit area is exactly what it was; the span inside is the part
+        that moves. site.ts measures the span against the anchor and only
+        animates the line that actually overflows.
+
+        aria-live is NOT here any more — see the strip above. */}
+    <span id="player-label" class="nowplaying"><a id="player-link" class="nowplayinglink" hidden><span class="marquee-text"></span></a><a id="player-artist" class="nowplayingartist" hidden><span class="marquee-text"></span></a></span>
     {/* THE ♥, for whatever is playing.
         A REAL POST FORM in the exact shape TrackRow.astro's pool cell and
         track/[id].astro's .signals block already use — form.likeform >

@@ -45,27 +45,38 @@ const LIB = '@formkit/drag-and-drop'
 const FINGERPRINT = 'dragPlaceholderClass'
 
 let entry: string
+let entryMin: string
 let others: { name: string; text: string }[]
 
+const build = (minify: boolean) => esbuild.build({
+  entryPoints: [join(SRC, 'scripts/site.ts')],
+  absWorkingDir: ROOT,
+  bundle: true,
+  write: false,
+  splitting: true,
+  format: 'esm',
+  outdir: 'out',
+  target: 'es2022',
+  platform: 'browser',
+  logLevel: 'silent',
+  minify,
+})
+
 beforeAll(async () => {
-  const out = await esbuild.build({
-    entryPoints: [join(SRC, 'scripts/site.ts')],
-    absWorkingDir: ROOT,
-    bundle: true,
-    write: false,
-    splitting: true,
-    format: 'esm',
-    outdir: 'out',
-    target: 'es2022',
-    platform: 'browser',
-    logLevel: 'silent',
-  })
+  const out = await build(false)
   const files = out.outputFiles.map((f) => ({
     name: f.path.split('/').pop() ?? '',
     text: f.text,
   }))
   entry = files.find((f) => f.name === 'site.js')?.text ?? ''
   others = files.filter((f) => f.name !== 'site.js')
+
+  // The BUDGET is measured minified — see the note on it below. The
+  // readable build above is what the fingerprint assertions read, because a
+  // minified chunk still contains the library's own config-key strings but
+  // not our function names.
+  const min = await build(true)
+  entryMin = min.outputFiles.find((f) => f.path.endsWith('/site.js'))?.text ?? ''
 })
 
 describe('the drag library is in a chunk of its own', () => {
@@ -117,9 +128,17 @@ describe('the drag library is in a chunk of its own', () => {
     // is minified and comments cost nothing in it.
     //
     // The tripwire still trips: 92,034 + the library's 30,171 = 122,205,
-    // which clears 96,000 by 26 KB. If this ever needs raising a THIRD
-    // time, measure the minified size instead of moving the line again.
-    expect(entry.length).toBeLessThan(96_000)
+    // which clears 96,000 by 26 KB.
+    //
+    // THIRD RAISE, 2026-08-08, AND THE LAST ONE THAT MOVES THE LINE. The
+    // status strip, the name marquee and the drawer's scrim took it to
+    // 97,069 B. The note above said the next raise should measure the
+    // minified size instead — so this one MINIFIES, and the number below is
+    // a different, much steadier quantity: comments and prose cost nothing
+    // in it, which is what made the previous two raises pure noise. The
+    // library is 8,870 B gzip / ~30 KB raw and does not minify away, so the
+    // regression this guards is still enormous next to the headroom.
+    expect(entryMin.length).toBeLessThan(60_000)
   })
 
   it('the lazy chunk really is the whole library, not a stub', () => {

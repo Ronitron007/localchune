@@ -212,11 +212,23 @@
   --z-thead: 10;     /* sticky table headers                                 */
   --z-nav: 20;       /* the compact top nav bar                              */
   --z-chip: 30;      /* the upload chip                                      */
+  --z-scrim: 35;     /* the queue drawer's scrim — see the note below        */
   --z-player: 40;    /* the player bar, and the queue drawer inside it       */
   --z-search: 45;    /* the nav's search overlay — see below                 */
   --z-nowplaying: 50;/* the now-playing sheet surface                        */
   --z-sheet: 60;     /* bottom action sheets and their scrims                */
   --z-dialog: 70;    /* confirm dialogs                                      */
+  /* --z-player WAS DECLARED AND APPLIED TO NOTHING until the queue drawer
+     got a scrim. `.playerbar` had no z-index at all and its paint order
+     against the chip was decided by DOM order alone — the ladder described
+     a layer the stylesheet did not create, and --z-search's own note
+     ("must cover the player bar (40)") reasoned about a number that was
+     not in effect.
+     The scrim forces the issue and settles it. It has to cover the nav
+     (20) and the chip (30) — they are the background page — and it has to
+     sit UNDER the bar, because the bar is the drawer's own anchor and its
+     transport must stay usable. 35 is the only step that satisfies both,
+     and it only works once .playerbar actually claims 40. It does now. */
 }
 
 /* border-radius: 0 STAYS — that is the 90 degree mandate, enforced
@@ -1178,8 +1190,94 @@ img.art {
   padding-bottom: max(var(--pad-1), env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--line);
+  /* THE BAR FINALLY CLAIMS ITS OWN RUNG. It had none: `position: fixed`
+     with `z-index: auto`, so it drew above the page only by being last in
+     the DOM. That was enough until the queue drawer grew a scrim, which
+     has to cover the nav and the chip while leaving the transport usable —
+     an ordering DOM position cannot express.
+     One CONSEQUENCE, stated rather than discovered later: the bar now
+     paints above `.uploadchip-slot` (30) instead of below it, inverting
+     the "mounted after .playerbar so the chip wins" note in Shell.astro.
+     The two never overlap — the chip's `bottom` clears --bar-h, the safe
+     area and --queue-height — so the inversion is not visible; it is
+     recorded because the next person to move either one needs to know the
+     rule changed from DOM order to a number. */
+  z-index: var(--z-player);
 }
 .playerbar audio { display: none; }
+
+/* ═══ THE STATUS STRIP ═════════════════════════════════════════════════
+   The owner's bug, fixed by geometry: a transient message gets its OWN
+   band above the bar and never goes near the track name. See Shell.astro's
+   comment for the report and the reasoning.
+
+   ABSOLUTE, SO IT COSTS THE LAYOUT NOTHING. `--bar-h` is the number the
+   page's bottom padding, the upload chip's clearance and the queue
+   drawer's anchor are all derived from. A strip that added its height to
+   the bar would move all three every time a member added a track to a
+   crate — the chip would hop, the drawer would resize, the page would
+   reflow. Floating above the bar instead, it changes nothing and nothing
+   jumps.
+
+   `bottom: calc(100% + var(--queue-height, 0px))` puts it directly above
+   whatever the bar currently presents: the bar itself when the queue is
+   shut, and the top of the OPEN drawer when it is not. --queue-height is
+   the same custom property site.ts already measures for the chip, so the
+   two agree by construction rather than by a second measurement.
+
+   IT DRAWS OVER THE UPLOAD CHIP for the seconds it is up, and that is
+   accepted rather than overlooked: the alternatives were reserving a lane
+   the chip could not enter (permanent cost for a transient thing) or
+   moving the chip when a message arrives (the jump this whole rule
+   exists to prevent). Both are worse than a few seconds of overlap on the
+   rare page where an upload is in flight.
+
+   THE ENTRANCE IS 8px AND A FADE, NOT A FULL SLIDE. A strip that slid its
+   whole height would travel across the transport on its way in and out —
+   it is a positioned child of .playerbar, so it paints above the bar's own
+   controls. Eight pixels lands inside the bar's padding and never reaches
+   a control. The global prefers-reduced-motion block flattens both
+   properties, so there is nothing per-component to switch off. */
+.playerstatus {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + var(--queue-height, 0px));
+  overflow: hidden;
+  padding: calc(var(--pad-1) / 2) var(--pad-2);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--ink-55);
+  white-space: nowrap;
+  /* It is an announcement, not a control. Letting it swallow a tap meant
+     for the drawer's handle directly above it would be a real regression. */
+  pointer-events: none;
+  opacity: 0;
+  --status-y: var(--pad-1);
+  transform: translate3d(0, var(--status-y), 0);
+  transition: opacity var(--dur-panel) var(--ease-panel),
+              transform var(--dur-panel) var(--ease-panel);
+}
+/* NO `display` DECLARATION ANYWHERE ABOVE, and that is the point: a div is
+   `display: block` from the UA sheet, which `[hidden]` overrides for free.
+   The moment this rule grows a `display` it also needs a
+   `.playerstatus[hidden]` companion — this file has paid for that six
+   times, most recently on .queuedrawer. */
+.playerstatus.is-open {
+  opacity: 1;
+  --status-y: 0px;
+}
+/* The pan. A transition rather than an animation because the distance is
+   measured, the duration is derived from it, and it happens exactly once —
+   see marqueePlan() in src/lib/player-status.ts. Linear, because a message
+   being read at a constant speed must not ease. */
+.playerstatus-text {
+  display: inline-block;
+  transform: translate3d(var(--marquee-x, 0px), 0, 0);
+  transition: transform var(--marquee-ms, 0ms) linear;
+}
 
 /* THE NAME STACK. Two lines, each clipping on its own. The old single
    `nowrap` span at `flex: 1 1 6rem` truncated a joined "Artist — Title"
@@ -1212,6 +1310,64 @@ img.art {
   text-decoration: none;
 }
 .playerbar .nowplayingartist:hover { text-decoration: underline; }
+
+/* ═══ THE NAME'S MARQUEE ═══════════════════════════════════════════════
+   OWNER, 2026-08-08: "also can the track name also have a marquee." On a
+   phone the name column is about 200px and a long title was mostly
+   ellipsis; this reveals the rest and then gets out of the way.
+
+   THE ANCHOR IS THE CLIPPING BOX AND THE SPAN IS WHAT MOVES. That split is
+   what keeps the promise the link makes: the <a> keeps its full width and
+   its full hit area whatever the text inside is doing, so the line stays
+   tappable mid-pan and the tap target never travels out from under a
+   finger. `text-overflow: ellipsis` above still applies to the anchor and
+   is what a line shows when it is NOT animating — which is every line that
+   fits, every line under reduced motion, and every line once its cycles
+   are spent.
+
+   ══ THE ONE DELIBERATE EXCEPTION TO "NOTHING LOOPS" ══════════════════
+   OWNER, 2026-08-08: "loop forever, car-stereo style." The motion doctrine
+   says nothing loops and global-tokens.test.ts enforces it by banning
+   `infinite`; that test now allows THIS animation BY NAME and still fails
+   on any other. Declared, not smuggled — an undeclared exception is
+   indistinguishable from a mistake, and the next reader of the doctrine
+   would delete it.
+
+   Why it earns the exception: the name is not transient. A member looks up
+   at it thirty seconds in, a minute in, at the end — anything that stops
+   leaves a permanently truncated middle at whatever moment they happen to
+   look, which is the complaint being answered. It is also confined by five
+   conditions: it never runs on a title that fits, never under reduced
+   motion, never on a line that is hidden, it pauses while the queue drawer
+   is open, and it dies with the track.
+
+   The shape is fixed and only the DURATION and the DISTANCE vary, both
+   written by site.ts as custom properties — one @keyframes block serves
+   every length, and the quarter-cycle pan is what makes a long title and a
+   slightly long one move at the same SPEED rather than in the same time.
+   src/lib/player-status.ts owns that arithmetic and is tested with no DOM.
+
+   `--marquee-dx` defaults to 0 so the animation is inert until measured.
+   transform only: no layout, no paint, nothing that can fight the
+   scrubber's per-second updates for a frame. */
+.marquee-text {
+  display: inline-block;
+  white-space: pre;
+  transform: translate3d(var(--marquee-dx, 0px), 0, 0);
+}
+.marquee-text.is-marquee {
+  animation: name-marquee var(--marquee-ms, 0ms) var(--ease-panel) infinite;
+}
+/* Paused, not stopped, WHILE THE QUEUE IS OPEN. A member reading a
+   twenty-row queue does not need a line sliding underneath it, and pausing
+   rather than cancelling means the cycle resumes exactly where it was when
+   the drawer closes instead of restarting. */
+body.queueopen .marquee-text.is-marquee { animation-play-state: paused; }
+@keyframes name-marquee {
+  0%, 25%   { transform: translate3d(0, 0, 0); }
+  50%, 75%  { transform: translate3d(var(--marquee-dx, 0px), 0, 0); }
+  100%      { transform: translate3d(0, 0, 0); }
+}
 /* Play/pause and skip take no .btn tier (survive-list #8's transport
    exemption) so they never inherited the tier's geometry either. The floor
    applies to them as a control, not as a tier. */
@@ -2369,18 +2525,47 @@ dd { margin: 0; overflow-wrap: anywhere; }
   inset: 0;
   z-index: var(--z-sheet);
 }
-/* A SOLID scrim. No backdrop-filter, at any breakpoint and on any device
+/* ═══ THE SCRIM — ONE RULE, EVERY OVERLAY THAT HAS ONE ═════════════════
+   `.sheet-scrim` and `.searchoverlay-scrim` were byte-identical
+   declarations under two names, in two files, neither aware of the other.
+   The queue drawer's would have been the third. src/lib/overlay.ts builds
+   the node; this is what it looks like, once.
+
+   A SOLID scrim. No backdrop-filter, at any breakpoint and on any device
    — it is the single most expensive thing a phone can be asked to
    composite, and the reference design disables it on mobile themselves.
-   We never introduce it. */
-.sheet-scrim {
-  position: absolute;
+   We never introduce it.
+
+   `position: fixed`, not `absolute`, and the two are EQUIVALENT for the
+   sheet and the search overlay: both roots are themselves
+   `position: fixed; inset: 0` with no transform, filter or containment, so
+   a fixed child with `inset: 0` resolves to the identical box. Fixed is
+   what lets the queue drawer's scrim be a bare child of <body> with no
+   wrapper element existing only to be a containing block.
+
+   `pointer-events` follows opacity rather than presence. On the way out
+   the node stays mounted for one panel duration so it can fade, and a
+   transparent sheet of glass that still swallows clicks for 280ms is a
+   dead zone a member feels as a broken tap. */
+.scrim {
+  position: fixed;
   inset: 0;
   background: var(--scrim);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-panel) var(--ease-panel);
 }
-.sheet.is-open .sheet-scrim { opacity: 1; }
+/* Two selectors because there are two shapes of consumer, not two rules:
+   the sheet and the search overlay raise a root that CONTAINS the scrim;
+   the queue drawer's scrim has no root and carries the state itself. */
+.is-open > .scrim,
+.scrim.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* The drawer's scrim is the only one that needs a rung of its own — the
+   other two get theirs from the root they sit inside. */
+.queuescrim { z-index: var(--z-scrim); }
 
 .sheet-panel {
   position: absolute;
@@ -2725,16 +2910,9 @@ dd { margin: 0; overflow-wrap: anywhere; }
   inset: 0;
   z-index: var(--z-search);
 }
-/* Solid. No backdrop-filter, at any breakpoint — §1.5, and the sheet's
-   scrim has the same note for the same reason. */
-.searchoverlay-scrim {
-  position: absolute;
-  inset: 0;
-  background: var(--scrim);
-  opacity: 0;
-  transition: opacity var(--dur-panel) var(--ease-panel);
-}
-.searchoverlay.is-open .searchoverlay-scrim { opacity: 1; }
+/* Its scrim is the shared `.scrim` — see the block above `.sheet-panel`.
+   `.searchoverlay.is-open > .scrim` is covered there by `.is-open > .scrim`,
+   so nothing is restated here. */
 
 /* BELOW 640px THE PANEL IS THE SCREEN. A search that opens as a small box
    on a phone wastes the only dimension a phone has, and the keyboard eats

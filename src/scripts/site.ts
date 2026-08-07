@@ -10,6 +10,10 @@ import { iconEl } from '../lib/icons'
 // here on purpose — it is reached only through wireDragDismiss below, so
 // there is exactly one place that can decide a panel has been thrown away.
 import { exitDelayMs, nextFocusIndex, normalizeRows, type SheetRow, type SheetRowInput } from '../lib/sheet'
+import { lockPage, scrimEl } from '../lib/overlay'
+import {
+  marqueeOffsetPx, marqueePlan, nameMarqueeMs, shouldMarquee,
+} from '../lib/player-status'
 import { wireDragDismiss } from './drag-dismiss'
 import {
   addToCrate, createCrate, editTag, DuplicateCrateItemError, SessionExpiredError, toggleLike,
@@ -73,31 +77,104 @@ const seek = document.getElementById('player-seek') as HTMLInputElement | null
 
 /* ------------------------------------------- what the player bar says
  *
- * #player-label has always done two jobs, and adding a link forced them
- * apart. It is the ONE aria-live region every handler in this file reports
- * through — a transient message about a like, a crate, a dead session — and
- * it is also where the name of the current track lives. Only the second is
- * a link, and the two must not be able to produce a third state.
+ * THE OWNER'S BUG, AND WHY THE FIX IS A SECOND ELEMENT RATHER THAN A TIMER.
  *
- * So there are exactly two writers, and everything below calls one of them:
+ * Reported 2026-08-08 with a screenshot: the bar read "already in It just
+ * goes and goes" and never went away, with the track title and its link
+ * GONE — so the track page was unreachable from the bar. Second instance,
+ * "artist — song name — 21 of 100 pool", equally permanent.
  *
- *   setStatus(text)          plain text, no link. What every `label
- *                            .textContent = …` in this file used to be, with
- *                            identical behaviour — a message has always
- *                            replaced the track name until the next track
- *                            starts.
- *   setNowPlaying(text, id)  the name, as an anchor to /track/<id>. A null
- *                            id means "no track" and falls back to plain
- *                            text, so an idle bar never renders a dead link.
+ * #player-label was doing TWO jobs: the now-playing identity, and the one
+ * aria-live status region. `setStatus` wrote `label.textContent = text`,
+ * and textContent removes every child — the title anchor with it. Nothing
+ * ever put it back. Every status message in this file was permanent until
+ * the next track change.
  *
- * setStatus DETACHES the anchor (textContent removes every child) and
- * setNowPlaying re-appends it. That is why `link` is captured once above and
- * never re-queried: the node survives detachment, and re-querying after a
- * status message would find nothing.
+ * A restore-after-timeout would have fixed that instance. The owner asked
+ * for the better shape instead — "show it on top of the player as a marquee
+ * kinda thing and then make it disappear" — and it is better because it
+ * removes the code path rather than compensating for it:
+ *
+ *   setStatus(text)          writes #player-status, the strip above the
+ *                            bar. Shows it, pans it once if it overflows,
+ *                            and takes it away. NEVER touches the label.
+ *   setNowPlaying(…)         the ONLY writer of #player-label, ever. Two
+ *                            lines of identity and nothing else.
+ *
+ * The two now share no node at all, so "a message ate the track name" is
+ * not a bug that can recur — it is a shape that does not exist.
+ * src/lib/player-label-single-source.test.ts fails the build if either
+ * function grows a reference to the other's element.
+ *
+ * THE LIVE REGION MOVED WITH THE JOB. aria-live is on the strip now; the
+ * label has none. survive-list #12 ("one region, so two announcements
+ * cannot race") is satisfied by there being exactly one, and it is on the
+ * thing that is actually an announcement.
+ *
+ * `link` and `artistEl` are still captured once at module load rather than
+ * re-queried: the null-id branch of setNowPlaying detaches them, and a
+ * re-query afterwards would find nothing.
+ */
+const statusStrip = document.getElementById('player-status')
+const statusText = document.getElementById('player-status-text')
+let statusHideTimer = 0
+let statusPanTimer = 0
+let statusDropTimer = 0
+
+/**
+ * ONE MESSAGE AT A TIME, AND IT ALWAYS LEAVES.
+ *
+ * A second message replaces the first and re-arms every timer rather than
+ * queueing or stacking a second strip: a member who taps "add to crate"
+ * three times wants the last answer, not three bands of text.
+ *
+ * Three timers, all cleared on entry, so none can leak: the pan (delayed so
+ * the first words can be read from a standing start), the hide, and the
+ * unmount that follows the fade. src/lib/player-status.ts decides all three
+ * durations and is tested with no DOM.
  */
 function setStatus(text: string): void {
-  if (label === null) return
-  label.textContent = text
+  if (statusStrip === null || statusText === null) return
+  window.clearTimeout(statusHideTimer)
+  window.clearTimeout(statusPanTimer)
+  window.clearTimeout(statusDropTimer)
+
+  const strip = statusStrip
+  const inner = statusText
+  inner.textContent = text
+  inner.style.removeProperty('--marquee-x')
+  inner.style.removeProperty('--marquee-ms')
+  strip.hidden = false
+
+  const reduced = prefersReducedMotion()
+  // NO PAN UNDER REDUCED MOTION — the message WRAPS instead, which is the
+  // better trade in both directions: no travel at all, and a long message
+  // becomes fully readable rather than clipped. The strip is absolutely
+  // positioned, so growing to two lines costs the layout nothing.
+  strip.classList.toggle('is-wrap', reduced)
+
+  // The strip is `overflow: hidden`, so its own scrollWidth already
+  // accounts for the padding the text has to fit inside. Measured after
+  // `hidden = false`: a hidden element measures zero.
+  const overflow = reduced ? 0 : strip.scrollWidth - strip.clientWidth
+  const plan = marqueePlan(overflow)
+  if (plan.scrollMs > 0) {
+    statusPanTimer = window.setTimeout(() => {
+      inner.style.setProperty('--marquee-ms', `${plan.scrollMs}ms`)
+      inner.style.setProperty('--marquee-x', `${marqueeOffsetPx(overflow)}px`)
+    }, plan.settleMs)
+  }
+
+  if (reduced) strip.classList.add('is-open')
+  else requestAnimationFrame(() => requestAnimationFrame(() => strip.classList.add('is-open')))
+
+  statusHideTimer = window.setTimeout(() => {
+    strip.classList.remove('is-open')
+    statusDropTimer = window.setTimeout(() => {
+      strip.hidden = true
+      inner.textContent = ''
+    }, exitDelayMs(prefersReducedMotion()))
+  }, plan.totalMs)
 }
 
 /**
@@ -114,11 +191,21 @@ function setStatus(text: string): void {
  * an em dash in it would make that a guess, and the separate fields have
  * been on the entry all along.
  *
- * Both nodes are captured once at module load and re-appended here,
- * because setStatus() writes textContent and textContent removes every
- * child — the same reason `link` has always been captured rather than
- * re-queried.
+ * Both nodes are captured once at module load and re-appended here, because
+ * the no-track branch below writes textContent on the label and textContent
+ * removes every child.
+ *
+ * THE TEXT GOES IN THE INNER SPAN, NOT THE ANCHOR. Owner, 2026-08-08: "also
+ * can the track name also have a marquee." The anchor stays the clipping
+ * box at full width — so the whole line keeps its hit area and the link is
+ * as tappable mid-pan as it is at rest — and `.marquee-text` inside it is
+ * the part that moves. Writing the anchor's textContent directly would
+ * delete that span, which is exactly the mistake this whole file is being
+ * fixed for one level up.
  */
+const lineText = (line: HTMLElement): HTMLElement | null =>
+  line.querySelector<HTMLElement>('.marquee-text')
+
 function setNowPlaying(title: string, artistName: string | null, fileId: string | null): void {
   if (label === null) return
   label.textContent = ''
@@ -126,22 +213,79 @@ function setNowPlaying(title: string, artistName: string | null, fileId: string 
     label.textContent = title
     return
   }
-  link.textContent = title
+  const titleText = lineText(link)
+  if (titleText === null) link.textContent = title
+  else titleText.textContent = title
   link.href = trackHref(fileId)
   link.hidden = false
   label.appendChild(link)
-  if (artistEl === null) return
-  const named = artistName !== null && artistName !== ''
-  artistEl.textContent = named ? artistName : ''
-  // The artist line is a LINK now, so the bar can reach an act's page from
-  // whatever is playing. Same "no dead link" rule the title above obeys:
-  // an anchor with no href resolves to the current page, so the attribute
-  // is REMOVED between tracks rather than set to an empty string.
-  if (named) artistEl.setAttribute('href', artistHref(artistName))
-  else artistEl.removeAttribute('href')
-  artistEl.hidden = !named
-  if (named) label.appendChild(artistEl)
+  if (artistEl !== null) {
+    const named = artistName !== null && artistName !== ''
+    const artistText = lineText(artistEl)
+    if (artistText === null) artistEl.textContent = named ? artistName : ''
+    else artistText.textContent = named ? artistName : ''
+    // The artist line is a LINK now, so the bar can reach an act's page from
+    // whatever is playing. Same "no dead link" rule the title above obeys:
+    // an anchor with no href resolves to the current page, so the attribute
+    // is REMOVED between tracks rather than set to an empty string.
+    if (named) artistEl.setAttribute('href', artistHref(artistName))
+    else artistEl.removeAttribute('href')
+    artistEl.hidden = !named
+    if (named) label.appendChild(artistEl)
+  }
+  // Measured against the box it was just written into, so the pan distance
+  // belongs to THIS title rather than the previous one.
+  armNameMarquee()
 }
+
+/**
+ * Arm — or disarm — each name line's marquee, independently.
+ *
+ * ONLY THE LINE THAT OVERFLOWS MOVES. Measurement is the trigger, never the
+ * length of the string: a title that fits must never twitch, and
+ * `shouldMarquee()` carries a two-pixel slop because scrollWidth and
+ * clientWidth are integers over a fractional layout and a line that fits
+ * exactly reports one pixel of overflow about half the time.
+ *
+ * REDUCED MOTION IS CHECKED IN THE PURE HELPER, so it cannot be forgotten
+ * at one of the three call sites. It returns false at any overflow, and the
+ * line keeps the `text-overflow: ellipsis` it has always had.
+ *
+ * Re-run on every track change, on a debounced resize, and after a soft
+ * navigation — the three things that change either the text or the width of
+ * the box it has to fit in.
+ */
+function armNameMarquee(): void {
+  const reducedMotion = prefersReducedMotion()
+  for (const line of [link, artistEl]) {
+    if (line === null) continue
+    const text = lineText(line)
+    if (text === null) continue
+    // Always cleared first: a track whose name FITS must not inherit the
+    // previous track's animation, and re-adding a class the element already
+    // carries does not restart an animation.
+    text.classList.remove('is-marquee')
+    text.style.removeProperty('--marquee-dx')
+    text.style.removeProperty('--marquee-ms')
+    if (line.hidden) continue
+    const overflow = text.scrollWidth - line.clientWidth
+    if (!shouldMarquee({
+      scrollWidth: text.scrollWidth, clientWidth: line.clientWidth, reducedMotion,
+    })) continue
+    text.style.setProperty('--marquee-dx', `${marqueeOffsetPx(overflow)}px`)
+    text.style.setProperty('--marquee-ms', `${nameMarqueeMs(overflow)}ms`)
+    // Forces the style/layout flush that makes the class change a NEW
+    // animation rather than a no-op coalesced with the removal above.
+    void text.offsetWidth
+    text.classList.add('is-marquee')
+  }
+}
+
+/** A resize changes the width of the box, not the text. 150ms is the same
+ *  debounce the search field uses; a drag of a desktop window edge would
+ *  otherwise re-measure and restart the animation on every frame. */
+const remeasureNames = debounce(armNameMarquee, 150)
+window.addEventListener('resize', remeasureNames)
 
 /**
  * THE ♥ IN THE BAR, pointed at whatever is playing.
@@ -623,21 +767,18 @@ async function startCurrent(startAt: number): Promise<void> {
 
   audio.src = src.url
   playMeter.reset()
-  // §1.2: a play truncated by the cap "says so once". The track name is the
-  // ordinary content of this region; the count rides along after it rather
-  // than replacing it, so nobody has to choose between knowing what is
-  // playing and knowing that 36 tracks did not fit.
+  // §1.2: a play truncated by the cap "says so once".
   //
-  // The NAME is the link, and the truncation note is not — appending it to
-  // the anchor's text would make "pool · 24 of 60" part of what a screen
-  // reader announces as the link, and part of what a member clicks. So a
-  // truncated play falls back to plain text for the one track it decorates,
-  // and the link returns on the next one.
-  if (lastTruncation === null) {
-    setNowPlaying(currentName, currentArtist, fileId)
-  } else {
-    setStatus(`${currentTitle} · ${truncationLine(lastTruncation)}`)
-  }
+  // THE NAME IS NO LONGER THE PRICE OF SAYING SO. This used to be a branch:
+  // an untruncated play got the title link, and a truncated one got plain
+  // text reading "<title> · pool · 24 of 60" INSTEAD — losing the link for
+  // that track, because the note must not become part of what a screen
+  // reader announces as the link or part of what a member clicks. That is
+  // the same conflict the owner's bug came from, and the strip settles it:
+  // the identity is always the identity, and the note is an announcement.
+  // Both happen, neither replaces the other.
+  setNowPlaying(currentName, currentArtist, fileId)
+  if (lastTruncation !== null) setStatus(truncationLine(lastTruncation))
   // The one place a track START writes the ♥ — the server's answer, arriving
   // on the same response as the URL. The other writer is the like delegation
   // itself, which owns the state from the moment a member touches it.
@@ -1179,6 +1320,83 @@ function syncDrawerHeight(): void {
  *  that was scheduled before it. */
 let drawerExitTimer = 0
 
+/* ------------------------------------------------------- the drawer's scrim
+ *
+ * OWNER, 2026-08-08: "when the queue drawer is enabled the background page
+ * must not be usable as with any queues… add an overlay like in other
+ * drawers." This reverses the deliberate no-backdrop decision that shipped
+ * with the swipe-down, and the owner's reason is the right one: a member who
+ * has learned that a dimmed page means "deal with this panel first" should
+ * not meet an exception here.
+ *
+ * WHAT THE SCRIM COVERS, AND WHAT IT DOES NOT. Everything above the player
+ * bar, and NOT the bar. The bar is this drawer's own anchor — the drawer is
+ * literally a child of it — and pausing, skipping or scrubbing while reading
+ * the queue is the thing a member is most likely to want with the queue in
+ * front of them. That is a geometry the scrim itself cannot express, because
+ * the bar is fixed to the bottom edge and reflows to more rows below 640px;
+ * it is expressed as a LAYER instead (--z-scrim 35 under --z-player 40), so
+ * the scrim can stay a plain `inset: 0` sheet and the bar simply draws on top
+ * of it and keeps its clicks.
+ *
+ * POINTERS ARE NOT THE WHOLE JOB. A scrim stops a mouse and stops a finger.
+ * It does nothing about Tab, about a screen reader's own cursor, or about a
+ * rotor jump — all three would still land in the page behind it. `inert` on
+ * every child of <body> except the player bar removes all of them at once,
+ * enforced by the browser rather than by a trap we maintain. See
+ * src/lib/overlay.ts for why `inert` rather than aria-hidden plus a hand
+ * rolled trap.
+ *
+ * FOCUS IS NOT STOLEN, and that is deliberate. The sheet moves focus into
+ * itself because it is a dialog with a task; this is a DISCLOSURE — a
+ * button with aria-expanded and aria-controls, which is exactly the pattern
+ * a screen reader announces correctly — and the button that opened it is the
+ * button that closes it. Moving focus away from it would break "press QUEUE
+ * again". With everything else inert, Tab is already contained inside the
+ * bar and the drawer, so containment costs no code at all.
+ */
+let drawerScrim: HTMLElement | null = null
+let releaseDrawerLock: (() => void) | null = null
+let drawerScrimTimer = 0
+
+/** Idempotent: safe to call again after a swap has replaced <body>. */
+function applyDrawerOverlay(): void {
+  const bar = document.querySelector<HTMLElement>('.playerbar')
+  if (bar === null) return
+  window.clearTimeout(drawerScrimTimer)
+  // Release first. After a soft navigation the flags and the overflow lock
+  // belonged to a <body> that no longer exists, and re-locking without
+  // releasing would leave the count permanently above zero.
+  releaseDrawerLock?.()
+  // ORDER IS LOAD-BEARING: lockPage snapshots <body>'s children, so the
+  // scrim must be appended AFTER it or the scrim itself goes inert and
+  // stops accepting the tap that closes the drawer.
+  releaseDrawerLock = lockPage(bar)
+  if (drawerScrim === null) {
+    drawerScrim = scrimEl('queuescrim')
+    // Tap to close, exactly as the sheet's scrim does.
+    drawerScrim.addEventListener('click', () => setDrawerOpen(false))
+  }
+  const scrim = drawerScrim
+  document.body.appendChild(scrim)
+  // Already up (a re-apply across a navigation) — no second fade.
+  if (scrim.classList.contains('is-open')) return
+  if (prefersReducedMotion()) scrim.classList.add('is-open')
+  else requestAnimationFrame(() => requestAnimationFrame(() => scrim.classList.add('is-open')))
+}
+
+function clearDrawerOverlay(): void {
+  window.clearTimeout(drawerScrimTimer)
+  releaseDrawerLock?.()
+  releaseDrawerLock = null
+  const scrim = drawerScrim
+  if (scrim === null) return
+  scrim.classList.remove('is-open')
+  // Mounted for one panel duration so it can fade. `.scrim` drops its own
+  // pointer-events with the class, so the fading sheet swallows nothing.
+  drawerScrimTimer = window.setTimeout(() => scrim.remove(), exitDelayMs(prefersReducedMotion()))
+}
+
 function setDrawerOpen(open: boolean): void {
   if (drawer === null || drawerToggle === null) return
   const panel = drawer
@@ -1229,6 +1447,12 @@ function setDrawerOpen(open: boolean): void {
   )
   drawerToggle.setAttribute('aria-label', open ? 'Close the queue' : 'Open the queue')
   document.body.classList.toggle('queueopen', open)
+  // The scrim, the scroll lock and `inert` go up and come down with the
+  // drawer and from the same call, so no dismissal path can leave the page
+  // dimmed or unusable — there is one writer here for the same reason there
+  // is one writer of `hidden`.
+  if (open) applyDrawerOverlay()
+  else clearDrawerOverlay()
   syncDrawerHeight()
   // One of §5's two triggers for the deferred tail. The other is in
   // startCurrent — whichever happens first spends the flag.
@@ -1338,7 +1562,22 @@ document.addEventListener('keydown', (e) => {
  */
 document.addEventListener('astro:after-swap', () => {
   document.body.classList.toggle('queueopen', isDrawerOpen())
+  // …AND SO WERE THE SCRIM, THE `inert` FLAGS AND THE SCROLL LOCK. The
+  // drawer itself is moved across the swap by transition:persist; every
+  // other part of the open state belonged to the <body> that was replaced —
+  // the scrim node was dropped with it, the inert attributes went with the
+  // elements that carried them, and `overflow: hidden` was on the old body's
+  // style attribute. Re-applied wholesale rather than patched, because the
+  // one thing worse than a page that is dimmed after a navigation is a page
+  // that is inert without a scrim to explain why.
+  if (isDrawerOpen()) applyDrawerOverlay()
+  else clearDrawerOverlay()
   syncDrawerHeight()
+  // The name lines survive the swap inside the persisted node, but the
+  // column they live in is laid out by the new page — a page with a wider
+  // scrollbar, or none, changes the width the title has to fit in. Cheap
+  // enough to just re-measure.
+  armNameMarquee()
 })
 
 /** Unhidden here rather than in the markup, same rule as the drawer toggle
@@ -2777,8 +3016,10 @@ export function openActionSheet(opts: SheetOptions): () => void {
   root.className = 'sheet'
   root.dataset.sheet = ''
 
-  const scrim = document.createElement('div')
-  scrim.className = 'sheet-scrim'
+  // `scrimEl()`, not a hand-built div with a class typed here: the search
+  // overlay and the queue drawer put up the same sheet of glass, and three
+  // copies of one declaration is how they stop matching.
+  const scrim = scrimEl()
 
   const panel = document.createElement('div')
   panel.className = 'sheet-panel'
@@ -2821,12 +3062,19 @@ export function openActionSheet(opts: SheetOptions): () => void {
   root.appendChild(panel)
 
   const scrollY = window.scrollY
-  const prevOverflow = document.body.style.overflow
   // Body scroll is LOCKED while open, and that differs from the reference
   // design deliberately: theirs is a comparison panel read against the
   // page behind it; ours is a menu, and a menu that lets the page scroll
   // under it loses the row it was opened on.
-  document.body.style.overflow = 'hidden'
+  //
+  // `lockPage(null)` — no `keepLive`, because this scrim covers the ENTIRE
+  // viewport including the player bar, so nothing outside it needs to stay
+  // reachable and the scrim already blocks every pointer. The count inside
+  // lockPage is what matters here: a sheet opened FROM the player bar sits
+  // on top of an open queue drawer, and before it was counted, closing the
+  // sheet restored `overflow` from its own snapshot and unlocked the page
+  // under a drawer that was still up.
+  const releaseLock = lockPage(null)
   document.body.classList.add('sheet-open')
 
   let closed = false
@@ -2835,7 +3083,7 @@ export function openActionSheet(opts: SheetOptions): () => void {
     closed = true
     openSheet = null
     root.classList.remove('is-open')
-    document.body.style.overflow = prevOverflow
+    releaseLock()
     document.body.classList.remove('sheet-open')
     document.removeEventListener('keydown', onKeydown, true)
     document.removeEventListener('astro:before-swap', onSwap)

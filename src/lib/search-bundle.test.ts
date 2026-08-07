@@ -273,9 +273,17 @@ describe('the request discipline', () => {
     expect(overlay).toContain("astro:before-swap")
   })
 
-  it('restores the previous body overflow rather than assuming it was empty', () => {
-    // A sheet opened from a row locks scroll too; hard-coding '' on close
-    // would unlock the page underneath a sheet that is still open.
-    expect(overlay).toContain('prevOverflow')
+  it('locks the page through the shared, COUNTED helper', () => {
+    // This used to assert a local `prevOverflow` snapshot, which was the
+    // right instinct and the wrong mechanism. A snapshot per overlay still
+    // gets it wrong when two are up at once: a sheet opened from the player
+    // bar over an open queue drawer restored ITS value on close and
+    // unlocked the page under a drawer that was still there.
+    // src/lib/overlay.ts counts instead, so the page unlocks when the last
+    // overlay leaves and not before.
+    expect(overlay).toContain('lockPage(')
+    expect(overlay).toContain('releaseLock()')
+    expect(overlay, 'the overlay must not manage body overflow itself')
+      .not.toContain('body.style.overflow')
   })
 })

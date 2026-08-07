@@ -87,9 +87,19 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     // get. The grid draws row 1 as name · ♥ · crate and row 2 as the
     // transport with QUEUE at its head; neither this array nor site.ts
     // knows that.
+    //
+    // OWNER, 2026-08-08: `player-status` joins the list, and it joins it
+    // FIRST. It is the strip that carries a transient message, and it comes
+    // before the identity for the same reason a heading comes before a
+    // paragraph — in a no-CSS render and in a screen reader's reading
+    // order, "already in Friday Warmup" is commentary ON the name that
+    // follows it. It is also the only aria-live region in the app now; the
+    // label lost that job, which is what makes the owner's "the message ate
+    // the track title" bug structurally impossible.
     const ids = [...shell.matchAll(/id="(player-[a-z]+)"/g)].map((m) => m[1])
     expect(ids).toEqual([
-      'player-label', 'player-link', 'player-artist', 'player-like', 'player-crate',
+      'player-status', 'player-label', 'player-link', 'player-artist',
+      'player-like', 'player-crate',
       'player-toggle', 'player-next', 'player-seek', 'player-time', 'player-audio',
     ])
   })
@@ -107,19 +117,49 @@ describe('Shell.astro keeps the queue engine out of every page', () => {
     expect(btn).not.toContain('<form')
   })
 
-  it('keeps both name lines inside the one aria-live region', () => {
-    // survive-list #12. Not "near" it — INSIDE it, so one synchronous
-    // write of both lines announces once.
-    // Sliced to the FIRST `</span>` after the region opens, which closes
-    // the region itself: both children are anchors now, so there is no
-    // nested <span> in between. It used to search for `</span></span>`,
-    // which stopped matching the moment the artist line became a link to
-    // the act's page — a false red about markup that was still correct.
-    const region = shell.slice(shell.indexOf('id="player-label"'))
-    const closed = region.slice(0, region.indexOf('</span>') + 7)
+  it('keeps both name lines in the label, and the label carries NO aria-live', () => {
+    // THE OWNER'S BUG, MADE UNREPEATABLE. #player-label used to be both the
+    // identity and the status region, and a status write took the title
+    // anchor with it — permanently, because nothing restored it. The live
+    // region is the strip now; this element only ever holds identity.
+    const label = shell.slice(shell.indexOf('id="player-label"'))
+    const tag = label.slice(0, label.indexOf('>'))
+    expect(tag, 'aria-live belongs to #player-status now').not.toContain('aria-live')
+    // To the end of the LINE, not to the next `</span>`: each name line now
+    // wraps its text in a `.marquee-text` span, so the first `</span>` is
+    // an inner one. The whole element is authored on one line, which makes
+    // the newline the only unambiguous boundary — and a slice that ends at
+    // "the next closing tag" is exactly the shape that has produced false
+    // greens in this file before.
+    const closed = label.slice(0, label.indexOf('\n'))
     expect(closed).toContain('id="player-link"')
     expect(closed).toContain('id="player-artist"')
-    expect(closed).toContain('aria-live="polite"')
+  })
+
+  it('there is exactly ONE aria-live region, and it is the status strip', () => {
+    // survive-list #12 ("two regions race") is satisfied by there being
+    // one, and it is now on the thing that is actually an announcement.
+    const regions = [...shell.matchAll(/aria-live="polite"/g)]
+    expect(regions.length).toBe(1)
+    const strip = shell.slice(shell.indexOf('id="player-status"'))
+    const tag = strip.slice(0, strip.indexOf('>'))
+    expect(tag).toContain('aria-live="polite"')
+    expect(tag).toContain('role="status"')
+    // Ships empty and hidden: site.ts writes the text and shows it.
+    expect(tag).toContain('hidden')
+  })
+
+  it('each name line wraps its text in the marquee span', () => {
+    // OWNER, 2026-08-08: "also can the track name also have a marquee." The
+    // ANCHOR is the clipping box and keeps its full hit area; the span
+    // inside is what moves. Writing the anchor's textContent directly would
+    // delete the span — which is the same class of mistake as the status
+    // bug one level up.
+    for (const id of ['player-link', 'player-artist']) {
+      const at = shell.indexOf(`id="${id}"`)
+      const chunk = shell.slice(at, shell.indexOf('</a>', at))
+      expect(chunk, `${id} needs its marquee span`).toContain('class="marquee-text"')
+    }
   })
 
   it('ships the skip button hidden, like every other JS-only control', () => {
