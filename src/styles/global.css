@@ -2779,7 +2779,23 @@ dd { margin: 0; overflow-wrap: anywhere; }
    at all — so the PAGE scrolled sideways, taking the nav, the heading and
    the player with it. One line moves the scroll into the table's own box.
    It is harmless below 640px, where the same DOM is not a table any more. */
-.tracktable { overflow-x: auto; }
+/* `position: relative` IS PART OF THE SAME FIX, and its absence was still
+   costing a horizontal page scroll on every table page. Found at 1280px
+   during POOL.1's browser pass, and confirmed pre-existing on
+   `/member/[username]` — a page POOL.1 does not touch — which measured a
+   1,347px document in a 1,280px viewport.
+
+   AN ABSOLUTELY POSITIONED DESCENDANT IS ONLY CLIPPED BY A SCROLL
+   CONTAINER THAT IS ITS CONTAINING BLOCK. `.sr-only` (the screen-reader
+   labels on the Play / Artwork / Download / Add-to-crate column headers)
+   is `position: absolute`, and with `.tracktable` static its containing
+   block was the initial one — so the four spans nearest the right-hand
+   edge of a 1,442px table sat outside the box that was supposed to be
+   scrolling them, and extended the DOCUMENT instead. `overflow-x: auto`
+   moved the table into its own box and the labels stayed behind.
+
+   One word, three pages: /pool, /crate/[id] and /member/[username]. */
+.tracktable { overflow-x: auto; position: relative; }
 
 @media (max-width: 640px) {
   /* ONE DOM, TWO GRAMMARS — owner decision Q3. The 15-column table above
