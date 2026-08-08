@@ -93,6 +93,69 @@ const row = {
   play_count: 17,
 }
 
+/** A MERGED PAIR, migration 38's `track_formats()` shape and ORDER: the
+ *  preferred FLAC (this page's own file) first, then a second uploader's
+ *  320 mp3. This is the fixture the owner's ask is about — the encode the
+ *  collapse hides on /artist and /member has to be here. */
+const FLAC_ID = FILE_ID
+const MP3_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa'
+const formats = [
+  {
+    file_id: FLAC_ID,
+    track_id: FILE_ID,
+    uploaded_by: 'user-1',
+    uploader_name: 'rohan',
+    original_filename: 'flac.flac',
+    display_artist: 'Anonymous Recordings Collective Berlin',
+    display_title: 'A Very Long Title (Extended Club Mix)',
+    container: 'flac',
+    codec: 'flac',
+    sample_rate: 44100,
+    bit_depth: 16,
+    channels: 2,
+    byte_size: 48_123_456,
+    duration_ms: 384_000,
+    bpm: 128.4,
+    key_camelot: '8A',
+    key_open: '1m',
+    key_musical: 'Am',
+    quality_tier: 5,
+    quality_score: 0.98,
+    lossy_ancestor: 'none',
+    meas_cutoff_hz: 22050,
+    created_at: '2026-07-01T10:00:00Z',
+    is_face: true,
+    is_current: true,
+  },
+  {
+    file_id: MP3_ID,
+    track_id: FILE_ID,
+    uploaded_by: 'user-2',
+    uploader_name: 'mate',
+    original_filename: 'mp3.mp3',
+    display_artist: 'Anonymous Recordings Collective Berlin',
+    display_title: 'A Very Long Title (Extended Club Mix)',
+    container: 'mp3',
+    codec: 'mp3',
+    sample_rate: 44100,
+    bit_depth: null,
+    channels: 2,
+    byte_size: 15_360_000,
+    duration_ms: 384_000,
+    bpm: 128.4,
+    key_camelot: '8A',
+    key_open: '1m',
+    key_musical: 'Am',
+    quality_tier: 3,
+    quality_score: 0.6,
+    lossy_ancestor: 'none',
+    meas_cutoff_hz: 20000,
+    created_at: '2026-07-02T10:00:00Z',
+    is_face: false,
+    is_current: false,
+  },
+]
+
 const locals = {
   member: {
     user_id: 'user-1',
@@ -106,11 +169,13 @@ const locals = {
       Promise.resolve(
         name === 'pool_get'
           ? { data: [row], error: null }
-          : name === 'my_storage'
-            ? { data: [{ occupying_bytes: 1, contributed_bytes: 2 }], error: null }
-            : name === 'review_pending_count'
-              ? { data: 0, error: null }
-              : { data: [{ id: 'c-1', name: 'friday night', is_mine: true }], error: null },
+          : name === 'track_formats'
+            ? { data: formats, error: null }
+            : name === 'my_storage'
+              ? { data: [{ occupying_bytes: 1, contributed_bytes: 2 }], error: null }
+              : name === 'review_pending_count'
+                ? { data: 0, error: null }
+                : { data: [{ id: 'c-1', name: 'friday night', is_mine: true }], error: null },
       ),
   },
 } as unknown as App.Locals
@@ -318,5 +383,121 @@ describe('task 3.6 — the layout fixes', () => {
 
   it('the metadata is a <dl>, which is what the stacking rule targets', () => {
     expect((html.match(/<dl>/g) ?? []).length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+/**
+ * MIGRATION 38 — THE FORMATS SECTION. Owner, 2026-08-08: "no way to select
+ * the format to play....each track detail page should show all the
+ * different formats available."
+ *
+ * What this file can prove: that BOTH encodes render, that each control
+ * names ITS OWN file, and that the section adds no `data-queue-list`. What
+ * it cannot prove is that clicking the mp3 streams the mp3 — that is
+ * site.ts plus a real audio element, so the acceptance for it is the
+ * browser pass in .superpowers/sdd/track-formats-shots/.
+ */
+describe('formats — every encode of the recording, each one playable', () => {
+  const section = () => block('<section class="formats">', '</section>')
+
+  it('renders BOTH files of a merged pair', () => {
+    const s = section()
+    expect((s.match(/class="formatrow"/g) ?? []).length).toBe(2)
+    expect(s).toContain('FLAC')
+    expect(s).toContain('MP3')
+  })
+
+  it('keeps the server ORDER: preferred first', () => {
+    // Migration 38 orders preferred, then tier, then inferred bitrate, and
+    // the page does not re-sort. If it ever did, this inverts.
+    const s = section()
+    expect(s.indexOf('FLAC')).toBeLessThan(s.indexOf('MP3'))
+  })
+
+  it('marks the one that represents the recording everywhere else', () => {
+    // `is_face` is track_face_file()'s verdict (migration 34) surfaced by
+    // the RPC. The page labels it and never re-derives it.
+    expect(section()).toContain('>preferred<')
+  })
+
+  it('EACH row plays ITS OWN file — the whole feature', () => {
+    // The queue engine keys on file_id. A row whose play link carried the
+    // page's file id would play the FLAC no matter which one you pressed,
+    // which is the defect this section exists to remove.
+    const s = section()
+    expect(s).toContain(`data-track-id="${FLAC_ID}"`)
+    expect(s).toContain(`data-track-id="${MP3_ID}"`)
+  })
+
+  it('each play link carries the five data-* site.ts scrapes off it', () => {
+    // Survive-list #7's contract, per row. Without these the queue entry
+    // built from this link has a blank name — the exact bug the page's own
+    // hero link was fixed for.
+    const s = section()
+    const links = s.match(/<a[^>]*class="play[^"]*"[^>]*>/g) ?? []
+    expect(links.length).toBe(2)
+    for (const a of links) {
+      expect(a, a).toContain('data-artist=')
+      expect(a, a).toContain('data-title=')
+      expect(a, a).toContain('data-duration=')
+      expect(a, a).toContain('data-bpm=')
+      expect(a, a).toContain('data-key=')
+    }
+  })
+
+  it('EACH row downloads ITS OWN file, through the existing route', () => {
+    const s = section()
+    expect(s).toContain(`href="/api/track/${FLAC_ID}/download"`)
+    expect(s).toContain(`href="/api/track/${MP3_ID}/download"`)
+  })
+
+  it('each +Q names its own file and ships hidden', () => {
+    // A queue control is client state with no server endpoint, so it must
+    // not be visible without JS. revealQueueControls() unhides it by the
+    // selector it already uses for every row — no new script.
+    const s = section()
+    const buttons = s.match(/<button[^>]*class="queueadd[^"]*"[^>]*>/g) ?? []
+    expect(buttons.length).toBe(2)
+    for (const b of buttons) expect(b, b).toContain('hidden')
+    expect(s).toContain(`data-file-id="${MP3_ID}"`)
+  })
+
+  it('names the OTHER uploader, and links them', () => {
+    // After the collapse this row may be the only place a member's
+    // contribution to this recording still says their name.
+    expect(section()).toContain('href="/member/mate"')
+  })
+
+  it('states the inferred bitrate with the caveat attached to it', () => {
+    // 15,360,000 bytes over 384 s = 320 kbps. The `~` and the tooltip are
+    // the contract: migration 21 refuses to store a DECLARED bitrate, and
+    // this number is an average over the whole container.
+    const s = section()
+    expect(s).toContain('~320 kbps')
+    expect(s).toContain('~1003 kbps')
+    expect(s).toContain('Not the declared bitrate')
+  })
+
+  it('states sample rate and bit depth, which lived nowhere on this page', () => {
+    const s = section()
+    expect(s).toContain('44.1 kHz / 16-bit')
+    // A lossy encode has no meaningful bit depth; the rate stands alone
+    // rather than being padded with an invented 16.
+    expect(s).toContain('44.1 kHz<')
+  })
+
+  it('adds NO data-queue-list — three encodes of one song is not a queue', () => {
+    // Repeated from survive-list #6 at this scope on purpose: site.ts
+    // scrapes every a.play inside such a container and queues them in
+    // order. The repo-wide assertion above would catch it; this one says
+    // why it must never appear HERE.
+    expect(section()).not.toContain('data-queue-list')
+  })
+
+  it('draws its controls with SVG, never a text glyph', () => {
+    const s = section()
+    expect(s).toContain('<svg')
+    expect(s).not.toContain('▶')
+    expect(s).not.toContain('↓')
   })
 })

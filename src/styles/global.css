@@ -1085,10 +1085,11 @@ td.download > a {
    `> * + *` — every item after the first. The dot belongs to the item on
    its RIGHT with a symmetric --pad-1 either side, so a wrapped run breaks
    BEFORE a dot and never leaves one orphaned at the end of a line. */
-.signals, .stats, .feedrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-1); }
+.signals, .stats, .feedrow-meta, .formatrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-1); }
 .signals > * + *::before,
 .stats > * + *::before,
-.feedrow-meta > * + *::before {
+.feedrow-meta > * + *::before,
+.formatrow-meta > * + *::before {
   content: '·';
   margin-right: var(--pad-1);
   color: var(--ink-35);
@@ -2426,6 +2427,64 @@ dd { margin: 0; overflow-wrap: anywhere; }
 /* An icon-only tier button: square, not a 16px-padded pill with a 14px
    glyph rattling around inside it. */
 .btn-icon { width: var(--tap); padding: 0; }
+
+/* --- MIGRATION 38: THE FORMATS LIST ---
+
+   The owner's "no way to select the format to play", answered as a list of
+   choices rather than as another `dl` of facts. Monochrome, 90 degrees, no
+   radius, no shadow — the same six tokens the rest of the page uses.
+
+   MOBILE-FIRST AND STACKED, because that is the shape the content is: an
+   identity line, a run of measurements, and a control set. At 375px the
+   three stack; from 640px the controls move to the right of the first two,
+   which is the same read as a table row without a table's 15 columns to
+   hide. No horizontal scroller is needed at any width — the measurement
+   run wraps, which is why the middle dot is generated with a symmetric gap
+   (see COUNT RUNS above): a wrapped run breaks BEFORE a dot.
+
+   The border between rows, not around them: a box per encode would make
+   three encodes read as three tracks. One hairline separator says "these
+   are the same thing, differently". */
+.formatlist { list-style: none; margin: 0; padding: 0; }
+.formatrow {
+  display: grid;
+  gap: var(--pad-1);
+  padding: var(--pad-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+.formatrow:first-child { padding-top: 0; }
+.formatrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.formatrow-id { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-1); }
+/* The one word a member is scanning for. Bigger and heavier than the chips
+   beside it, so "FLAC" wins the row and "Tier 5" qualifies it. */
+.formatname { font-size: var(--text-lg); font-weight: 700; }
+.formatrow-meta { font-size: var(--text-xs); color: var(--mid); }
+/* 44px targets, and they wrap rather than shrink. Three controls at 375px
+   is 132px of target plus gaps inside a 343px content box, so they fit on
+   one line — but a longer label in another language must wrap instead of
+   squeezing a control under the minimum. */
+.formatrow-do { display: flex; flex-wrap: wrap; align-items: center; gap: var(--pad-1); }
+.formatrow-do > .btn-secondary { min-height: var(--tap); }
+/* a.play's ::before/::after draw a scrim square and a centred triangle over
+   the artwork the link wraps in a POOL row. There is no artwork inside this
+   link — it is a labelled button — so those two would paint straight over
+   the word, which is exactly the "►▯ay" defect the owner reported on this
+   page's hero control. `.playbtn` is the class that turns them off; these
+   rows carry `.btn-secondary` instead, so the suppression is stated here
+   rather than by borrowing a class that also means "hero". */
+.formatrow-do > a.play::before,
+.formatrow-do > a.play::after { content: none; }
+
+@media (min-width: 640px) {
+  .formatrow {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: var(--pad-2);
+  }
+  .formatrow-id { grid-column: 1; grid-row: 1; }
+  .formatrow-meta { grid-column: 1; grid-row: 2; }
+  .formatrow-do { grid-column: 2; grid-row: 1 / span 2; justify-content: flex-end; }
+}
 
 /* THE STACKED dl — offender #5's other half.
    `max-content 1fr` gives "Integrated loudness" ~170px of a 343px content
