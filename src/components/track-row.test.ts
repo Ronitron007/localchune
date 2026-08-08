@@ -59,6 +59,9 @@ import { artThumb2xUrl, artThumbUrl } from '../lib/track-format'
  *  three tags, a liked row (the ♥ branch renders the longer aria-label). */
 const track: PoolTrack = {
   file_id: '11111111-2222-4333-8444-555555555555',
+  // QUEUE.dedupe: a real recording id, because the row now serialises one and
+  // a fixture without it would measure a row nobody renders.
+  track_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
   display_artist: 'Anonymous Recordings Collective Berlin XY',
   display_title: 'A Very Long Title For Measuring Real Rows In The Pool Table',
   bpm: 128.4,
@@ -155,14 +158,22 @@ const gzippedPage = (rowHtml: string): number =>
   gzipSync(Buffer.from(rowHtml.repeat(GZIP_ROWS))).length
 
 describe('TrackRow — the per-row budget', () => {
-  it('stays at or under 4,169 bytes with realistic strings (was 2,742)', async () => {
+  it('stays at or under 4,226 bytes with realistic strings (was 2,742)', async () => {
     // Re-baselined by the icon sweep: five controls that were text
     // characters (+Q, ⋮, ♥, ↓, +) are inline SVG from icons.ts now,
     // because iOS emoji-renders several of them and a font is not
     // something this app gets a vote in. The number that decided it is
     // the gzipped one below, not this one.
+    //
+    // +57 AT QUEUE.dedupe: `data-recording-id="<uuid>"`. It buys the fix for
+    // "I just have same song 2-4 times" — without the recording on the row
+    // there is nothing for the queue to dedupe by. It is 5.7 KB raw across a
+    // hundred rows and very nearly free gzipped (the two budgets below did
+    // not move), because it is the same attribute name a hundred times over.
+    // MEASURED ON main + rohan/queue-dedupe: a merge with another branch that
+    // also touches this row must RE-MEASURE, not add the deltas.
     const html = await render(TrackRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(4_169)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(4_226)
   })
 
   it('costs at most 4.1 KB gzipped across a hundred-row page', async () => {
@@ -234,11 +245,27 @@ describe('TrackRow — the per-row budget', () => {
     const html = await render(TrackRow, { track })
     const play = /<a[^>]*class="play"[^>]*>/.exec(html)?.[0] ?? ''
     for (const attr of [
-      'data-track-id=', 'data-artist=', 'data-title=',
+      'data-track-id=', 'data-recording-id=', 'data-artist=', 'data-title=',
       'data-duration=', 'data-bpm=', 'data-key=',
     ]) {
       expect(play).toContain(attr)
     }
+  })
+
+  /**
+   * TWO IDS, AND THE NAMES ARE THE OPPOSITE WAY ROUND FROM WHAT THEY LOOK.
+   * `data-track-id` has held the FILE id since M6b — it is the selector
+   * `a.play[data-track-id]`, pinned in four test files — so QUEUE.dedupe did
+   * NOT rename it. The recording got its own attribute. This test exists
+   * because the two names are one letter apart in meaning and a future edit
+   * that "fixes" the naming would silently make the queue exclude by the
+   * wrong id, which looks like nothing until the same song plays twice.
+   */
+  it('SAYS THE FILE IN data-track-id AND THE RECORDING IN data-recording-id', async () => {
+    const html = await render(TrackRow, { track })
+    const play = /<a[^>]*class="play"[^>]*>/.exec(html)?.[0] ?? ''
+    expect(play).toContain(`data-track-id="${track.file_id}"`)
+    expect(play).toContain(`data-recording-id="${track.track_id}"`)
   })
 
   it('no longer carries data-label, which nothing ever read', async () => {
@@ -269,7 +296,7 @@ describe('TrackRow — the per-row budget', () => {
 })
 
 describe('FeedRow — the same contract, the same dedup', () => {
-  it('stays at or under 3,269 bytes (was 2,259)', async () => {
+  it('stays at or under 3,326 bytes (was 2,259)', async () => {
     // Re-baselined by the sheet unification. The feed row now carries the
     // SAME controls the pool row does — `form.likeform` and
     // `details.cratepick` — because site.ts builds the ⋮ sheet by reading
@@ -277,8 +304,10 @@ describe('FeedRow — the same contract, the same dedup', () => {
     // where the pool's had fourteen: a divergent sheet arrived at by
     // omission. The bytes buy a real like toggle on a surface that until
     // now displayed a like count it would not let you cast.
+    // +57 at QUEUE.dedupe, same attribute and same argument as TrackRow's
+    // budget above; the gzipped number below did not move.
     const html = await render(FeedRow, { track })
-    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(3_269)
+    expect(Buffer.byteLength(html)).toBeLessThanOrEqual(3_326)
   })
 
   it('costs at most 3.1 KB gzipped across a hundred-row feed', async () => {
@@ -298,9 +327,18 @@ describe('FeedRow — the same contract, the same dedup', () => {
   it('keeps its own play link whole — the feed builds a queue too', async () => {
     const html = await render(FeedRow, { track })
     const play = /<a[^>]*class="play"[^>]*>/.exec(html)?.[0] ?? ''
-    for (const attr of ['data-track-id=', 'data-artist=', 'data-title=', 'data-duration=']) {
+    for (const attr of [
+      'data-track-id=', 'data-recording-id=', 'data-artist=', 'data-title=',
+      'data-duration=',
+    ]) {
       expect(play).toContain(attr)
     }
+  })
+
+  it('names the recording, so a queue built from the feed dedupes like any other', async () => {
+    const html = await render(FeedRow, { track })
+    const play = /<a[^>]*class="play"[^>]*>/.exec(html)?.[0] ?? ''
+    expect(play).toContain(`data-recording-id="${track.track_id}"`)
   })
 })
 

@@ -331,6 +331,14 @@ describe('survive-list contracts on this page', () => {
     }
   })
 
+  it('#7 — and the seventh, data-recording-id, added at QUEUE.dedupe', () => {
+    // This page is where a member lands from a link or a search result, and
+    // `+ QUEUE` here pins an entry the auto tail then has to avoid. Without
+    // the recording on this link that entry knows only its file, and the
+    // tail can offer another encode of the same song.
+    expect(html, 'a.play lost data-recording-id').toContain('data-recording-id')
+  })
+
   it('#7 — the single-track context queues nothing, and that is correct', () => {
     // No [data-queue-list] on this page: playing from a track page plays
     // that track alone. site.ts's scrape finds no list container and

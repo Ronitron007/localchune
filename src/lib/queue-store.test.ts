@@ -85,6 +85,62 @@ describe('the key and the TTL match player-memory\'s conventions', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// QUEUE.dedupe — the recording persists, and NO schema version was bumped.
+// ---------------------------------------------------------------------------
+describe('the recording survives a reload without a schema change', () => {
+  it('round-trips a recording on current and on every pin', () => {
+    const s = state({
+      current: entry('cur', { origin: 'current', track_id: 'rc' }),
+      intent: [entry('i0', { track_id: 'r0' })],
+    })
+    const back = parseState(serializeState(s, NOW)) as QueueMemoryEntry
+    expect(back.current?.track_id).toBe('rc')
+    expect(back.intent[0].track_id).toBe('r0')
+  })
+
+  it('KEEPS SCHEMA VERSION 1 — a grown shape is not a changed one', () => {
+    // Bumping it would have thrown away the queue of every member who had one
+    // open. `parseEntry` was always going to tolerate a field it did not know
+    // about; the field simply had to be optional on the way IN.
+    expect(QUEUE_SCHEMA_VERSION).toBe(1)
+  })
+
+  it('ACCEPTS A LEGACY PAYLOAD with no track_id anywhere — it is not corruption', () => {
+    const legacy = JSON.stringify({
+      v: 1,
+      current: {
+        file_id: 'cur', display_artist: 'a', display_title: 't', duration_ms: 1,
+        bpm: 128, key_camelot: '8A', origin: 'current', source_label: null,
+      },
+      intent: [],
+      method: 'harmonic',
+      history: ['h0'],
+      updated_at: new Date(NOW).toISOString(),
+    })
+    const back = parseState(legacy)
+    expect(back).not.toBeNull()
+    expect(back?.current?.file_id).toBe('cur')
+    // Absent reads as "its own recording", which is exactly what that payload
+    // meant when it was written.
+    expect(back?.current?.track_id).toBeNull()
+  })
+
+  it('repairs a hand-edited non-string recording rather than dropping the queue', () => {
+    const raw = JSON.stringify({
+      v: 1,
+      current: {
+        file_id: 'cur', display_artist: null, display_title: 't', duration_ms: null,
+        bpm: null, key_camelot: null, origin: 'current', source_label: null,
+        track_id: 42,
+      },
+      intent: [], method: 'off', history: [],
+      updated_at: new Date(NOW).toISOString(),
+    })
+    expect(parseState(raw)?.current?.track_id).toBeNull()
+  })
+})
+
 describe('serializeState / parseState round trip', () => {
   const rich = state({
     current: entry('cur', { origin: 'current' }),
