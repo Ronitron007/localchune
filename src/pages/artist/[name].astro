@@ -25,52 +25,42 @@
 // See `src/lib/pool-api.ts`'s artist block for the full rationale, the
 // candidate-limit caveat, and the seam.
 //
-// ═══ KNOWN GAP: THIS LISTS FILES, NOT RECORDINGS (for POOL.1) ═══
+// ═══ ONE ROW PER RECORDING — the gap this page documented, now closed ═══
 //
-// Migration 34 made "one row per recording" the rule on ranked surfaces,
-// via `track_face_file()`. This page does NOT yet obey it: two stored
-// encodes of one merged recording appear as two rows here. That is the
-// same behaviour /pool has — migration 34's own comment says "pool_list()
-// deliberately does NOT use this -- /pool lists files, by design" — so
-// this page is consistent with a shipped surface rather than uniquely
-// wrong. It is still not what the owner asked for, and here is precisely
-// why it was not fixed in this commit rather than left unexplained.
+// This page used to list FILES: two stored encodes of one merged recording
+// appeared as two rows, and the owner reported it as "I still see repeats".
+// The block that stood here predicted the fix exactly — "a `p_collapse
+// boolean default false` on `pool_list` whose predicate is migration 34's
+// verbatim... when it lands, one argument changes below and nothing else on
+// this page does". Migration 37 landed it; `artistPageArgs()` is that one
+// argument, and nothing else on this page moved.
 //
-// Three routes were evaluated against the real definitions on main:
+// The three rejected alternatives are kept here because each is still a
+// wrong answer somebody will re-propose:
 //
 //   1. COLLAPSE CLIENT-SIDE by `track_id`. `pool_list` returns track_id
 //      but NOT `preferred_file_id`, and the face rule is "preferred if
 //      it is stored, ELSE newest stored". Only the second arm can be
 //      reproduced here, so this page would disagree with the feed and
-//      search exactly when a pair has been merged — which is the only
-//      case that matters. Migration 34 exists because two copies of this
-//      rule diverge; adding a third, weaker copy is the anti-pattern it
-//      names.
+//      search exactly when a pair has been merged — the only case that
+//      matters.
 //
 //   2. CALL `track_face_file()` DIRECTLY. It is `revoke ... from public,
 //      anon, authenticated` / `grant ... to service_role`. This page runs
-//      as the signed-in member. Not reachable, by design.
+//      as the signed-in member. Not reachable, by design — `pool_list` is
+//      SECURITY DEFINER and calls it from inside.
 //
-//   3. USE `search_tracks()` AS THE COLLAPSE AUTHORITY (it already
-//      applies the rule). Rejected on three measured properties of its
-//      body, all of which are correct for a human search box and wrong
-//      for an exact-name listing:
-//        - `least(greatest(coalesce(p_lim,10),1), 50)` — it CLAMPS TO 50
-//          rows, where pool_list gives 200;
-//        - its tokeniser routes a `^[0-9]{2,3}$` word to the BPM branch
-//          and a `^(1[0-2]|[1-9])[ab]$` word to the key branch, so
-//          `/artist/808 State` and `/artist/4B` would search for a tempo
-//          and a Camelot key instead of a name;
-//        - a `sc > 0.10` score floor drops rows that are real matches.
-//      Any of the three silently loses an artist's tracks.
+//   3. USE `search_tracks()` AS THE COLLAPSE AUTHORITY. Rejected on three
+//      measured properties of its body, all correct for a human search box
+//      and wrong for an exact-name listing: a 50-row clamp where pool_list
+//      gives 200; a tokeniser that routes `808` to the BPM branch and `4b`
+//      to the key branch, so `/artist/808 State` and `/artist/4B` would
+//      search for a tempo and a key instead of a name; and a `sc > 0.10`
+//      score floor that drops real matches. `artistPageArgs` keeps
+//      `p_q_mode` at its `substring` default for exactly hazard two.
 //
-// So a correct collapse needs a SERVER-SIDE change, and the smallest one
-// is a `p_collapse boolean default false` on `pool_list` whose predicate
-// is migration 34's verbatim (`t.track_id is null or t.file_id =
-// public.track_face_file(t.track_id)`), leaving /pool's per-file default
-// untouched. That is a migration with revoke-first and pgTAP, which is
-// POOL.1's job rather than this branch's. When it lands, one argument
-// changes below and nothing else on this page does.
+// The other encodes are NOT lost: /track/[id]'s Formats section lists every
+// pool-visible file of the recording, each playable and downloadable.
 //
 // ═══ THE M7 UPGRADE PATH ═══
 //
@@ -90,7 +80,7 @@ import Shell from '../../layouts/Shell.astro'
 import TrackHead from '../../components/TrackHead.astro'
 import TrackRow from '../../components/TrackRow.astro'
 import {
-  ARTIST_CANDIDATE_LIMIT, EMPTY_QUERY, matchesArtist, poolListArgs, type PoolTrack,
+  ARTIST_CANDIDATE_LIMIT, artistPageArgs, matchesArtist, type PoolTrack,
 } from '../../lib/pool-api'
 
 const { name } = Astro.params
@@ -101,8 +91,7 @@ if (typeof name !== 'string' || name.trim() === '') {
 }
 
 const { data, error } = await Astro.locals.supabase.rpc(
-  'pool_list',
-  poolListArgs({ ...EMPTY_QUERY, q: name, sort: 'added_desc' }, null, ARTIST_CANDIDATE_LIMIT),
+  'pool_list', artistPageArgs(name, ARTIST_CANDIDATE_LIMIT),
 )
 if (error) console.error('pool_list failed:', error.message)
 

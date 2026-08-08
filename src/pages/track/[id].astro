@@ -17,6 +17,10 @@ import type { CrateCard } from '../../lib/org-api'
 // create trigger and the picker menus' cannot come to read differently.
 import { NEW_CRATE_LABEL } from '../../lib/crate-picker'
 import { formatTagDate, sourceLine, type Provenance } from '../../lib/provenance'
+import {
+  BITRATE_TITLE, formatBitrate, formatChannels, formatDownloadHref, formatName,
+  formatPlayHref, formatSampleFormat, showFormats, type TrackFormat,
+} from '../../lib/track-formats'
 
 const { id } = Astro.params
 // Guard before the RPC: a non-uuid path segment would otherwise reach
@@ -29,12 +33,28 @@ if (!isUuid(id)) return new Response('Not found', { status: 404 })
 // this one and the conditional ingest_jobs read. Each result keeps its own
 // error branch — a failed crate_list must render "could not load your
 // crates", never an empty picker that reads as "you have none".
+// OWNER, 2026-08-08: "each track detail page should show all the different
+// formats available." track_formats() (migration 38) takes the same
+// p_file_id and shares no input with the other two, so it joins the SAME
+// stage rather than adding a fourth round trip. Its own error branch, like
+// crate_list's: a failed formats call must say "could not load", never
+// render as "this recording has one encode".
 const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
-const [{ data, error }, { data: cardsData, error: cardsError }] = await Promise.all([
+const [
+  { data, error },
+  { data: cardsData, error: cardsError },
+  { data: formatsData, error: formatsError },
+] = await Promise.all([
   rpc('pool_get', { p_file_id: id }),
   rpc('crate_list'),
+  rpc('track_formats', { p_file_id: id }),
 ])
 if (error) console.error('pool_get failed:', error.message)
+if (formatsError) console.error('track_formats failed:', formatsError.message)
+// NOT re-sorted here. Migration 38's ORDER BY is preferred-first, then
+// quality tier, then inferred bitrate; a second sort in the client is how
+// two surfaces come to disagree about which encode is best.
+const formats = (formatsData ?? []) as TrackFormat[]
 const t = data?.[0]
 // pool_get applies the visibility rule, so "not yours to see" and "does
 // not exist" are the same answer — which is the point.
@@ -312,6 +332,120 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
         <span class="signal">brought by {t.upload_count} member{t.upload_count === 1 ? '' : 's'}</span>
       </div>
     </header>
+
+    {/* ------------------------------------------------------------------
+        Migration 38 — FORMATS. The owner, 2026-08-08, verbatim: "what about
+        the format and file system...I still see repeats...no way to select
+        the format to play....instead what should happen is each track
+        detail page should show all the different formats available."
+
+        Both halves of that sentence are one design. Part 1 of this branch
+        collapsed /artist and /member to one row per RECORDING, which is
+        only honest if the encodes it hides stay reachable. This is where
+        they are reachable, and migration 37's header already promised it.
+
+        WHY IT SITS HERE, directly under the transport. It is a transport
+        decision — "which one do I play, which one do I take" — so it goes
+        where that question is asked, above Tags and well above the
+        forensics. The page's own Play button remains the preferred encode,
+        so nothing changes for a member who does not care.
+
+        NO `data-queue-list`, and that is deliberate. site.ts scrapes every
+        `a.play` inside such a container and queues them in order; wrapping
+        these rows would queue three encodes of the SAME SONG back to back.
+        With no container, `listContainerOf` returns null and each row
+        plays alone — the same behaviour the hero Play button already has.
+
+        NO `data-play-row` either. A whole-row tap is unambiguous in a pool
+        row, where every control is secondary to "play this". Here the row
+        offers play AND download as equal choices, so both are explicit
+        labelled controls and a stray tap does neither.
+
+        The controls carry no new script. `a.play[data-track-id]` with its
+        own five data-* is the same contract site.ts has scraped since M6b —
+        each row names ITS file, which is what makes playing the 320 play
+        the 320 and not the FLAC. `button.queueadd[data-file-id]` is found
+        by `playLinkFor()` against that same id, and `revealQueueControls()`
+        unhides it by the selector it already uses for every row.
+        ------------------------------------------------------------------ */}
+    {t.state === 'stored' && (
+      <section class="formats">
+        <h2>Formats</h2>
+        {formatsError ? (
+          // Distinct words from "one encode", per survive-list #16. A
+          // failed call must never render as a complete answer.
+          <p class="explain">Could not load — try again.</p>
+        ) : !showFormats(formats) ? (
+          <p class="explain">No other encodes.</p>
+        ) : (
+          <ul class="formatlist">
+            {formats.map((f) => (
+              <li class="formatrow">
+                <div class="formatrow-id">
+                  <span class="formatname">{formatName(f.container, f.codec)}</span>
+                  <QualityBadge
+                    tier={f.quality_tier}
+                    lossyAncestor={f.lossy_ancestor}
+                    measCutoffHz={f.meas_cutoff_hz}
+                  />
+                  {/* The marker on the one that represents the recording
+                      everywhere else. `track_face_file()`'s verdict
+                      (migration 34), surfaced by the RPC as a boolean —
+                      not re-derived here, because a second copy of that
+                      rule is the defect migration 34 exists to close. */}
+                  {f.is_face && <span class="tagchip">preferred</span>}
+                  {f.is_current && <span class="tagchip">this page</span>}
+                </div>
+                <div class="formatrow-meta">
+                  <span class="signal num" title={BITRATE_TITLE}>
+                    {formatBitrate(f.byte_size, f.duration_ms)}
+                  </span>
+                  <span class="signal num">{formatSampleFormat(f.sample_rate, f.bit_depth)}</span>
+                  <span class="signal">{formatChannels(f.channels)}</span>
+                  <span class="signal num">{formatBytes(f.byte_size)}</span>
+                  <span class="signal num">{formatDuration(f.duration_ms)}</span>
+                  <span class="signal">
+                    {/* Linkified, and it is the point of the column: after
+                        the collapse this row may be the only place a
+                        member's contribution to this recording still says
+                        their name. */}
+                    <a href={`/member/${encodeURIComponent(f.uploader_name)}`}>{f.uploader_name}</a>
+                  </span>
+                </div>
+                <div class="formatrow-do">
+                  <a
+                    class="play btn-secondary"
+                    href={formatPlayHref(f.file_id)}
+                    data-track-id={f.file_id}
+                    data-artist={f.display_artist ?? undefined}
+                    data-title={f.display_title}
+                    data-duration={f.duration_ms ?? undefined}
+                    data-bpm={f.bpm ?? undefined}
+                    data-key={f.key_camelot ?? undefined}
+                    aria-label={`Play the ${formatName(f.container, f.codec)} of ${f.display_title}`}
+                  ><Icon name="play" size={16} /> Play</a>
+                  {/* `hidden` like every queue control: the queue is client
+                      state with no server endpoint, so a control that would
+                      do nothing without JS must not be visible. */}
+                  <button
+                    type="button"
+                    class="queueadd btn-secondary btn-icon"
+                    hidden
+                    data-file-id={f.file_id}
+                    aria-label={`Add the ${formatName(f.container, f.codec)} of ${f.display_title} to the queue`}
+                  ><Icon name="queue-add" size={16} /></button>
+                  <a
+                    class="btn-secondary"
+                    href={formatDownloadHref(f.file_id)}
+                    aria-label={`Download the ${formatName(f.container, f.codec)} of ${f.display_title}`}
+                  ><Icon name="download" size={16} /> Get</a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    )}
 
     {/* Migration 16 — owner's verbatim ask: "give the uploader an ability
         to add tags... at any point of time for all the tracks that he's
