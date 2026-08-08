@@ -36,13 +36,18 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import Page from './track/[id].astro'
 
 const FILE_ID = '11111111-2222-4333-8444-555555555555'
+// QUEUE.dedupe: a recording id DISTINCT from every file id in this fixture.
+// It used to be FILE_ID, which is a shortcut reality never takes — and one
+// that would hide a template emitting the file id where the recording
+// belongs, the exact confusion `data-recording-id` exists to prevent.
+const RECORDING_ID = 'cccccccc-dddd-4eee-8fff-000000000001'
 
 /** The owner's own worst case: likes > 0, plays > 0, downloads = 0 — three
  *  adjacent numerals in one run — plus a 103-character filename and a
  *  copyright line longer than the content box. */
 const row = {
   file_id: FILE_ID,
-  track_id: FILE_ID,
+  track_id: RECORDING_ID,
   uploaded_by: 'user-1',
   uploader_name: 'rohan',
   original_filename:
@@ -102,7 +107,7 @@ const MP3_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa'
 const formats = [
   {
     file_id: FLAC_ID,
-    track_id: FILE_ID,
+    track_id: RECORDING_ID,
     uploaded_by: 'user-1',
     uploader_name: 'rohan',
     original_filename: 'flac.flac',
@@ -129,7 +134,7 @@ const formats = [
   },
   {
     file_id: MP3_ID,
-    track_id: FILE_ID,
+    track_id: RECORDING_ID,
     uploaded_by: 'user-2',
     uploader_name: 'mate',
     original_filename: 'mp3.mp3',
@@ -435,6 +440,21 @@ describe('formats — every encode of the recording, each one playable', () => {
     const s = section()
     expect(s).toContain(`data-track-id="${FLAC_ID}"`)
     expect(s).toContain(`data-track-id="${MP3_ID}"`)
+  })
+
+  it('EVERY row names the SAME recording — the queue must not re-offer it', () => {
+    /**
+     * QUEUE.dedupe, and this list is the surface where the two ids are
+     * easiest to confuse. `data-track-id` differs per row (it is the FILE);
+     * `data-recording-id` is IDENTICAL on every row, because every row here
+     * is one encode of one recording. A member who plays the FLAC from this
+     * list must not then get the 320 of it in the auto tail.
+     */
+    const s = section()
+    const recs = [...s.matchAll(/data-recording-id="([^"]+)"/g)].map((m) => m[1])
+    expect(recs).toHaveLength(2)
+    expect(new Set(recs).size).toBe(1)
+    expect(recs[0]).toBe(RECORDING_ID)
   })
 
   it('each play link carries the five data-* site.ts scrapes off it', () => {
