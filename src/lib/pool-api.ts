@@ -170,22 +170,21 @@ export function isDefaultQuery(q: PoolQuery): boolean {
  * Migration 37's two new arguments, and they are OPT-IN on purpose.
  *
  * `pool_list` defaults both to their pre-migration behaviour, so a caller
- * that says nothing keeps listing FILES with a substring `p_q`. Three
- * callers say nothing and must keep saying nothing:
+ * that says nothing keeps listing FILES with a substring `p_q`. Exactly ONE
+ * caller says nothing now, and it must keep saying nothing:
  *
- *   - `/api/queue/candidates` (which does not use this builder at all —
- *     `candidateArgs` in queue-candidates.ts builds its own object, and a
- *     test pins that it names neither key). A silent change to the queue's
- *     candidate source is the "wrong song plays" failure class.
- *   - `/member/[username]`, which lists what a member UPLOADED. Two encodes
- *     of one recording are two uploads; collapsing them would under-report
- *     a member's own contribution on their own page.
- *   - anything that pages the pool as files rather than as recordings.
+ *   - `/api/queue/candidates`, which does not use this builder at all —
+ *     `candidateArgs` in queue-candidates.ts builds its own object, and
+ *     three tests pin that it names neither key. A silent change to the
+ *     queue's candidate source is the "wrong song plays" failure class.
+ *     The queue picks a FILE to stream, so per-file is the correct shape
+ *     there and always was.
  *
- * `mode` is the /artist/[name] hazard, answered: that page calls this with
- * the artist's NAME as `p_q`, and in fuzzy mode `808 State` would route its
- * first word to a tempo window and `4B` to a Camelot key. Substring is the
- * default and the artist page never overrides it.
+ * Every HUMAN-FACING list collapses, through one of the three named
+ * builders below. `mode` is the /artist/[name] hazard, answered: that page
+ * calls this with the artist's NAME as `p_q`, and in fuzzy mode `808 State`
+ * would route its first word to a tempo window and `4B` to a Camelot key.
+ * Substring is the default and the artist page never overrides it.
  */
 export type PoolListOpts = {
   /** One row per recording (migration 34's face-file rule). */
@@ -232,6 +231,76 @@ export function poolPageArgs(
     collapse: true,
     mode: q.q === '' ? 'substring' : 'fuzzy',
   })
+}
+
+/* ═══════════════════ THE COLLAPSE ROLLOUT, FINISHED ═══════════════════
+ *
+ * OWNER, 2026-08-08, verbatim: "I still see repeats".
+ *
+ * Migration 37 gave `pool_list` a `p_collapse`, and POOL.1 wired it into
+ * /pool and its partial ONLY. `/artist/[name]` and `/member/[username]`
+ * render the same `TrackRow` from the same RPC and were left per-file, so
+ * a merged pair still showed twice on both — which is precisely what the
+ * owner is looking at. `/artist/[name]`'s own frontmatter predicted this
+ * fix and named the argument that would land it.
+ *
+ * Each surface gets a NAMED builder rather than an inline `{collapse:true}`
+ * for the reason `poolPageArgs` exists: the page and its test then read the
+ * same object, and "which surfaces collapse" is one greppable list instead
+ * of a property spread across four files.
+ *
+ * ─── WHAT COLLAPSE COSTS ON A MEMBER PAGE, STATED RATHER THAN DISCOVERED
+ *
+ * `track_face_file()` elects ONE file per recording across the WHOLE pool,
+ * not within the filtered set. `pool_list` applies that predicate and the
+ * `p_uploader` filter in the same WHERE clause, so on a member page the
+ * face file is still chosen globally. Consequence: if Ana uploaded the
+ * FLAC (the face) and Ben the MP3 of one recording, Ben's page loses that
+ * row entirely — it under-reports his contribution rather than merely
+ * de-duplicating it.
+ *
+ * Accepted, for three reasons that were checked rather than assumed:
+ *
+ *   1. `/pool?uploader=<id>` ALREADY behaves exactly this way — POOL.1
+ *      shipped it — and the member page links straight to it ("see all in
+ *      pool"). Leaving the two disagreeing is a worse defect than the one
+ *      being traded away: the same question, asked two ways, answered two
+ *      ways.
+ *   2. The row is not lost, it is MOVED. /track/[id]'s Formats section
+ *      (this branch, part 2) lists every pool-visible encode of the
+ *      recording with its uploader linkified, so Ben's MP3 is one click
+ *      from the row that replaced it and still says his name.
+ *   3. The heading above the list is `member_resolve`'s `track_count`,
+ *      which counts CLAIMS (distinct stored files claimed via
+ *      file_claims), and a co-claim on a merged pair already made that
+ *      number differ from the row count. The list was never the heading's
+ *      arithmetic.
+ *
+ * The proper fix is a collapse scoped to the filtered set — "the best row
+ * among the rows this query would return". That is a different predicate
+ * from migration 34's, so it is a migration and a doctrine change, not an
+ * argument; it is not in scope for an owner bug report that says "repeats".
+ */
+
+/**
+ * `/artist/[name]`. Collapse ON; mode stays SUBSTRING — never fuzzy.
+ * The argument is the artist's name, and fuzzy tokenising would route
+ * `/artist/808 State` to a tempo window and `/artist/4B` to a Camelot key.
+ * See the PoolListOpts note above and this page's own frontmatter.
+ */
+export function artistPageArgs(name: string, limit: number): Record<string, unknown> {
+  return poolListArgs(
+    { ...EMPTY_QUERY, q: name, sort: 'added_desc' }, null, limit, { collapse: true },
+  )
+}
+
+/**
+ * `/member/[username]`'s track list. Collapse ON, uploader-filtered, and
+ * substring mode because there is no free text at all — `p_q` is null, so
+ * the mode is moot and `substring` is the honest value to send.
+ */
+export function memberPageArgs(userId: string, limit: number): Record<string, unknown> {
+  return poolListArgs({ ...EMPTY_QUERY, uploader: userId }, null, limit, { collapse: true })
 }
 
 /* ═══════════════════════════ ARTIST PAGES, STRING-KEYED ══════════════

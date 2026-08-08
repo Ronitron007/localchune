@@ -23,7 +23,7 @@ import CrateStack from '../../components/CrateStack.astro'
 import TrackHead from '../../components/TrackHead.astro'
 import TrackRow from '../../components/TrackRow.astro'
 import { crateHref, formatCrateMeta, type CrateCard } from '../../lib/org-api'
-import { EMPTY_QUERY, PAGE_SIZE, poolListArgs, type PoolTrack } from '../../lib/pool-api'
+import { memberPageArgs, PAGE_SIZE, type PoolTrack } from '../../lib/pool-api'
 
 const { username } = Astro.params
 // Guard before the RPC, same reasoning as [id].astro's isUuid check: a
@@ -56,7 +56,16 @@ const rpc = Astro.locals.supabase.rpc.bind(Astro.locals.supabase)
 const [{ data: cratesData, error: cratesError }, { data: tracksData, error: tracksError }] =
   await Promise.all([
     rpc('crate_list'),
-    rpc('pool_list', poolListArgs({ ...EMPTY_QUERY, uploader: member.user_id }, null, PAGE_SIZE)),
+    // ONE ROW PER RECORDING (migration 37's p_collapse), the owner's
+    // "I still see repeats". `memberPageArgs` states the trade-off this
+    // makes on an uploader-filtered surface — see pool-api.ts. The short
+    // version: the face file is elected across the whole pool, so a
+    // member's second encode of a recording somebody else also uploaded
+    // stops appearing here, and /track/[id]'s Formats section is where it
+    // is now reachable. `/pool?uploader=` — the link at the foot of this
+    // very list — has behaved this way since POOL.1, and the two agreeing
+    // matters more than the row.
+    rpc('pool_list', memberPageArgs(member.user_id, PAGE_SIZE)),
   ])
 if (cratesError) console.error('crate_list failed:', cratesError.message)
 if (tracksError) console.error('pool_list failed:', tracksError.message)

@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  ARTIST_CANDIDATE_LIMIT, artistHref, EMPTY_QUERY, feedTrackToPoolTrack, impliedSort,
-  isDefaultQuery, matchesArtist, parsePoolQuery, poolListArgs, poolPageArgs,
-  poolPartialHref, POOL_PARTIAL_PATH,
+  ARTIST_CANDIDATE_LIMIT, artistHref, artistPageArgs, EMPTY_QUERY, feedTrackToPoolTrack,
+  impliedSort, isDefaultQuery, matchesArtist, memberPageArgs, PAGE_SIZE, parsePoolQuery,
+  poolListArgs, poolPageArgs, poolPartialHref, POOL_PARTIAL_PATH,
   poolQueryToSearchParams, poolHref, type FeedTrack,
 } from './pool-api'
 
@@ -125,10 +125,10 @@ describe('poolListArgs', () => {
    * surfaces from changing under them. Each of these pins a caller whose
    * behaviour must NOT move.
    */
-  it('defaults to per-file, substring — what /member/[username] needs', () => {
-    // A member page lists what a member UPLOADED. Two encodes of one
-    // recording are two uploads; collapsing them would under-report a
-    // member's own contribution on their own page.
+  it('defaults to per-file, substring — the pre-migration behaviour', () => {
+    // The default is what /api/queue/candidates gets, and the queue picks
+    // a FILE to stream. Every human-facing list now opts IN through a
+    // named builder below; nothing opts in by accident.
     const args = poolListArgs({ ...EMPTY_QUERY, uploader: 'u' }, null, 100)
     expect(args.p_collapse).toBe(false)
     expect(args.p_q_mode).toBe('substring')
@@ -168,6 +168,57 @@ describe('poolPageArgs — what /pool and its partial both send', () => {
     expect(poolPageArgs(q, 'CURSOR', 100)).toMatchObject({
       p_cursor: 'CURSOR', p_sort: 'relevance', p_q_mode: 'fuzzy', p_collapse: true,
     })
+  })
+})
+
+/**
+ * THE COLLAPSE ROLLOUT, PINNED. Owner, 2026-08-08: "I still see repeats".
+ * POOL.1 wired migration 37's `p_collapse` into /pool only; these two
+ * surfaces render the same TrackRow from the same RPC and were left
+ * per-file. Each builder is asserted rather than each call site, because
+ * the builder is what the call sites now share.
+ */
+describe('artistPageArgs — /artist/[name]', () => {
+  it('collapses to one row per recording', () => {
+    expect(artistPageArgs('Bicep', ARTIST_CANDIDATE_LIMIT).p_collapse).toBe(true)
+  })
+
+  it('stays SUBSTRING — the /artist/808 State and /artist/4B hazard', () => {
+    // Fuzzy mode would route `808` to a tempo window and `4b` to a Camelot
+    // key, and the act would vanish from its own page.
+    expect(artistPageArgs('808 State', ARTIST_CANDIDATE_LIMIT).p_q_mode).toBe('substring')
+    expect(artistPageArgs('4B', ARTIST_CANDIDATE_LIMIT).p_q_mode).toBe('substring')
+  })
+
+  it('sends the name as p_q and nothing else as a filter', () => {
+    expect(artistPageArgs('Bicep', ARTIST_CANDIDATE_LIMIT)).toMatchObject({
+      p_q: 'Bicep', p_uploader: null, p_key: null, p_tier_min: null,
+      p_sort: 'added_desc', p_cursor: null, p_limit: ARTIST_CANDIDATE_LIMIT,
+    })
+  })
+})
+
+describe('memberPageArgs — /member/[username]', () => {
+  it('collapses to one row per recording', () => {
+    expect(memberPageArgs('11111111-1111-1111-1111-111111111111', PAGE_SIZE).p_collapse)
+      .toBe(true)
+  })
+
+  it('filters by the uploader and sends no free text at all', () => {
+    const args = memberPageArgs('11111111-1111-1111-1111-111111111111', PAGE_SIZE)
+    expect(args.p_uploader).toBe('11111111-1111-1111-1111-111111111111')
+    expect(args.p_q).toBeNull()
+    // No text means the mode is moot; substring is the honest value.
+    expect(args.p_q_mode).toBe('substring')
+  })
+
+  it('agrees with /pool?uploader= — the link at the foot of that same list', () => {
+    const member = memberPageArgs('11111111-1111-1111-1111-111111111111', PAGE_SIZE)
+    const pool = poolPageArgs(
+      { ...EMPTY_QUERY, uploader: '11111111-1111-1111-1111-111111111111' }, null, PAGE_SIZE,
+    )
+    expect(member.p_collapse).toBe(pool.p_collapse)
+    expect(member.p_uploader).toBe(pool.p_uploader)
   })
 })
 
