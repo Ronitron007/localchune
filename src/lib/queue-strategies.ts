@@ -27,7 +27,7 @@
  */
 
 import { parseCamelot } from './track-format'
-import { METHOD_LABELS, type AutoMethod } from './queue-model'
+import { METHOD_LABELS, type AutoMethod, type TrackIdentity } from './queue-model'
 
 // ------------------------------------------------------------- constants
 
@@ -61,17 +61,31 @@ const SCORE_EPSILON = 1e-9
 /**
  * Everything a strategy is allowed to know about a track. Additive by design:
  * a genre strategy adds `genre` here and reads it; nothing else moves. This
- * is also exactly what /api/queue/candidates projects onto the wire — nine
+ * is also exactly what /api/queue/candidates projects onto the wire — eleven
  * fields out of pool_list's forty-odd, which is the migration-20/28 narrowing
  * held on the client side too.
+ *
+ * `track_id` AND `quality_tier` ARE NOT FOR RANKING, and no strategy reads
+ * either. They are the engine's: the recording is what
+ * `collapseByRecording` groups on, the tier is the first term of the
+ * preferred-copy rule that decides WHICH encode of a recording survives that
+ * collapse. They live on this interface rather than beside it because the
+ * engine hands strategies the very rows it collapsed, and a second parallel
+ * shape carrying two fields would be one more thing to keep in step.
  */
-export interface TrackFeatures {
+export interface TrackFeatures extends TrackIdentity {
   file_id: string
+  /** `files.track_id`. Null = the matcher never grouped this file; it is then
+   *  its own recording. See queue-model.ts's `TrackIdentity`. */
+  track_id: string | null
   display_artist: string | null
   display_title: string
   duration_ms: number | null
   bpm: number | null
   key_camelot: string | null
+  /** 1..5, higher is better (migration 09's check; the analysis worker's own
+   *  keep-if-better test is `b.tier > a.tier`). Null = never analysed. */
+  quality_tier: number | null
   like_count: number
   play_count: number
   created_at: string

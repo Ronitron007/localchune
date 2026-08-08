@@ -5,8 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  assembleQueue, AUTO_METHODS, DEFAULT_METHOD, emptyState, excludedIds, isAutoMethod,
-  QUEUE_MAX, slotsFor, truncateIntent, type QueueEntry, type QueueState,
+  assembleQueue, AUTO_METHODS, DEFAULT_METHOD, emptyState, excludedKeys, identityTokens,
+  isAutoMethod, isTaken, QUEUE_MAX, RECORDING_TOKEN, recordingOf, slotsFor, take,
+  truncateIntent, type QueueEntry, type QueueState,
 } from './queue-model'
 
 const entry = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({
@@ -142,9 +143,9 @@ describe('truncateIntent — the cap is enforced ON WRITE', () => {
   })
 })
 
-describe('excludedIds', () => {
+describe('excludedKeys', () => {
   it('is empty for an empty state', () => {
-    expect(excludedIds(emptyState()).size).toBe(0)
+    expect(excludedKeys(emptyState()).size).toBe(0)
   })
 
   it('covers current, intent, history, failed and suppressed', () => {
@@ -155,18 +156,83 @@ describe('excludedIds', () => {
       failed: ['f1'],
       suppressed: ['s1'],
     })
-    expect([...excludedIds(s)].sort()).toEqual(['cur', 'f1', 'h1', 'i1', 'i2', 's1'])
+    expect([...excludedKeys(s)].sort()).toEqual(['cur', 'f1', 'h1', 'i1', 'i2', 's1'])
   })
 
   it('dedupes an id that appears in more than one source', () => {
     const s = state({ current: entry('x'), history: ['x'], failed: ['x'], suppressed: ['x'] })
-    expect(excludedIds(s).size).toBe(1)
+    expect(excludedKeys(s).size).toBe(1)
   })
 
   it('does not mutate the state it reads', () => {
     const s = frozen(state({ current: entry('c'), history: ['h'] }))
-    expect(() => excludedIds(s)).not.toThrow()
+    expect(() => excludedKeys(s)).not.toThrow()
     expect(s.history).toEqual(['h'])
+  })
+
+  it('adds the RECORDING of current and of every pin, not just the file', () => {
+    const s = state({
+      current: entry('cur', { track_id: 'rc' }),
+      intent: [entry('i1', { track_id: 'r1' })],
+    })
+    expect([...excludedKeys(s)].sort())
+      .toEqual(['cur', 'i1', 'rec:r1', 'rec:rc'])
+  })
+
+  it('takes history, failed and suppressed VERBATIM — reduce already tokenised them', () => {
+    const s = state({ history: ['h1', 'rec:rh'], failed: ['f1'], suppressed: ['rec:rs'] })
+    expect([...excludedKeys(s)].sort()).toEqual(['f1', 'h1', 'rec:rh', 'rec:rs'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// QUEUE.dedupe — the arithmetic that makes "same song 2-4 times" impossible.
+// ---------------------------------------------------------------------------
+
+describe('the two names a track answers to', () => {
+  it('marks a recording and leaves a file id bare — the no-schema-bump rule', () => {
+    expect(RECORDING_TOKEN).toBe('rec:')
+    expect(identityTokens({ file_id: 'f', track_id: 'r' })).toEqual(['f', 'rec:r'])
+  })
+
+  it('puts the FILE first, so history[0] is still the most recent file', () => {
+    expect(identityTokens({ file_id: 'f', track_id: 'r' })[0]).toBe('f')
+  })
+
+  for (const [why, value] of [
+    ['null', null], ['absent', undefined], ['the empty string', ''],
+  ] as Array<[string, string | null | undefined]>) {
+    it(`treats ${why} as NO recording — the file is its own identity`, () => {
+      const e = { file_id: 'f', track_id: value }
+      expect(recordingOf(e)).toBeNull()
+      expect(identityTokens(e)).toEqual(['f'])
+    })
+  }
+
+  it('never collapses two unmatched files into one — null is not a shared bucket', () => {
+    const taken = new Set<string>()
+    take(taken, { file_id: 'a', track_id: null })
+    expect(isTaken(taken, { file_id: 'b', track_id: null })).toBe(false)
+  })
+
+  it('is taken when the FILE is taken', () => {
+    const taken = new Set<string>()
+    take(taken, { file_id: 'a', track_id: 'r' })
+    expect(isTaken(taken, { file_id: 'a', track_id: 'r' })).toBe(true)
+  })
+
+  it('IS TAKEN WHEN THE RECORDING IS TAKEN — this is the whole bug, in one line', () => {
+    const taken = new Set<string>()
+    take(taken, { file_id: 'the-flac', track_id: 'r' })
+    expect(isTaken(taken, { file_id: 'the-320', track_id: 'r' })).toBe(true)
+  })
+
+  it('still excludes a file whose recording is unknown but whose id is spoken for', () => {
+    // The UX.9 resume shape: `current` came from player memory and has no
+    // recording, so only its file id can defend it. It must still defend it.
+    const taken = new Set<string>()
+    take(taken, { file_id: 'a', track_id: null })
+    expect(isTaken(taken, { file_id: 'a', track_id: 'r' })).toBe(true)
   })
 })
 
@@ -217,6 +283,82 @@ describe('assembleQueue', () => {
     const s = state({ current: entry('c') })
     const auto = [entry('a'), entry('a'), entry('b')].map((e) => ({ ...e, origin: 'auto' as const }))
     expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['c', 'a', 'b'])
+  })
+
+  // ---------------------------------------------------------------------
+  // QUEUE.dedupe — the owner's bug, at the level it has to be impossible.
+  // ---------------------------------------------------------------------
+
+  it('THE REGRESSION — four encodes of one recording in one batch yield ONE entry', () => {
+    const s = state({ current: entry('c') })
+    const auto = ['flac', 'mp3-320', 'm4a', 'mp3-192'].map((id) =>
+      entry(id, { origin: 'auto', track_id: 'the-song' }))
+    expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['c', 'flac'])
+  })
+
+  it('never renders two entries with the same recording — the invariant, stated', () => {
+    const s = state({ current: entry('c', { track_id: 'r0' }) })
+    // Twelve rows over four recordings, interleaved so no naive first-wins
+    // pass over a sorted list could accidentally pass this.
+    const auto = Array.from({ length: 12 }, (_, i) =>
+      entry(`f${i}`, { origin: 'auto', track_id: `r${i % 4}` }))
+    const recordings = assembleQueue(s, auto).map((e) => e.track_id)
+    expect(new Set(recordings).size).toBe(recordings.length)
+    // r0 is what is playing, so only r1..r3 survive.
+    expect(recordings).toEqual(['r0', 'r1', 'r2', 'r3'])
+  })
+
+  it('never re-queues the recording that is PLAYING, under a different file id', () => {
+    const s = state({ current: entry('the-flac', { track_id: 'r' }) })
+    const auto = [entry('the-320', { origin: 'auto', track_id: 'r' })]
+    expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['the-flac'])
+  })
+
+  it('never adds a recording the INTENT LAYER already holds', () => {
+    const s = state({ current: entry('c'), intent: [entry('pinned', { track_id: 'r' })] })
+    const auto = [
+      entry('other-encode', { origin: 'auto', track_id: 'r' }),
+      entry('fresh', { origin: 'auto', track_id: 'r2' }),
+    ]
+    expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['c', 'pinned', 'fresh'])
+  })
+
+  it('never adds a recording HISTORY already consumed, under a different file id', () => {
+    const s = state({ current: entry('c'), history: ['played-flac', 'rec:r'] })
+    const auto = [
+      entry('same-song-320', { origin: 'auto', track_id: 'r' }),
+      entry('fresh', { origin: 'auto', track_id: 'r2' }),
+    ]
+    expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['c', 'fresh'])
+  })
+
+  it('LEGACY AND NULL DEGRADE TO TODAY — four unmatched files stay four entries', () => {
+    const s = state({ current: entry('c') })
+    // No track_id at all (a persisted entry from a build before QUEUE.dedupe)
+    // and an explicit null are the same statement, and neither collapses.
+    const auto = [
+      entry('a', { origin: 'auto' }),
+      entry('b', { origin: 'auto', track_id: null }),
+      entry('c2', { origin: 'auto' }),
+      entry('d', { origin: 'auto', track_id: null }),
+    ]
+    expect(assembleQueue(s, auto)).toHaveLength(5)
+  })
+
+  it('an empty-string recording is nobody\'s recording, not everybody\'s', () => {
+    const s = state({ current: entry('c') })
+    const auto = [
+      entry('a', { origin: 'auto', track_id: '' }),
+      entry('b', { origin: 'auto', track_id: '' }),
+    ]
+    expect(assembleQueue(s, auto).map((e) => e.file_id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('DEDUPE MUST NOT STARVE THE TAIL — 24 distinct recordings still fill 24 slots', () => {
+    const s = state({ current: entry('c', { track_id: 'rc' }) })
+    const auto = Array.from({ length: 30 }, (_, i) =>
+      entry(`f${i}`, { origin: 'auto', track_id: `r${i}` }))
+    expect(assembleQueue(s, auto)).toHaveLength(QUEUE_MAX)
   })
 
   it('starts with the intent layer when nothing is playing', () => {

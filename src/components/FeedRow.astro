@@ -39,6 +39,7 @@ const artist = track.display_artist ?? 'Unknown artist'
     class="play"
     href={`/track/${track.file_id}`}
     data-track-id={track.file_id}
+    data-recording-id={track.track_id ?? undefined}
     data-artist={track.display_artist ?? undefined}
     data-title={track.display_title}
     data-duration={track.duration_ms ?? undefined}

@@ -958,12 +958,26 @@ function listContainerOf(el: Element): HTMLElement | null {
   return c instanceof HTMLElement ? c : null
 }
 
-/** Every queueable row in a container, in rendered order — which IS play
- *  order, so a sort click or a filter changes the queue a play would build,
- *  exactly as a member would expect. */
+/**
+ * Every queueable row in a container, in rendered order — which IS play
+ * order, so a sort click or a filter changes the queue a play would build,
+ * exactly as a member would expect.
+ *
+ * TWO IDS, AND THE NAMES ARE THE OPPOSITE WAY ROUND FROM WHAT THEY LOOK.
+ * `data-track-id` has meant the FILE id since M6b — it is the selector
+ * (`a.play[data-track-id]`), it is what `playLinkFor` looks a track up by, and
+ * four test files pin the string. QUEUE.dedupe needed the RECORDING as well
+ * and did NOT rename it: a repo-wide rename of a selector contract to fix a
+ * queue bug is how you break the crate route while fixing the drawer. The
+ * recording got its own attribute instead, `data-recording-id`, and a surface
+ * that has not been taught to emit one simply reports null — which
+ * queue-model.ts reads as "this file is its own recording", i.e. exactly the
+ * behaviour that shipped before.
+ */
 function scrapeRows(container: HTMLElement): QueueRowData[] {
   return Array.from(container.querySelectorAll<HTMLElement>('a.play[data-track-id]')).map((a) => ({
     file_id: a.dataset.trackId ?? '',
+    track_id: a.dataset.recordingId ?? null,
     artist: a.dataset.artist ?? null,
     title: a.dataset.title ?? '',
     duration_ms: a.dataset.duration ?? null,
@@ -998,6 +1012,7 @@ function playLinkFor(fileId: string): HTMLElement | null {
 function scrapeOne(el: HTMLElement, fileId: string): QueueRowData {
   return {
     file_id: fileId,
+    track_id: el.dataset.recordingId ?? null,
     artist: el.dataset.artist ?? null,
     title: el.dataset.title ?? '',
     duration_ms: el.dataset.duration ?? null,

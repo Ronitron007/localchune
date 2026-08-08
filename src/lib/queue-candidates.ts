@@ -26,12 +26,21 @@
  * RPC that already does the work.
  *
  * THE PROJECTION IS THE POINT. pool_list returns 29 columns; a queue tail
- * needs nine. Sending the rest to the browser on every regeneration would be
+ * needs eleven. Sending the rest to the browser on every regeneration would be
  * wasteful and a slow re-widening of exactly what migration 20 narrowed. The
  * `provenance` column that migrations 20 and 28 fought over lives on pool_get
  * rather than pool_list, and it must never arrive here either — the test
  * feeds this module a row carrying one, to prove the projection drops
  * whatever it is handed.
+ *
+ * THE FEED STAYS PER-FILE. `candidateArgs` still names neither `p_collapse`
+ * nor `p_q_mode` (POOL.1's two new arguments), so this route still asks
+ * pool_list for one row per FILE — and the vitest guards that assert those two
+ * names never appear here are still green. That is deliberate and it is the
+ * opposite of an oversight: the engine must be able to CHOOSE which encode of
+ * a recording to play, and it can only choose between rows it can see.
+ * `queue-engine.ts` collapses them, one row per recording, by a rule written
+ * where the choice is made. See `collapseByRecording` and `preferredCopy`.
  */
 
 import { parseCamelot } from './track-format'
@@ -43,11 +52,24 @@ import { BPM_WINDOW, type TrackFeatures } from './queue-strategies'
  *  window is, instead of the client asking for a number it will not get. */
 export const CANDIDATE_LIMIT = 200
 
-/** The nine fields, in one place, so the route, the projection and the test
- *  cannot drift apart. */
+/**
+ * The eleven fields, in one place, so the route, the projection and the test
+ * cannot drift apart.
+ *
+ * IT WAS NINE UNTIL QUEUE.dedupe, AND THE TWO IT GAINED ARE THE BUG FIX.
+ * `track_id` is what makes the FLAC, the 320 and the m4a of one recording one
+ * song instead of three candidates that score identically and all get queued;
+ * `quality_tier` is the first term of the rule that decides which of them
+ * survives (queue-engine.ts `preferredCopy`). Both come straight off
+ * `pool_list`, which has returned them all along — the projection simply threw
+ * them away. NO MIGRATION, and none was needed.
+ *
+ * Adding a TWELFTH still has to be argued for. The narrowing is the point.
+ */
 export const TRACK_FEATURE_KEYS = [
-  'file_id', 'display_artist', 'display_title', 'duration_ms', 'bpm',
-  'key_camelot', 'like_count', 'play_count', 'created_at',
+  'file_id', 'track_id', 'display_artist', 'display_title', 'duration_ms',
+  'bpm', 'key_camelot', 'quality_tier', 'like_count', 'play_count',
+  'created_at',
 ] as const
 
 /** What the request narrows by: the seed's key and tempo, nothing else. */
@@ -122,18 +144,28 @@ const count = (v: unknown): number =>
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
 /**
- * pool_list row -> the nine fields, and NOTHING else. Written as an explicit
+ * pool_list row -> the eleven fields, and NOTHING else. Written as an explicit
  * object rather than a pick-list loop so that adding a field is a deliberate
  * edit somebody has to justify, which is the whole guard.
+ *
+ * `track_id` NORMALISES TO NULL, and that is not tidiness. A file the matcher
+ * has never grouped has a null recording, and queue-model.ts treats null as
+ * ITS OWN IDENTITY — never as a shared "unknown" bucket that would collapse
+ * every unmatched file in the pool into one queue entry. An empty string
+ * arriving from anywhere is the same statement, so `str` answering null for a
+ * non-string and this line answering null for `''` are the same rule.
  */
 export function toTrackFeatures(row: Record<string, unknown>): TrackFeatures {
+  const track = str(row.track_id)
   return {
     file_id: String(row.file_id),
+    track_id: track === null || track === '' ? null : track,
     display_artist: str(row.display_artist),
     display_title: typeof row.display_title === 'string' ? row.display_title : '',
     duration_ms: num(row.duration_ms),
     bpm: num(row.bpm),
     key_camelot: str(row.key_camelot),
+    quality_tier: num(row.quality_tier),
     like_count: count(row.like_count),
     play_count: count(row.play_count),
     created_at: typeof row.created_at === 'string' ? row.created_at : '',

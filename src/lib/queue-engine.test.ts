@@ -5,7 +5,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  confirmMessage, HISTORY_MAX, reduce, regenerate, requiresClearConfirm, seedFor,
+  collapseByRecording, confirmMessage, HISTORY_MAX, preferredCopy, reduce,
+  regenerate, requiresClearConfirm, seedFor,
   type CandidatePort, type QueueEvent,
 } from './queue-engine'
 import {
@@ -30,11 +31,13 @@ const many = (n: number, prefix = 'e'): QueueEntry[] =>
 
 const feature = (id: string, over: Partial<TrackFeatures> = {}): TrackFeatures => ({
   file_id: id,
+  track_id: null,
   display_artist: null,
   display_title: id,
   duration_ms: null,
   bpm: 128,
   key_camelot: '8A',
+  quality_tier: null,
   like_count: 0,
   play_count: 0,
   created_at: '2026-01-01T00:00:00Z',
@@ -1204,5 +1207,271 @@ describe('regenerate', () => {
     const a = await regenerate(s, port)
     const b = await regenerate(s, port)
     expect(a.map((e) => e.file_id)).toEqual(b.map((e) => e.file_id))
+  })
+})
+
+// ===========================================================================
+// QUEUE.dedupe — "everytime I select 'Mix' or 'Tempo' automix...I just have
+// same song 2-4 times." The pool stores ~1,884 files under ~1,032 recordings.
+// ===========================================================================
+
+describe('preferredCopy — which encode of a recording the queue plays', () => {
+  it('takes the higher quality tier first', () => {
+    const flac = feature('flac', { quality_tier: 5 })
+    const lossy = feature('mp3', { quality_tier: 2 })
+    expect(preferredCopy(flac, lossy)).toBeLessThan(0)
+    expect(preferredCopy(lossy, flac)).toBeGreaterThan(0)
+  })
+
+  it('SORTS A NEVER-ANALYSED FILE LAST — it may be the FLAC, but nothing measured it', () => {
+    const unknown = feature('unknown', { quality_tier: null })
+    const worst = feature('t1', { quality_tier: 1 })
+    expect(preferredCopy(worst, unknown)).toBeLessThan(0)
+  })
+
+  it('falls back to the NEWEST file — track_face_file()\'s own second arm', () => {
+    const old = feature('old', { quality_tier: 5, created_at: '2026-01-01T00:00:00Z' })
+    const fresh = feature('new', { quality_tier: 5, created_at: '2026-08-01T00:00:00Z' })
+    expect(preferredCopy(fresh, old)).toBeLessThan(0)
+  })
+
+  it('breaks a total tie on file_id, so the drawer shows the same encode after a reload', () => {
+    const a = feature('aaa', { quality_tier: 3 })
+    const b = feature('bbb', { quality_tier: 3 })
+    expect(preferredCopy(a, b)).toBeLessThan(0)
+    expect(preferredCopy(b, a)).toBeGreaterThan(0)
+    expect(preferredCopy(a, a)).toBe(0)
+  })
+
+  it('treats an unparseable created_at as the epoch rather than as NaN', () => {
+    const bad = feature('bad', { quality_tier: 3, created_at: 'not a date' })
+    const good = feature('good', { quality_tier: 3, created_at: '2020-01-01T00:00:00Z' })
+    expect(preferredCopy(good, bad)).toBeLessThan(0)
+  })
+})
+
+describe('collapseByRecording — one row per song, before any strategy sees it', () => {
+  it('keeps ONE of four encodes, and keeps the preferred one', () => {
+    const rows = [
+      feature('m4a', { track_id: 'song', quality_tier: 2 }),
+      feature('flac', { track_id: 'song', quality_tier: 5 }),
+      feature('mp3-320', { track_id: 'song', quality_tier: 3 }),
+      feature('mp3-192', { track_id: 'song', quality_tier: 1 }),
+    ]
+    expect(collapseByRecording(rows).map((c) => c.file_id)).toEqual(['flac'])
+  })
+
+  it('gives the winner the position of the FIRST row of its recording', () => {
+    const rows = [
+      feature('a', { track_id: 'r1', quality_tier: 2 }),
+      feature('b', { track_id: 'r2', quality_tier: 5 }),
+      feature('a-better', { track_id: 'r1', quality_tier: 5 }),
+    ]
+    // Order is p_sort: 'added_desc'; collapsing must not reshuffle it.
+    expect(collapseByRecording(rows).map((c) => c.file_id)).toEqual(['a-better', 'b'])
+  })
+
+  it('leaves an unmatched file alone — a null recording is a group of one', () => {
+    const rows = [
+      feature('n1', { track_id: null }),
+      feature('n2', { track_id: null }),
+      feature('n3', { track_id: null }),
+    ]
+    expect(collapseByRecording(rows)).toHaveLength(3)
+  })
+
+  it('is deterministic whatever order the rows arrive in', () => {
+    const rows = [
+      feature('a', { track_id: 'r', quality_tier: 5, created_at: '2026-01-01T00:00:00Z' }),
+      feature('b', { track_id: 'r', quality_tier: 5, created_at: '2026-01-01T00:00:00Z' }),
+    ]
+    expect(collapseByRecording(rows)[0].file_id).toBe('a')
+    expect(collapseByRecording([...rows].reverse())[0].file_id).toBe('a')
+  })
+
+  it('does not mutate its input', () => {
+    const rows = Object.freeze([
+      feature('a', { track_id: 'r', quality_tier: 1 }),
+      feature('b', { track_id: 'r', quality_tier: 5 }),
+    ]) as TrackFeatures[]
+    expect(() => collapseByRecording(rows)).not.toThrow()
+    expect(rows).toHaveLength(2)
+  })
+})
+
+describe('the auto tail never holds one song twice', () => {
+  /** Four encodes of every recording, exactly as the pool stores them. */
+  const encodes = (recordings: number): TrackFeatures[] =>
+    Array.from({ length: recordings }, (_, r) =>
+      [5, 3, 2, 1].map((tier, k) =>
+        feature(`r${r}-e${k}`, {
+          track_id: `rec${r}`,
+          quality_tier: tier,
+          // Same audio, so the strategies score every encode identically —
+          // which is precisely why all four used to get queued.
+          bpm: 128 + r * 0.1,
+          key_camelot: '8A',
+        }))).flat()
+
+  for (const method of ['harmonic', 'bpm'] as const) {
+    it(`${method.toUpperCase()} — a batch of 4 copies each yields one entry per recording`, async () => {
+      const port = port$(async () => encodes(6))
+      const queue = await regenerate(state({ current: entry('c'), method }), port)
+      const tail = queue.filter((e) => e.origin === 'auto')
+      expect(tail).toHaveLength(6)
+      expect(new Set(tail.map((e) => e.track_id)).size).toBe(6)
+    })
+
+    it(`${method.toUpperCase()} — the entry it keeps is the PREFERRED copy`, async () => {
+      const port = port$(async () => encodes(3))
+      const queue = await regenerate(state({ current: entry('c'), method }), port)
+      for (const e of queue.filter((x) => x.origin === 'auto')) {
+        expect(e.file_id).toMatch(/-e0$/)
+      }
+    })
+  }
+
+  it('SHUFFLE too — the collapse is the engine\'s, not one strategy\'s', async () => {
+    const port = port$(async () => encodes(5))
+    const queue = await regenerate(state({ current: entry('c'), method: 'shuffle' }), port)
+    const tail = queue.filter((e) => e.origin === 'auto')
+    expect(tail).toHaveLength(5)
+    expect(new Set(tail.map((e) => e.track_id)).size).toBe(5)
+  })
+
+  it('THE REGRESSION THAT WOULD HAVE CAUGHT THIS — no two tail entries share a recording', async () => {
+    const port = port$(async () => encodes(40))
+    const queue = await regenerate(state({ current: entry('c'), method: 'harmonic' }), port)
+    const recordings = queue.filter((e) => e.origin === 'auto').map((e) => e.track_id)
+    expect(recordings).toHaveLength(24)
+    expect(new Set(recordings).size).toBe(recordings.length)
+  })
+
+  it('carries the recording ONTO the auto entry, so the NEXT regeneration knows it', async () => {
+    const port = port$(async () => encodes(2))
+    const queue = await regenerate(state({ current: entry('c'), method: 'harmonic' }), port)
+    expect(queue.filter((e) => e.origin === 'auto').every((e) => e.track_id !== null)).toBe(true)
+  })
+
+  it('NEVER RE-QUEUES WHAT IS PLAYING, however many encodes of it the pool holds', async () => {
+    const port = port$(async () => encodes(3))
+    const s = state({ current: entry('c', { track_id: 'rec1' }), method: 'harmonic' })
+    const queue = await regenerate(s, port)
+    expect(queue.filter((e) => e.origin === 'auto').map((e) => e.track_id))
+      .toEqual(['rec0', 'rec2'])
+  })
+
+  it('never adds a recording the intent layer already pinned', async () => {
+    const port = port$(async () => encodes(3))
+    const s = state({
+      current: entry('c'),
+      intent: [entry('mine', { track_id: 'rec0' })],
+      method: 'harmonic',
+    })
+    const queue = await regenerate(s, port)
+    expect(queue.filter((e) => e.origin === 'auto').map((e) => e.track_id))
+      .toEqual(['rec1', 'rec2'])
+  })
+
+  it('never re-queues a recording HISTORY consumed under a different file id', async () => {
+    const port = port$(async () => encodes(3))
+    const s = state({ current: entry('c'), history: ['rec:rec1'], method: 'harmonic' })
+    const queue = await regenerate(s, port)
+    expect(queue.filter((e) => e.origin === 'auto').map((e) => e.track_id))
+      .toEqual(['rec0', 'rec2'])
+  })
+
+  it('DEDUPE MUST NOT STARVE THE TAIL — 30 recordings still fill all 24 slots', async () => {
+    const port = port$(async () => encodes(30))
+    const queue = await regenerate(state({ current: entry('c'), method: 'harmonic' }), port)
+    expect(queue).toHaveLength(QUEUE_MAX)
+    expect(queue.filter((e) => e.origin === 'auto')).toHaveLength(24)
+  })
+
+  it('SOMETIMES LESS IS CORRECT — 5 recordings x 4 encodes fill 5 slots, not 20', async () => {
+    // §1.3: a pool with fewer distinct RECORDINGS than slots gives a short
+    // tail, and that is the honest answer rather than a defect. Before
+    // QUEUE.dedupe this returned twenty rows and five songs.
+    const port = port$(async () => encodes(5))
+    const queue = await regenerate(state({ current: entry('c'), method: 'harmonic' }), port)
+    expect(queue.filter((e) => e.origin === 'auto')).toHaveLength(5)
+  })
+
+  it('stays deterministic across two regenerations of the same state', async () => {
+    const port = port$(async () => encodes(30))
+    const s = state({ current: entry('c'), method: 'harmonic' })
+    const a = await regenerate(s, port)
+    const b = await regenerate(s, port)
+    expect(a.map((e) => e.file_id)).toEqual(b.map((e) => e.file_id))
+  })
+
+  it('is unchanged for a pool of unmatched files — legacy behaviour, exactly', async () => {
+    const port = port$(async () => Array.from({ length: 8 }, (_, i) =>
+      feature(`u${i}`, { track_id: null })))
+    const queue = await regenerate(state({ current: entry('c'), method: 'harmonic' }), port)
+    expect(queue.filter((e) => e.origin === 'auto')).toHaveLength(8)
+  })
+})
+
+describe('reduce remembers the SONG, not only the encode', () => {
+  it('pushes both tokens when a track is consumed, file first', () => {
+    const s = state({ current: entry('c', { track_id: 'rc' }), method: 'harmonic' })
+    const queue = [s.current as QueueEntry, entry('next', { track_id: 'rn' })]
+    const { state: next } = reduce(s, { type: 'TRACK_ENDED', queue })
+    expect(next.history).toEqual(['c', 'rec:rc'])
+  })
+
+  it('pushes only the file for an entry that never knew its recording', () => {
+    const s = state({ current: entry('c'), method: 'harmonic' })
+    const { state: next } = reduce(s, { type: 'TRACK_ENDED', queue: [s.current as QueueEntry] })
+    expect(next.history).toEqual(['c'])
+  })
+
+  it('SUPPRESSES THE RECORDING — removing an auto row must not re-pick another encode', async () => {
+    const port = port$(async () => [
+      feature('flac', { track_id: 'song', quality_tier: 5 }),
+      feature('mp3', { track_id: 'song', quality_tier: 2 }),
+      feature('other', { track_id: 'other' }),
+    ])
+    const before = state({ current: entry('c'), method: 'harmonic' })
+    const queue = await regenerate(before, port)
+    expect(queue.map((e) => e.file_id)).toContain('flac')
+
+    const { state: after } = reduce(before, {
+      type: 'REMOVE_QUEUE_ENTRY',
+      index: queue.findIndex((e) => e.file_id === 'flac'),
+      queue,
+    })
+    expect(after.suppressed).toEqual(['flac', 'rec:song'])
+    const requeued = await regenerate(after, port)
+    expect(requeued.map((e) => e.file_id)).toEqual(['c', 'other'])
+  })
+
+  it('A DEAD FILE IS NOT A DEAD SONG — failed takes the file id alone', () => {
+    const s = state({ current: entry('c', { track_id: 'rc' }), method: 'harmonic' })
+    const { state: next } = reduce(s, {
+      type: 'TRACK_FAILED', file_id: 'c', queue: [s.current as QueueEntry],
+    })
+    expect(next.failed).toEqual(['c'])
+  })
+
+  it('carries the recording through a play, so the tail can see the pins', () => {
+    const list = [entry('a', { track_id: 'ra' }), entry('b', { track_id: 'rb' })]
+    const { state: next } = reduce(emptyState(), {
+      type: 'PLAY_TRACK', file_id: 'a', list, index: 0, source_label: 'pool',
+    })
+    expect(next.current?.track_id).toBe('ra')
+    expect(next.intent.map((e) => e.track_id)).toEqual(['rb'])
+  })
+})
+
+describe('seedFor carries the recording', () => {
+  it('names the seed\'s recording so nothing downstream has to guess', () => {
+    const s = state({ current: entry('c', { track_id: 'rc' }) })
+    expect(seedFor(s)?.track_id).toBe('rc')
+  })
+
+  it('answers null for a seed that never had one', () => {
+    expect(seedFor(state({ current: entry('c') }))?.track_id).toBeNull()
   })
 })

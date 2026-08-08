@@ -219,6 +219,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               class="play playbtn"
               href={`/track/${t.file_id}`}
               data-track-id={t.file_id}
+              data-recording-id={t.track_id ?? undefined}
               data-artist={t.display_artist ?? undefined}
               data-title={t.display_title}
               data-duration={t.duration_ms ?? undefined}
@@ -413,10 +414,25 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
                   </span>
                 </div>
                 <div class="formatrow-do">
+                  {/* QUEUE.dedupe — and this list is the surface that makes
+                      `data-recording-id` matter most. Every row here is one
+                      encode of the SAME recording, so a member who plays the
+                      FLAC from this list must not then get the 320 of it in
+                      the auto tail. `data-track-id` is the FILE, exactly as
+                      it is everywhere else in the app; the new attribute is
+                      the recording. Per-row rather than the page's own
+                      `t.track_id`, so the value is the row's own fact.
+
+                      A COMMENT MUST NOT SIT INSIDE THE ATTRIBUTE LIST. One
+                      did, and `astro check` answered with THIRTY errors
+                      naming `article`, `button` and `hidden` — the parser
+                      loses the element and every tag after it. `astro build`
+                      passed the whole time. check is the gate, not build. */}
                   <a
                     class="play btn-secondary"
                     href={formatPlayHref(f.file_id)}
                     data-track-id={f.file_id}
+                    data-recording-id={f.track_id ?? undefined}
                     data-artist={f.display_artist ?? undefined}
                     data-title={f.display_title}
                     data-duration={f.duration_ms ?? undefined}

@@ -20,11 +20,39 @@ const row = (over: Partial<QueueRowData> & { file_id: string }): QueueRowData =>
   ...over,
 })
 
+describe('the recording rides in on data-recording-id', () => {
+  it('carries a recording through onto the entry', () => {
+    expect(toQueueEntry(row({ file_id: 'a', track_id: 'r1' }), 'list', null).track_id).toBe('r1')
+  })
+
+  for (const [why, value] of [
+    ['absent (a surface not yet taught to emit one)', undefined],
+    ['null', null],
+    ['the empty string (an Astro template rendering a null)', ''],
+    ['whitespace', '   '],
+  ] as Array<[string, string | null | undefined]>) {
+    it(`reads ${why} as NO recording, never as a shared one`, () => {
+      expect(toQueueEntry(row({ file_id: 'a', track_id: value }), 'list', null).track_id)
+        .toBeNull()
+    })
+  }
+
+  it('DOES NOT READ THE FILE ID INTO IT — the two attributes are one letter apart', () => {
+    // `data-track-id` is the FILE (the M6b selector); `data-recording-id` is
+    // the recording. Crossing them makes the queue exclude by the wrong id,
+    // which looks like nothing at all until the same song plays twice.
+    const e = toQueueEntry(row({ file_id: 'the-file' }), 'list', null)
+    expect(e.file_id).toBe('the-file')
+    expect(e.track_id).toBeNull()
+  })
+})
+
 describe('toQueueEntry — dataset strings onto the model', () => {
   it('parses the numeric fields out of their string form', () => {
     const e = toQueueEntry(row({ file_id: 'a' }), 'list', 'pool')
     expect(e).toEqual({
       file_id: 'a',
+      track_id: null,
       display_artist: 'Artist',
       display_title: 'Title',
       duration_ms: 240000,
@@ -90,10 +118,11 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
   // fields. This is the same guard queue-candidates.test.ts puts on
   // toTrackFeatures, on the same migration-20 argument: a projection that
   // leaks is a narrowing undone.
-  it('emits exactly the six queue fields and drops every other column', () => {
+  it('emits exactly the seven queue fields and drops every other column', () => {
     const out = toCrateTrack({
       position: 3,
       file_id: 'f1',
+      track_id: 'r1',
       display_artist: 'A',
       display_title: 'T',
       duration_ms: 1000,
@@ -111,7 +140,8 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
     })
     expect(Object.keys(out).sort()).toEqual([...CRATE_TRACK_KEYS].sort())
     expect(out).toEqual({
-      file_id: 'f1', artist: 'A', title: 'T', duration_ms: 1000, bpm: 128, key_camelot: '8A',
+      file_id: 'f1', track_id: 'r1', artist: 'A', title: 'T', duration_ms: 1000,
+      bpm: 128, key_camelot: '8A',
     })
   })
 
@@ -156,7 +186,8 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
       duration_ms: null, bpm: null, key_camelot: null,
     })
     expect(out).toEqual({
-      file_id: 'f2', artist: null, title: 'T2', duration_ms: null, bpm: null, key_camelot: null,
+      file_id: 'f2', track_id: null, artist: null, title: 'T2', duration_ms: null,
+      bpm: null, key_camelot: null,
     })
   })
 })
@@ -382,6 +413,13 @@ describe('resumedEntry — player memory onto the model', () => {
     const e = resumedEntry('f1', 'Paul Kalkbrenner — Press On')
     expect(e.file_id).toBe('f1')
     expect(e.display_title).toBe('Paul Kalkbrenner — Press On')
+  })
+
+  it('has NO recording — player memory never held one, and that degrades cleanly', () => {
+    // The bound is exact: the tail will not re-queue this FILE, but it may
+    // offer another encode of the same song once. The first real engine event
+    // restores the recording from the DOM.
+    expect(resumedEntry('f1', 'label').track_id).toBeNull()
   })
 
   it('renders in the drawer EXACTLY as the player bar wrote it', () => {

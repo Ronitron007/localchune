@@ -410,6 +410,28 @@ describe('a row is the play control — the whole row, not a glyph', () => {
     expect(code).toContain('a.play[data-track-id]')
   })
 
+  /**
+   * QUEUE.dedupe. `data-track-id` still means the FILE — it is the selector,
+   * and renaming it to fix a queue bug would have rewritten scrapeRows,
+   * playLinkFor and scrapeOne at once. The RECORDING arrived as a second,
+   * unambiguous attribute, and BOTH scrapers must read it: a row scraped
+   * without one produces a queue entry the engine cannot dedupe, which is
+   * invisible until the same song plays twice.
+   */
+  it('SCRAPES THE RECORDING AS WELL AS THE FILE, in both scrapers', () => {
+    for (const fn of ['function scrapeRows', 'function scrapeOne']) {
+      const at = code.indexOf(fn)
+      expect(at, `${fn} exists`).toBeGreaterThan(-1)
+      const body = code.slice(at, code.indexOf('\n}', at) + 2)
+      expect(body, `${fn} reads the recording id`).toContain('dataset.recordingId')
+      expect(body, `${fn} puts it on the row`).toContain('track_id:')
+    }
+    // scrapeRows resolves the FILE off the same link; scrapeOne is handed it
+    // by its caller, which is why only one of the two names the attribute.
+    const rows = code.slice(code.indexOf('function scrapeRows'))
+    expect(rows.slice(0, rows.indexOf('\n}'))).toContain('dataset.trackId')
+  })
+
   it('resolves a tap anywhere in the row to that same link', () => {
     const at = code.indexOf('function playLinkFromTap')
     expect(at, 'the resolution lives in one named function').toBeGreaterThan(-1)

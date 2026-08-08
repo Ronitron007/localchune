@@ -30,11 +30,19 @@ import {
  * src/lib/queue-candidates.ts for the argument in full.
  *
  * THE PROJECTION IS NOT DECORATION. `pool_list` returns 29 columns; a queue
- * tail needs nine. `toTrackFeatures` drops the rest before anything reaches
+ * tail needs eleven. `toTrackFeatures` drops the rest before anything reaches
  * the browser, which keeps a regeneration cheap and keeps migration 20's
  * narrowing narrow. Do not widen it to "save a round trip" — there is no
  * round trip to save; the drawer renders from the queue entries it already
  * has.
+ *
+ * ONE ROW PER FILE, STILL, AND ON PURPOSE. POOL.1 gave `pool_list` a
+ * `p_collapse` that answers one row per RECORDING, and this route does not
+ * pass it. The queue's duplicate bug — "I just have same song 2-4 times" — is
+ * fixed in `queue-engine.ts` instead, because collapsing here would take the
+ * choice of WHICH encode to play away from the only code that knows what is
+ * already queued. `candidateArgs` is unchanged and its absence-assertions
+ * still hold.
  *
  * `{error}` JSON on every failure, with the same caveat `/source` carries:
  * src/middleware.ts redirects a request with no live member to /login and
