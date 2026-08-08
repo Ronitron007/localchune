@@ -19,6 +19,10 @@ const NOW = Date.parse('2026-08-05T12:00:00.000Z')
 
 const entry = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({
   file_id: id,
+  // Explicitly null rather than absent: `projectEntry` normalises an absent
+  // recording to null on the way out, so a fixture that omitted it would make
+  // every round-trip assertion below fail for the wrong reason.
+  track_id: null,
   display_artist: 'artist',
   display_title: id,
   duration_ms: 300_000,

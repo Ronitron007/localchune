@@ -219,6 +219,7 @@ const released = formatTagDate(prov.release_date) ?? prov.release_date
               class="play playbtn"
               href={`/track/${t.file_id}`}
               data-track-id={t.file_id}
+              data-recording-id={t.track_id ?? undefined}
               data-artist={t.display_artist ?? undefined}
               data-title={t.display_title}
               data-duration={t.duration_ms ?? undefined}

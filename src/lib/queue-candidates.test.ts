@@ -19,11 +19,13 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 const seedFeature = (over: Partial<TrackFeatures> = {}): TrackFeatures => ({
   file_id: 'seed',
+  track_id: null,
   display_artist: null,
   display_title: 'seed',
   duration_ms: null,
   bpm: 128,
   key_camelot: '8A',
+  quality_tier: null,
   like_count: 0,
   play_count: 0,
   created_at: '2026-01-01T00:00:00Z',
@@ -218,10 +220,10 @@ describe('parseCandidateQuery — the route\'s validator, total and never throwi
 })
 
 describe('toTrackFeatures — the projection IS the point', () => {
-  it('EMITS EXACTLY THE NINE TrackFeatures FIELDS AND NOTHING ELSE', () => {
+  it('EMITS EXACTLY THE ELEVEN TrackFeatures FIELDS AND NOTHING ELSE', () => {
     const out = toTrackFeatures(poolRow())
     expect(Object.keys(out).sort()).toEqual([...TRACK_FEATURE_KEYS].sort())
-    expect(Object.keys(out)).toHaveLength(9)
+    expect(Object.keys(out)).toHaveLength(11)
   })
 
   it('DROPS provenance — the migration-20/28 narrowing, held on the wire side', () => {
@@ -232,10 +234,14 @@ describe('toTrackFeatures — the projection IS the point', () => {
 
   it('drops every other pool_list column a queue tail has no use for', () => {
     const out = toTrackFeatures(poolRow()) as unknown as Record<string, unknown>
+    // `track_id` and `quality_tier` LEFT THIS LIST AT QUEUE.dedupe, and that
+    // is the whole fix: the recording is what makes three encodes one song,
+    // the tier is what picks which encode survives. Everything else stays
+    // out — the narrowing is still the point.
     for (const gone of [
-      'track_id', 'uploaded_by', 'uploader_name', 'original_filename', 'container',
+      'uploaded_by', 'uploader_name', 'original_filename', 'container',
       'byte_size', 'ibi_std_ms', 'key_open', 'key_musical', 'camelot_sort',
-      'quality_tier', 'lossy_ancestor', 'meas_cutoff_hz', 'integrated_lufs',
+      'lossy_ancestor', 'meas_cutoff_hz', 'integrated_lufs',
       'has_preview', 'has_peaks', 'has_thumb', 'row_cursor', 'download_count',
       'tags', 'liked_by_me',
     ]) {
@@ -243,18 +249,21 @@ describe('toTrackFeatures — the projection IS the point', () => {
     }
   })
 
-  it('carries the nine through with their values intact', () => {
-    expect(toTrackFeatures(poolRow())).toEqual({
-      file_id: '11111111-1111-1111-1111-111111111111',
-      display_artist: 'Artist',
-      display_title: 'Title',
-      duration_ms: 320_000,
-      bpm: 128,
-      key_camelot: '8A',
-      like_count: 7,
-      play_count: 41,
-      created_at: '2026-07-01T00:00:00Z',
-    })
+  it('carries the eleven through with their values intact', () => {
+    expect(toTrackFeatures(poolRow({ track_id: '33333333-3333-3333-3333-333333333333' })))
+      .toEqual({
+        file_id: '11111111-1111-1111-1111-111111111111',
+        track_id: '33333333-3333-3333-3333-333333333333',
+        display_artist: 'Artist',
+        display_title: 'Title',
+        duration_ms: 320_000,
+        bpm: 128,
+        key_camelot: '8A',
+        quality_tier: 1,
+        like_count: 7,
+        play_count: 41,
+        created_at: '2026-07-01T00:00:00Z',
+      })
   })
 
   it('coalesces the counts and tolerates the nulls the schema allows', () => {

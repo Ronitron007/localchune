@@ -5,8 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  assembleQueue, AUTO_METHODS, DEFAULT_METHOD, emptyState, excludedIds, isAutoMethod,
-  QUEUE_MAX, slotsFor, truncateIntent, type QueueEntry, type QueueState,
+  assembleQueue, AUTO_METHODS, DEFAULT_METHOD, emptyState, excludedKeys, identityTokens,
+  isAutoMethod, isTaken, QUEUE_MAX, RECORDING_TOKEN, recordingOf, slotsFor, take,
+  truncateIntent, type QueueEntry, type QueueState,
 } from './queue-model'
 
 const entry = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({
@@ -142,9 +143,9 @@ describe('truncateIntent — the cap is enforced ON WRITE', () => {
   })
 })
 
-describe('excludedIds', () => {
+describe('excludedKeys', () => {
   it('is empty for an empty state', () => {
-    expect(excludedIds(emptyState()).size).toBe(0)
+    expect(excludedKeys(emptyState()).size).toBe(0)
   })
 
   it('covers current, intent, history, failed and suppressed', () => {
@@ -155,17 +156,17 @@ describe('excludedIds', () => {
       failed: ['f1'],
       suppressed: ['s1'],
     })
-    expect([...excludedIds(s)].sort()).toEqual(['cur', 'f1', 'h1', 'i1', 'i2', 's1'])
+    expect([...excludedKeys(s)].sort()).toEqual(['cur', 'f1', 'h1', 'i1', 'i2', 's1'])
   })
 
   it('dedupes an id that appears in more than one source', () => {
     const s = state({ current: entry('x'), history: ['x'], failed: ['x'], suppressed: ['x'] })
-    expect(excludedIds(s).size).toBe(1)
+    expect(excludedKeys(s).size).toBe(1)
   })
 
   it('does not mutate the state it reads', () => {
     const s = frozen(state({ current: entry('c'), history: ['h'] }))
-    expect(() => excludedIds(s)).not.toThrow()
+    expect(() => excludedKeys(s)).not.toThrow()
     expect(s.history).toEqual(['h'])
   })
 })

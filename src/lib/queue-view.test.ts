@@ -25,6 +25,7 @@ describe('toQueueEntry — dataset strings onto the model', () => {
     const e = toQueueEntry(row({ file_id: 'a' }), 'list', 'pool')
     expect(e).toEqual({
       file_id: 'a',
+      track_id: null,
       display_artist: 'Artist',
       display_title: 'Title',
       duration_ms: 240000,
@@ -90,10 +91,11 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
   // fields. This is the same guard queue-candidates.test.ts puts on
   // toTrackFeatures, on the same migration-20 argument: a projection that
   // leaks is a narrowing undone.
-  it('emits exactly the six queue fields and drops every other column', () => {
+  it('emits exactly the seven queue fields and drops every other column', () => {
     const out = toCrateTrack({
       position: 3,
       file_id: 'f1',
+      track_id: 'r1',
       display_artist: 'A',
       display_title: 'T',
       duration_ms: 1000,
@@ -111,7 +113,8 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
     })
     expect(Object.keys(out).sort()).toEqual([...CRATE_TRACK_KEYS].sort())
     expect(out).toEqual({
-      file_id: 'f1', artist: 'A', title: 'T', duration_ms: 1000, bpm: 128, key_camelot: '8A',
+      file_id: 'f1', track_id: 'r1', artist: 'A', title: 'T', duration_ms: 1000,
+      bpm: 128, key_camelot: '8A',
     })
   })
 
@@ -156,7 +159,8 @@ describe('toCrateTrack — the crate route\'s wire projection', () => {
       duration_ms: null, bpm: null, key_camelot: null,
     })
     expect(out).toEqual({
-      file_id: 'f2', artist: null, title: 'T2', duration_ms: null, bpm: null, key_camelot: null,
+      file_id: 'f2', track_id: null, artist: null, title: 'T2', duration_ms: null,
+      bpm: null, key_camelot: null,
     })
   })
 })

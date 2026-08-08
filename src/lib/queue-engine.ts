@@ -35,7 +35,8 @@
  */
 
 import {
-  assembleQueue, excludedIds, HISTORY_MAX, QUEUE_MAX, slotsFor, truncateIntent,
+  assembleQueue, excludedKeys, HISTORY_MAX, identityTokens, isTaken, QUEUE_MAX,
+  recordingOf, slotsFor, truncateIntent,
   type AutoMethod, type QueueEntry, type QueueState,
 } from './queue-model'
 import {
@@ -127,7 +128,10 @@ const copy = (s: QueueState): QueueState => ({
   suppressed: s.suppressed.slice(),
 })
 
-/** Most-recent-first, deduped, bounded. */
+/** Most-recent-first, deduped, bounded. Takes IDENTITY TOKENS, not file ids —
+ *  see queue-model.ts's `identityTokens`. A consumed entry contributes two of
+ *  them when it knows its recording, so `history` remembers the SONG and not
+ *  just the encode. */
 const pushFront = (list: readonly string[], ids: readonly string[], max: number): string[] => {
   const out: string[] = []
   const seen = new Set<string>()
@@ -166,7 +170,7 @@ function replaceWith(
   next.current = asCurrent({ ...chosen, source_label: label })
   next.history = outgoing === null
     ? next.history
-    : pushFront(next.history, [outgoing.file_id], HISTORY_MAX)
+    : pushFront(next.history, identityTokens(outgoing), HISTORY_MAX)
 
   const { slots } = slotsFor({ ...next, intent: [] })
   const tail = stamp(list.slice(at + 1), origin, label)
@@ -184,6 +188,20 @@ function replaceWith(
   }
 }
 
+/**
+ * LAYER 1 DEDUPES BY FILE, NOT BY RECORDING, AND THAT IS DELIBERATE.
+ *
+ * The auto tail collapses encodes because nobody asked for three copies of one
+ * song — it is the strategy's arithmetic, and the member never chose it. Layer
+ * 1 is the opposite: "the user's explicit choices, in their order", and a
+ * member who queues a specific encode off /track/[id]'s formats list has made
+ * a choice this function has no business overruling. Silently dropping their
+ * FLAC because the 320 is already pinned would be a worse bug than the one
+ * QUEUE.dedupe fixes, and it would be invisible.
+ *
+ * The tail still refuses to ADD a recording layer 1 already holds — that is
+ * `excludedKeys`, and it is the half that matters.
+ */
 const dedupe = (entries: readonly QueueEntry[]): QueueEntry[] => {
   const seen = new Set<string>()
   const out: QueueEntry[] = []
@@ -219,7 +237,9 @@ function advanceTo(
 
   // Ordered so the OUTGOING current lands at history[0] — the most recently
   // played thing, which is where a future PREV will look for it.
-  next.history = pushFront(next.history, consumed.map((e) => e.file_id), HISTORY_MAX)
+  // `flatMap`, because a consumed entry that knows its recording remembers
+  // BOTH: the file it was, and the song it is.
+  next.history = pushFront(next.history, consumed.flatMap(identityTokens), HISTORY_MAX)
   next.current = incoming === null ? null : asCurrent(incoming)
 
   const pinned = new Set(prev.intent.map((e) => e.file_id))
@@ -374,8 +394,11 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
         next.intent = next.intent.filter((e) => e.file_id !== target.file_id)
       } else {
         // An AUTO entry. Without the suppression the regeneration that
-        // immediately follows re-picks it and the button looks broken.
-        next.suppressed = pushFront(next.suppressed, [target.file_id], HISTORY_MAX)
+        // immediately follows re-picks it and the button looks broken — and
+        // before QUEUE.dedupe it re-picked it as a DIFFERENT ENCODE of the
+        // same recording, which looked identical in the drawer and was the
+        // same broken button. Suppressing the recording is what closes that.
+        next.suppressed = pushFront(next.suppressed, identityTokens(target), HISTORY_MAX)
       }
       return { state: next }
     }
@@ -425,6 +448,20 @@ export function reduce(state: QueueState, event: QueueEvent): ReduceResult {
       return { state: next }
     }
 
+    /**
+     * A DEAD FILE IS NOT A DEAD SONG. `failed` takes the bare file id and
+     * NOTHING ELSE — `identityTokens` is deliberately not called here, and the
+     * asymmetry with REMOVE_QUEUE_ENTRY above is the point. A 404 on one
+     * encode says nothing about the other three, so striking the recording
+     * would let one dead R2 object mark a song unplayable for good. (The
+     * event carries only a file id anyway: site.ts fires it off the <audio>
+     * element's `currentFileId`, which is all the transport knows.)
+     *
+     * The recording still lands in `history` a line later, because
+     * `advanceTo` consumes the outgoing `current` exactly as it does for a
+     * played track. That is the right bound: not re-queued THIS session,
+     * because the member has already been through it, but not struck.
+     */
     case 'TRACK_FAILED': {
       const marked = copy(state)
       marked.failed = pushFront(marked.failed, [event.file_id], HISTORY_MAX)
@@ -514,19 +551,25 @@ export function seedFor(state: QueueState): TrackFeatures | null {
   if (!e) return null
   return {
     file_id: e.file_id,
+    track_id: recordingOf(e),
     display_artist: e.display_artist,
     display_title: e.display_title,
     duration_ms: e.duration_ms,
     bpm: e.bpm,
     key_camelot: e.key_camelot,
+    quality_tier: null,
     like_count: 0,
     play_count: 0,
     created_at: '',
   }
 }
 
+/** THE RECORDING TRAVELS WITH THE ENTRY. Without this line the tail's own
+ *  entries know only their file, so the NEXT regeneration cannot tell that the
+ *  320 it is about to add is the FLAC it added a moment ago. */
 const toAutoEntry = (t: TrackFeatures, label: string): QueueEntry => ({
   file_id: t.file_id,
+  track_id: t.track_id,
   display_artist: t.display_artist,
   display_title: t.display_title,
   duration_ms: t.duration_ms,
@@ -535,6 +578,92 @@ const toAutoEntry = (t: TrackFeatures, label: string): QueueEntry => ({
   origin: 'auto',
   source_label: label,
 })
+
+// ------------------------------------------------- the preferred copy
+
+/**
+ * WHICH ENCODE OF A RECORDING THE QUEUE PLAYS. Lower is better; a total order,
+ * so the answer never flaps between two fetches that returned the same rows in
+ * a different sequence.
+ *
+ *   1. QUALITY TIER, highest first. 1..5 from the analysis worker, and its own
+ *      keep-if-better test is `b.tier > a.tier` — the same direction
+ *      `pool_list(p_tier_min)` filters in. A never-analysed file (null) sorts
+ *      LAST: it may well be the FLAC, but nothing has measured it, and
+ *      guessing is how a 96 kbps rip wins.
+ *   2. NEWEST `created_at`. This is `track_face_file()`'s own fallback arm,
+ *      verbatim — "the track's newest stored file" — so when the tier cannot
+ *      separate two encodes the queue picks the file the pool's face rule
+ *      would have picked.
+ *   3. `file_id` ASCENDING. Never reached in practice; there so that two rows
+ *      identical in every measured way still have ONE answer, and the drawer
+ *      shows the same encode after a reload.
+ *
+ * WHY NOT `track_face_file()` ITSELF. It reads `tracks.preferred_file_id`,
+ * which `pool_list` does not return, so asking for it means a migration and a
+ * wider projection on every regeneration. `preferred_file_id` is what
+ * `dedup_resolve()` elects by keep-if-better — i.e. by tier — so term 1 is
+ * that election recomputed from the row we already have, and term 2 is the
+ * fallback arm copied exactly. The queue and the pool therefore agree without
+ * a new column, and the one case they can disagree in is a track whose
+ * preferred file an operator overrode by hand.
+ */
+export function preferredCopy(a: TrackFeatures, b: TrackFeatures): number {
+  const ta = typeof a.quality_tier === 'number' ? a.quality_tier : -1
+  const tb = typeof b.quality_tier === 'number' ? b.quality_tier : -1
+  if (ta !== tb) return tb - ta
+
+  const ca = Date.parse(a.created_at)
+  const cb = Date.parse(b.created_at)
+  const na = Number.isNaN(ca) ? 0 : ca
+  const nb = Number.isNaN(cb) ? 0 : cb
+  if (na !== nb) return nb - na
+
+  return a.file_id < b.file_id ? -1 : a.file_id > b.file_id ? 1 : 0
+}
+
+/**
+ * ONE ROW PER RECORDING — the fix for "I just have same song 2-4 times".
+ *
+ * `/api/queue/candidates` STAYS PER-FILE ON PURPOSE (POOL.1 protected that
+ * with its own `candidateArgs` and a set of absence-assertions): the engine
+ * has to be able to CHOOSE which encode to play, and a feed that had already
+ * collapsed would have made that choice for it, server-side, with less
+ * information. So the collapse happens HERE, after the exclusion filter and
+ * before any strategy sees a row.
+ *
+ * DOING IT HERE RATHER THAN IN `assembleQueue` ALONE IS WHAT MAKES THE TAIL
+ * FILL. Rejecting the duplicate at assembly time would leave the greedy walk
+ * spending picks on rows that are about to be thrown away — 24 slots asked
+ * for, three distinct songs delivered. Collapsing first means every pick the
+ * strategy makes is a song, so the tail fills to the cap whenever the pool has
+ * the recordings to fill it.
+ *
+ * ORDER IS PRESERVED: the winner takes the position of the FIRST row of its
+ * recording, so `p_sort: 'added_desc'` still describes the candidate list.
+ * A null recording is its own group of one and is never merged with anything.
+ */
+export function collapseByRecording(
+  candidates: readonly TrackFeatures[],
+): TrackFeatures[] {
+  const at = new Map<string, number>()
+  const out: TrackFeatures[] = []
+  for (const c of candidates) {
+    const rec = recordingOf(c)
+    if (rec === null) {
+      out.push(c)
+      continue
+    }
+    const seen = at.get(rec)
+    if (seen === undefined) {
+      at.set(rec, out.length)
+      out.push(c)
+    } else if (preferredCopy(c, out[seen]) < 0) {
+      out[seen] = c
+    }
+  }
+  return out
+}
 
 /**
  * Recompute the whole array. The ONLY async surface, and the only place a
@@ -562,8 +691,13 @@ export async function regenerate(
     return assembleQueue(state, [])
   }
 
-  const excluded = excludedIds(state)
-  const candidates = fetched.filter((c) => !excluded.has(c.file_id))
+  // EXCLUDE, THEN COLLAPSE, IN THAT ORDER. The other order would let a copy
+  // that is already playing win its recording's group and then be dropped,
+  // taking the playable sibling with it — a song that vanishes from the tail
+  // for as long as it is in the queue.
+  const excluded = excludedKeys(state)
+  const candidates = collapseByRecording(
+    fetched.filter((c) => !isTaken(excluded, c)))
   const ctx: StrategyContext = { seed, candidates, history: state.history, need }
 
   const strategy = STRATEGIES[state.method]

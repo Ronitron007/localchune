@@ -45,6 +45,19 @@ export const LOOKAHEAD_S = 20
  */
 export interface QueueRowData {
   file_id: string
+  /**
+   * THE RECORDING, AND MIND THE NAME. In the DOM this arrives from
+   * `data-recording-id`, NOT from `data-track-id` — that attribute has held
+   * the FILE id since M6b (`a.play[data-track-id]` is the selector contract
+   * seven call sites and four tests pin), and renaming it would have been a
+   * repo-wide change to fix a queue bug. So the recording got a new,
+   * unambiguous attribute of its own and `data-track-id` did not move.
+   *
+   * Optional and nullable: a surface that has not been taught to emit it, and
+   * a file the matcher never grouped, both mean "this file is its own
+   * recording". See queue-model.ts's `TrackIdentity`.
+   */
+  track_id?: string | null
   artist?: string | null
   title?: string | null
   duration_ms?: string | number | null
@@ -68,11 +81,14 @@ const strOrNull = (v: string | null | undefined): string | null => {
   return t === '' ? null : t
 }
 
-/** The six keys `/api/crate/[id]/tracks` puts on the wire, in one place so the
- *  route, the projection and the test cannot drift apart — the same discipline
- *  TRACK_FEATURE_KEYS holds for the candidate route. */
+/** The seven keys `/api/crate/[id]/tracks` puts on the wire, in one place so
+ *  the route, the projection and the test cannot drift apart — the same
+ *  discipline TRACK_FEATURE_KEYS holds for the candidate route. It was six
+ *  until QUEUE.dedupe: a crate's tracks reach the queue without passing
+ *  through the DOM, so without `track_id` here a `+ QUEUE` off a crate card
+ *  would pin entries the auto tail could then duplicate. */
 export const CRATE_TRACK_KEYS = [
-  'file_id', 'artist', 'title', 'duration_ms', 'bpm', 'key_camelot',
+  'file_id', 'track_id', 'artist', 'title', 'duration_ms', 'bpm', 'key_camelot',
 ] as const
 
 /**
@@ -85,6 +101,7 @@ export const CRATE_TRACK_KEYS = [
 export function toCrateTrack(row: Record<string, unknown>): QueueRowData {
   return {
     file_id: String(row.file_id),
+    track_id: strOrNull(row.track_id as string | null),
     artist: typeof row.display_artist === 'string' ? row.display_artist : null,
     title: typeof row.display_title === 'string' ? row.display_title : '',
     duration_ms: numOrNull(row.duration_ms as string | number | null),
@@ -98,6 +115,11 @@ export function toQueueEntry(
 ): QueueEntry {
   return {
     file_id: row.file_id,
+    // `strOrNull` and not a bare pass-through: an empty `data-recording-id`
+    // (an Astro template rendering a null through `?? ''`) must read as "no
+    // recording", never as a recording whose id is the empty string that
+    // every other unmatched file would then share.
+    track_id: strOrNull(row.track_id),
     display_artist: strOrNull(row.artist),
     display_title: typeof row.title === 'string' ? row.title : '',
     duration_ms: numOrNull(row.duration_ms),
@@ -127,10 +149,19 @@ export function toQueueEntry(
  * thing §5's deferral exists to prevent. Full metadata arrives by itself the
  * moment anything goes through the engine: queue memory carries it, and
  * RESTORE_CURRENT never overwrites a current that is already there.
+ *
+ * AND WHY track_id IS NULL. Player memory never held it either, so a resumed
+ * track is its own recording until something replaces it. The consequence is
+ * exact and bounded: the tail will not re-queue THIS FILE (the file id still
+ * excludes it), but it may offer another encode of the same song once. The
+ * first real engine event — a play, a skip, a `+ queue` — restores the
+ * recording from the DOM and the tail is recording-aware again. That is the
+ * documented degradation for an absent recording, not a special case.
  */
 export function resumedEntry(fileId: string, title: string): QueueEntry {
   return {
     file_id: fileId,
+    track_id: null,
     display_artist: null,
     display_title: title,
     duration_ms: null,

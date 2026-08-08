@@ -42,7 +42,7 @@
  */
 
 import {
-  emptyState, HISTORY_MAX, isAutoMethod, slotsFor, truncateIntent,
+  emptyState, HISTORY_MAX, isAutoMethod, recordingOf, slotsFor, truncateIntent,
   type AutoMethod, type QueueEntry, type QueueOrigin, type QueueState,
 } from './queue-model'
 
@@ -72,9 +72,15 @@ const ORIGINS: readonly QueueOrigin[] = ['current', 'list', 'crate', 'add', 'aut
 
 /** Projection, not a copy: an unknown property on the input is DROPPED, which
  *  is what keeps a signed URL out of localStorage even if a caller ever puts
- *  one on an entry. */
+ *  one on an entry.
+ *
+ *  `track_id` IS PROJECTED THROUGH `recordingOf`, so an absent one and an
+ *  empty one both persist as `null` and read back as "its own recording".
+ *  This is NOT a schema change: v1 payloads written before QUEUE.dedupe have
+ *  no `track_id` at all, and `parseEntry` accepts that shape unchanged. */
 const projectEntry = (e: QueueEntry): QueueEntry => ({
   file_id: e.file_id,
+  track_id: recordingOf(e),
   display_artist: e.display_artist,
   display_title: e.display_title,
   duration_ms: e.duration_ms,
@@ -129,6 +135,14 @@ function parseEntry(v: unknown): QueueEntry | null {
     : 'list'
   return {
     file_id: e.file_id,
+    // A MISSING RECORDING IS NOT CORRUPTION — every payload written before
+    // QUEUE.dedupe is missing one, and rejecting them would throw away the
+    // queue of every member who had one open on the day it shipped. Absent,
+    // null, empty and any non-string all read as "its own recording", which
+    // is exactly the behaviour those payloads already had. This is why the
+    // schema version did NOT need a bump; the shape only grew a field the
+    // parser was always going to tolerate.
+    track_id: recordingOf({ file_id: e.file_id, track_id: e.track_id as string | null }),
     display_artist: e.display_artist,
     display_title: e.display_title,
     duration_ms: e.duration_ms,

@@ -30,11 +30,13 @@ const many = (n: number, prefix = 'e'): QueueEntry[] =>
 
 const feature = (id: string, over: Partial<TrackFeatures> = {}): TrackFeatures => ({
   file_id: id,
+  track_id: null,
   display_artist: null,
   display_title: id,
   duration_ms: null,
   bpm: 128,
   key_camelot: '8A',
+  quality_tier: null,
   like_count: 0,
   play_count: 0,
   created_at: '2026-01-01T00:00:00Z',
